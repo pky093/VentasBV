@@ -22,6 +22,7 @@ import POSPage from './pages/POSPage';
 import CashRegisterPage from './pages/CashRegisterPage';
 import BillingPage from './pages/BillingPage';
 import ReportsPage from './pages/ReportsPage';
+import ExpensesPage from './pages/ExpensesPage';
 import AuditPage from './pages/AuditPage';
 import NotificationsPage from './pages/NotificationsPage';
 import SettingsPage from './pages/SettingsPage';
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="cash" element={<CashRegisterPage />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="reports" element={<ReportsPage />} />
+        <Route path="expenses" element={<ExpensesPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
         <Route path="settings" element={<SettingsPage />} />

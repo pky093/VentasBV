@@ -1517,4 +1517,162 @@ a:hover {
   border-left-color: var(--primary-400);
 }
 
+/* Dashboard Inventory Alert Redesign */
+.inventory-alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.inventory-alert-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.inventory-alert-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.inventory-alert-list::-webkit-scrollbar-thumb {
+  background: var(--neutral-200);
+  border-radius: 9999px;
+}
+
+[data-theme='dark'] .inventory-alert-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.inventory-alert-list::-webkit-scrollbar-thumb:hover {
+  background: var(--neutral-300);
+}
+
+.inventory-alert-item {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.inventory-alert-item:hover {
+  border-color: var(--primary-300);
+  transform: translateX(2px);
+}
+
+.inventory-alert-item.critical {
+  background-color: rgba(239, 68, 68, 0.04);
+  border-color: rgba(239, 68, 68, 0.15);
+}
+
+.inventory-alert-item.critical:hover {
+  border-color: var(--danger-400);
+}
+
+.inventory-alert-item.warning {
+  background-color: rgba(245, 158, 11, 0.04);
+  border-color: rgba(245, 158, 11, 0.15);
+}
+
+.inventory-alert-item.warning:hover {
+  border-color: var(--warning-400);
+}
+
+.inventory-alert-progress-bg {
+  flex: 1;
+  height: 6px;
+  background-color: var(--neutral-200);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+[data-theme='dark'] .inventory-alert-progress-bg {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.inventory-alert-progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+}
+
+.inventory-alert-progress-fill.critical {
+  background-color: var(--danger-500);
+}
+
+.inventory-alert-progress-fill.warning {
+  background-color: var(--warning-500);
+}
+
+/* Custom Utility Classes & Button Upgrades */
+.border-none {
+  border: none !important;
+}
+
+.icon-btn.btn-ghost {
+  border-color: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.icon-btn.btn-ghost:hover {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.icon-btn-sm {
+  width: 30px;
+  height: 30px;
+}
+
+.icon-btn-sm svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Action button designs with rich interaction and color */
+.btn-action-edit {
+  background-color: var(--primary-50) !important;
+  color: var(--primary-600) !important;
+  border: 1px solid var(--primary-100) !important;
+  transition: all var(--transition-fast) !important;
+  box-shadow: 0 1px 2px rgba(59, 130, 246, 0.05);
+}
+
+.btn-action-edit:hover {
+  background-color: var(--primary-100) !important;
+  color: var(--primary-700) !important;
+  border-color: var(--primary-300) !important;
+  transform: translateY(-1px) scale(1.08);
+  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.15), 0 2px 4px -1px rgba(59, 130, 246, 0.1);
+}
+
+.btn-action-edit:active {
+  transform: translateY(1px) scale(0.94);
+  box-shadow: none;
+}
+
+.btn-action-danger {
+  background-color: var(--danger-50) !important;
+  color: var(--danger-600) !important;
+  border: 1px solid var(--danger-100) !important;
+  transition: all var(--transition-fast) !important;
+  box-shadow: 0 1px 2px rgba(239, 68, 68, 0.05);
+}
+
+.btn-action-danger:hover {
+  background-color: var(--danger-100) !important;
+  color: var(--danger-700) !important;
+  border-color: var(--danger-300) !important;
+  transform: translateY(-1px) scale(1.08);
+  box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.15), 0 2px 4px -1px rgba(239, 68, 68, 0.1);
+}
+
+.btn-action-danger:active {
+  transform: translateY(1px) scale(0.94);
+  box-shadow: none;
+}
+
 

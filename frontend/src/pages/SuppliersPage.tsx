@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Truck, Mail, Phone, Edit2, Trash2 } from 'lucide-react';
 import { PageHeader, Button, Badge, DataTable, Modal } from '../components/ui';
 import { suppliersService, Supplier } from '../lib/db-services';
+import Swal from 'sweetalert2';
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -67,19 +68,53 @@ export default function SuppliersPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('¿Desea eliminar este proveedor de la base de datos?')) return;
-    try {
-      const success = await suppliersService.deleteSupplier(id);
-      if (success) {
-        setSuppliers((prev) => prev.filter((s) => s.id !== id));
-      } else {
-        alert('No se pudo eliminar el proveedor.');
+  const handleDelete = (id: string) => {
+    Swal.fire({
+      title: '¿Desea eliminar este proveedor?',
+      text: 'Esta acción eliminará de forma permanente el proveedor de la base de datos.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar',
+      background: 'var(--bg-surface)',
+      color: 'var(--text-primary)',
+      customClass: {
+        popup: 'rounded-2xl border border-color shadow-xl',
+        confirmButton: 'btn btn-danger font-semibold px-4 py-2 text-sm',
+        cancelButton: 'btn btn-secondary font-semibold px-4 py-2 text-sm',
+      },
+      buttonsStyling: true,
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          const success = await suppliersService.deleteSupplier(id);
+          if (success) {
+            setSuppliers((prev) => prev.filter((s) => s.id !== id));
+          } else {
+            Swal.fire({
+              title: 'Error',
+              text: 'No se pudo eliminar el proveedor.',
+              icon: 'error',
+              confirmButtonColor: '#3b82f6',
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+            });
+          }
+        } catch (err) {
+          console.error('Error deleting supplier:', err);
+          Swal.fire({
+            title: 'Error',
+            text: 'Error de base de datos al eliminar.',
+            icon: 'error',
+            confirmButtonColor: '#3b82f6',
+            background: 'var(--bg-surface)',
+            color: 'var(--text-primary)',
+          });
+        }
       }
-    } catch (err) {
-      console.error('Error deleting supplier:', err);
-      alert('Error de base de datos.');
-    }
+    });
   };
 
   const columns = [
@@ -146,18 +181,18 @@ export default function SuppliersPage() {
           actions={(row) => (
             <div className="flex gap-2 justify-end">
               <button
-                className="p-1.5 text-neutral-500 hover:text-primary-600 hover:bg-neutral-100 rounded-md"
+                className="icon-btn icon-btn-sm btn-action-edit border-none"
                 title="Editar"
                 onClick={() => { setSelectedSupplier(row); setIsModalOpen(true); }}
               >
-                <Edit2 size={16} />
+                <Edit2 size={14} />
               </button>
               <button
-                className="p-1.5 text-neutral-500 hover:text-danger-600 hover:bg-neutral-100 rounded-md"
+                className="icon-btn icon-btn-sm btn-action-danger border-none"
                 title="Eliminar"
                 onClick={() => handleDelete(row.id)}
               >
-                <Trash2 size={16} />
+                <Trash2 size={14} />
               </button>
             </div>
           )}

@@ -13,11 +13,7 @@ interface PurchaseOrder {
 }
 
 export default function PurchasesPage() {
-  const [purchases, setPurchases] = useState<PurchaseOrder[]>([
-    { id: '1', orderNumber: 'OC-001', supplier: 'Distribuidora Tech Perú S.A.C.', branch: 'Lima Centro', date: '2026-08-15', total: 4500.00, status: 'RECEIVED' },
-    { id: '2', orderNumber: 'OC-002', supplier: 'Importaciones Cómputo Global E.I.R.L.', branch: 'Miraflores', date: '2026-08-16', total: 1850.00, status: 'SENT' },
-    { id: '3', orderNumber: 'OC-003', supplier: 'Logitech Latinoamerica S.A.', branch: 'Arequipa', date: '2026-08-16', total: 3200.00, status: 'DRAFT' },
-  ]);
+  const [purchases, setPurchases] = useState<PurchaseOrder[]>([]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
 

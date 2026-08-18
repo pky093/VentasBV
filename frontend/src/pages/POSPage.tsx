@@ -11,9 +11,14 @@ import {
   CheckCircle2,
   AlertCircle,
   Printer,
+  Receipt,
+  FileText,
+  X,
+  Loader2,
 } from 'lucide-react';
 import { Button, Modal, Badge } from '../components/ui';
-import { productsService, customersService, catalogService, Product as DBProduct } from '../lib/db-services';
+import { productsService, customersService, catalogService, salesService, settingsService, Product as DBProduct } from '../lib/db-services';
+import { DEFAULT_BRANCH_ID } from '../lib/supabase';
 
 interface Product {
   id: string;
@@ -46,6 +51,28 @@ export default function POSPage() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [cashAmount, setCashAmount] = useState<string>('');
   const [saleCompleted, setSaleCompleted] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Boleta Preview State
+  const [showBoletaPreview, setShowBoletaPreview] = useState(false);
+  const [boletaData, setBoletaData] = useState<{
+    companyName: string;
+    companyRuc: string;
+    companyAddress: string;
+    companyPhone: string;
+    docTitle: string;
+    series: string;
+    number: string;
+    date: string;
+    time: string;
+    customerName: string;
+    customerDoc: string;
+    items: { name: string; qty: number; unitPrice: number; total: number }[];
+    opGravada: number;
+    igv: number;
+    total: number;
+    paymentMethodLabel: string;
+  } | null>(null);
 
   const loadPOSData = async () => {
     setIsLoading(true);
@@ -156,20 +183,134 @@ export default function POSPage() {
   const change = Math.max(0, cashNum - total);
 
   const handleProcessSale = async () => {
-    // Process sale and update stock in database
-    for (const item of cart) {
-      const newStock = Math.max(0, item.stock - item.qty);
-      await productsService.updateProduct(item.id, { stock: newStock });
-    }
+    setIsProcessing(true);
+    try {
+      // Map payment method to DB payment method
+      let dbPaymentMethod: 'CASH' | 'CARD' | 'YAPE' | 'TRANSFER' = 'CASH';
+      if (paymentMethod === 'TARJETA') dbPaymentMethod = 'CARD';
+      if (paymentMethod === 'YAPE') dbPaymentMethod = 'YAPE';
 
-    setSaleCompleted(true);
-    setTimeout(() => {
-      setSaleCompleted(false);
+      const paymentLabels: Record<string, string> = {
+        EFECTIVO: 'Efectivo',
+        TARJETA: 'Tarjeta de Crédito/Débito',
+        YAPE: 'Yape / Plin',
+      };
+
+      // 1. Fetch tenant info for boleta header
+      const tenant = await settingsService.getTenantInfo();
+
+      // 2. Get next series number
+      const seriesInfo = await settingsService.getNextSeriesNumber(docType);
+      const seriesStr = seriesInfo?.series || (docType === 'BOLETA' ? 'B001' : 'F001');
+      const nextNum = seriesInfo?.number || 1;
+      const numStr = String(nextNum).padStart(5, '0');
+
+      // 3. Create sale in DB
+      const saleItems = cart.map((item) => ({
+        productId: item.id,
+        productName: item.name,
+        quantity: item.qty,
+        unitPrice: item.price,
+        subtotal: item.price * item.qty,
+      }));
+
+      const createdSaleId = await salesService.createSale({
+        customerId: selectedCustomer && selectedCustomer.id !== 'default' ? selectedCustomer.id : undefined,
+        branchId: DEFAULT_BRANCH_ID,
+        branchName: 'Sede Principal',
+        total: total,
+        subtotal: subtotal,
+        tax: igv,
+        paymentMethod: dbPaymentMethod,
+        documentType: docType,
+        items: saleItems,
+      });
+
+      if (!createdSaleId) {
+        alert('Ocurrió un error al registrar la venta en la base de datos. Intente nuevamente.');
+        return;
+      }
+
+      // 4. Increment series number
+      await settingsService.incrementSeriesNumber(docType, seriesStr);
+
+      // 5. Build boleta preview data
+      const now = new Date();
+      setBoletaData({
+        companyName: tenant.name || 'Empresa S.A.C.',
+        companyRuc: tenant.ruc || '20000000000',
+        companyAddress: tenant.address || 'Dirección no configurada',
+        companyPhone: tenant.phone || '',
+        docTitle: docType === 'BOLETA' ? 'BOLETA DE VENTA ELECTRÓNICA' : 'FACTURA ELECTRÓNICA',
+        series: seriesStr,
+        number: `${seriesStr}-${numStr}`,
+        date: now.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+        time: now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        customerName: selectedCustomer?.name || 'Público General',
+        customerDoc: selectedCustomer?.doc || '00000000',
+        items: cart.map((item) => ({
+          name: item.name,
+          qty: item.qty,
+          unitPrice: item.price,
+          total: item.price * item.qty,
+        })),
+        opGravada: subtotal,
+        igv: igv,
+        total: total,
+        paymentMethodLabel: paymentLabels[paymentMethod] || paymentMethod,
+      });
+
+      // 6. Show boleta preview & close checkout dialog
       setIsCheckoutOpen(false);
-      setCart([]);
-      setCashAmount('');
-      loadPOSData();
-    }, 1800);
+      setShowBoletaPreview(true);
+    } catch (err) {
+      console.error('Error processing sale:', err);
+      alert('Error inesperado al procesar la venta.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePrintBoleta = () => {
+    const printContent = document.getElementById('boleta-preview-content');
+    if (!printContent) return;
+    const printWindow = window.open('', '_blank', 'width=400,height=700');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Comprobante</title>
+          <style>
+            @page { size: 80mm auto; margin: 4mm; }
+            body { font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.4; color: #000; margin: 0; padding: 8px; }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            .divider { border-top: 1px dashed #000; margin: 6px 0; }
+            .row { display: flex; justify-content: space-between; }
+            .items-table { width: 100%; border-collapse: collapse; }
+            .items-table td { padding: 2px 0; font-size: 10px; }
+            .items-table .qty-col { width: 30px; text-align: center; }
+            .items-table .price-col { width: 60px; text-align: right; }
+            .items-table .total-col { width: 60px; text-align: right; }
+            .totals .row { font-size: 11px; }
+            .grand-total { font-size: 14px; font-weight: bold; }
+          </style>
+        </head>
+        <body>${printContent.innerHTML}
+          <script>window.onload = () => { window.print(); window.close(); }<\/script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleCloseBoletaPreview = () => {
+    setShowBoletaPreview(false);
+    setBoletaData(null);
+    setSaleCompleted(false);
+    setCart([]);
+    setCashAmount('');
+    loadPOSData();
   };
 
   return (
@@ -372,97 +513,380 @@ export default function POSPage() {
         </div>
       </div>
 
-      {/* Checkout Modal */}
+      {/* Checkout Modal — Redesigned */}
       <Modal
         isOpen={isCheckoutOpen}
         onClose={() => setIsCheckoutOpen(false)}
         title="Procesar Venta & Emisión de Comprobante"
         size="md"
       >
-        {saleCompleted ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center animate-scaleUp">
-            <CheckCircle2 size={54} className="text-success-500 mb-3" />
-            <h3 className="font-bold text-xl text-primary">¡Venta Realizada con Éxito!</h3>
-            <p className="text-xs text-secondary mt-1">Comprobante emitido e inventario actualizado en Supabase</p>
+        <div className="space-y-4">
+          {/* Document Type Toggle */}
+          <div style={{
+            display: 'flex',
+            gap: '8px',
+            padding: '4px',
+            background: 'var(--bg-app)',
+            borderRadius: '12px',
+            border: '1px solid var(--border-color)',
+          }}>
+            <button
+              onClick={() => setDocType('BOLETA')}
+              className="border-none"
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                padding: '10px',
+                borderRadius: '10px',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                background: docType === 'BOLETA' ? 'var(--primary-600)' : 'transparent',
+                color: docType === 'BOLETA' ? '#fff' : 'var(--text-secondary)',
+                boxShadow: docType === 'BOLETA' ? '0 2px 8px rgba(0,0,0,0.2)' : 'none',
+              }}
+            >
+              <Receipt size={16} />
+              Boleta de Venta
+            </button>
+            <button
+              onClick={() => setDocType('FACTURA')}
+              className="border-none"
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                padding: '10px',
+                borderRadius: '10px',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                background: docType === 'FACTURA' ? 'var(--primary-600)' : 'transparent',
+                color: docType === 'FACTURA' ? '#fff' : 'var(--text-secondary)',
+                boxShadow: docType === 'FACTURA' ? '0 2px 8px rgba(0,0,0,0.2)' : 'none',
+              }}
+            >
+              <FileText size={16} />
+              Factura
+            </button>
           </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Customer & Document Info */}
-            <div className="p-3 bg-app rounded-lg border border-color flex justify-between items-center text-xs">
-              <div>
-                <span className="text-secondary block font-semibold">Cliente</span>
-                <span className="font-bold text-primary">{selectedCustomer?.name}</span>
-                <span className="text-secondary ml-1">({selectedCustomer?.doc})</span>
-              </div>
-              <div className="flex gap-1">
-                <button
-                  className={`px-3 py-1 rounded font-bold transition-all ${
-                    docType === 'BOLETA' ? 'bg-primary-600 text-white' : 'bg-surface text-secondary'
-                  }`}
-                  onClick={() => setDocType('BOLETA')}
-                >
-                  Boleta
-                </button>
-                <button
-                  className={`px-3 py-1 rounded font-bold transition-all ${
-                    docType === 'FACTURA' ? 'bg-primary-600 text-white' : 'bg-surface text-secondary'
-                  }`}
-                  onClick={() => setDocType('FACTURA')}
-                >
-                  Factura
-                </button>
-              </div>
-            </div>
 
-            {/* Total Display */}
-            <div className="p-4 bg-primary-50 dark:bg-primary-900/30 rounded-xl border border-primary-200 text-center">
-              <div className="text-xs text-secondary uppercase font-bold">Monto Total a Cobrar</div>
-              <div className="text-3xl font-extrabold text-primary-700 dark:text-primary-400 mt-1">
-                S/ {total.toFixed(2)}
-              </div>
-              <div className="text-xs text-secondary mt-1">
-                Método de pago: <strong>{paymentMethod}</strong>
-              </div>
+          {/* Customer Info */}
+          <div style={{
+            padding: '12px 16px',
+            background: 'var(--bg-app)',
+            borderRadius: '10px',
+            border: '1px solid var(--border-color)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+            <div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' as const }}>Cliente</div>
+              <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>{selectedCustomer?.name}</div>
             </div>
+            <div style={{
+              padding: '4px 12px',
+              background: 'var(--primary-100, #dbeafe)',
+              color: 'var(--primary-700)',
+              borderRadius: '20px',
+              fontSize: '11px',
+              fontWeight: 700,
+            }}>
+              Doc: {selectedCustomer?.doc}
+            </div>
+          </div>
 
-            {/* Cash Input if Cash Payment */}
-            {paymentMethod === 'EFECTIVO' && (
-              <div className="space-y-2">
-                <label className="form-label">Monto Recibido en Efectivo (S/)</label>
-                <input
-                  type="number"
-                  step="0.10"
-                  className="form-control text-lg font-bold"
-                  placeholder="Ej: 700.00"
-                  value={cashAmount}
-                  onChange={(e) => setCashAmount(e.target.value)}
-                  autoFocus
-                />
-                {cashNum > 0 && (
-                  <div
-                    className={`p-3 rounded-lg text-sm font-bold flex justify-between ${
-                      cashNum >= total ? 'bg-success-100 text-success-700' : 'bg-danger-100 text-danger-700'
-                    }`}
-                  >
-                    <span>Vuelto a entregar:</span>
-                    <span>S/ {change.toFixed(2)}</span>
+          {/* Items Summary */}
+          <div style={{
+            background: 'var(--bg-app)',
+            borderRadius: '10px',
+            border: '1px solid var(--border-color)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '8px 16px',
+              background: 'var(--bg-surface-hover)',
+              fontSize: '11px',
+              fontWeight: 700,
+              color: 'var(--text-secondary)',
+              textTransform: 'uppercase' as const,
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}>
+              <span>Producto</span>
+              <span>Subtotal</span>
+            </div>
+            <div style={{ maxHeight: '140px', overflow: 'auto' }}>
+              {cart.map((item, i) => (
+                <div key={item.id} style={{
+                  padding: '8px 16px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: '12px',
+                  borderTop: i > 0 ? '1px solid var(--border-subtle)' : 'none',
+                }}>
+                  <div>
+                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.name}</span>
+                    <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>{item.qty} × S/ {item.price.toFixed(2)}</span>
                   </div>
-                )}
-              </div>
-            )}
+                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>S/ {(item.price * item.qty).toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
 
-            {/* Actions */}
-            <div className="flex justify-end gap-2 pt-4 border-t border-color">
-              <Button variant="secondary" onClick={() => setIsCheckoutOpen(false)}>
-                Cancelar
-              </Button>
+          {/* Fiscal Breakdown */}
+          <div style={{
+            padding: '16px',
+            background: 'linear-gradient(135deg, var(--primary-50, #eff6ff), var(--primary-100, #dbeafe))',
+            borderRadius: '12px',
+            border: '1px solid var(--primary-200, #bfdbfe)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <span>Op. Gravada</span>
+              <span>S/ {subtotal.toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+              <span>IGV (18%)</span>
+              <span>S/ {igv.toFixed(2)}</span>
+            </div>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: '22px',
+              fontWeight: 800,
+              color: 'var(--primary-700)',
+              paddingTop: '8px',
+              borderTop: '2px solid var(--primary-200, #bfdbfe)',
+            }}>
+              <span>TOTAL</span>
+              <span>S/ {total.toFixed(2)}</span>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', textAlign: 'right' as const }}>
+              Método: <strong>{paymentMethod}</strong>
+            </div>
+          </div>
+
+          {/* Cash Input if Cash Payment */}
+          {paymentMethod === 'EFECTIVO' && (
+            <div className="space-y-2">
+              <label className="form-label">Monto Recibido en Efectivo (S/)</label>
+              <input
+                type="number"
+                step="0.10"
+                className="form-control text-lg font-bold"
+                placeholder="Ej: 700.00"
+                value={cashAmount}
+                onChange={(e) => setCashAmount(e.target.value)}
+                autoFocus
+              />
+              {cashNum > 0 && (
+                <div style={{
+                  padding: '10px 14px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  background: cashNum >= total ? 'var(--success-100, #dcfce7)' : 'var(--danger-100, #fef2f2)',
+                  color: cashNum >= total ? 'var(--success-700, #15803d)' : 'var(--danger-700, #b91c1c)',
+                }}>
+                  <span>Vuelto a entregar:</span>
+                  <span>S/ {change.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 pt-4 border-t border-color">
+            <Button variant="secondary" onClick={() => setIsCheckoutOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              icon={isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+              disabled={(paymentMethod === 'EFECTIVO' && cashNum < total) || isProcessing}
+              onClick={handleProcessSale}
+            >
+              {isProcessing ? 'Procesando...' : 'Emitir & Imprimir Ticket'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Boleta / Factura Preview Modal */}
+      <Modal
+        isOpen={showBoletaPreview}
+        onClose={handleCloseBoletaPreview}
+        title={boletaData?.docTitle || 'Vista Previa del Comprobante'}
+        size="md"
+      >
+        {boletaData && (
+          <div className="space-y-4">
+            {/* Success Banner */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '12px 16px',
+              borderRadius: '10px',
+              background: 'var(--success-100, #dcfce7)',
+              border: '1px solid var(--success-200, #bbf7d0)',
+            }}>
+              <CheckCircle2 size={20} style={{ color: 'var(--success-600, #16a34a)' }} />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--success-700, #15803d)' }}>¡Venta Registrada Exitosamente!</div>
+                <div style={{ fontSize: '11px', color: 'var(--success-600, #16a34a)' }}>Comprobante {boletaData.number} emitido • Inventario actualizado</div>
+              </div>
+            </div>
+
+            {/* Boleta Ticket Preview */}
+            <div
+              id="boleta-preview-content"
+              style={{
+                maxWidth: '340px',
+                margin: '0 auto',
+                padding: '20px 16px',
+                background: '#fff',
+                color: '#000',
+                fontFamily: "'Courier New', monospace",
+                fontSize: '11px',
+                lineHeight: 1.5,
+                borderRadius: '8px',
+                border: '1px solid #e5e7eb',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+              }}
+            >
+              {/* Company Header */}
+              <div className="center" style={{ textAlign: 'center', marginBottom: '8px' }}>
+                <div className="bold" style={{ fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>{boletaData.companyName}</div>
+                <div style={{ fontSize: '10px' }}>RUC: {boletaData.companyRuc}</div>
+                <div style={{ fontSize: '10px' }}>{boletaData.companyAddress}</div>
+                {boletaData.companyPhone && <div style={{ fontSize: '10px' }}>Tel: {boletaData.companyPhone}</div>}
+              </div>
+
+              {/* Divider */}
+              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Document Title */}
+              <div className="center bold" style={{ textAlign: 'center', fontWeight: 700, fontSize: '12px', margin: '6px 0' }}>
+                {boletaData.docTitle}
+              </div>
+              <div className="center" style={{ textAlign: 'center', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
+                {boletaData.number}
+              </div>
+
+              {/* Divider */}
+              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Date, Customer */}
+              <div className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                <span>Fecha: {boletaData.date}</span>
+                <span>Hora: {boletaData.time}</span>
+              </div>
+              <div style={{ fontSize: '10px', marginTop: '4px' }}>
+                Cliente: {boletaData.customerName}
+              </div>
+              <div style={{ fontSize: '10px' }}>
+                {docType === 'FACTURA' ? 'RUC' : 'DNI'}: {boletaData.customerDoc}
+              </div>
+
+              {/* Divider */}
+              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Items Header */}
+              <div className="row bold" style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '10px', marginBottom: '4px' }}>
+                <span style={{ flex: 1 }}>DESCRIPCIÓN</span>
+                <span style={{ width: '30px', textAlign: 'center' }}>CANT</span>
+                <span style={{ width: '55px', textAlign: 'right' }}>P.UNIT</span>
+                <span style={{ width: '55px', textAlign: 'right' }}>TOTAL</span>
+              </div>
+
+              {/* Items */}
+              {boletaData.items.map((item, i) => (
+                <div key={i} className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', padding: '1px 0' }}>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                  <span style={{ width: '30px', textAlign: 'center' }}>{item.qty}</span>
+                  <span style={{ width: '55px', textAlign: 'right' }}>{item.unitPrice.toFixed(2)}</span>
+                  <span style={{ width: '55px', textAlign: 'right' }}>{item.total.toFixed(2)}</span>
+                </div>
+              ))}
+
+              {/* Divider */}
+              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Totals */}
+              <div className="totals">
+                <div className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+                  <span>OP. GRAVADA</span>
+                  <span>S/ {boletaData.opGravada.toFixed(2)}</span>
+                </div>
+                <div className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+                  <span>IGV (18%)</span>
+                  <span>S/ {boletaData.igv.toFixed(2)}</span>
+                </div>
+                <div className="divider" style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
+                <div className="row grand-total" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 700 }}>
+                  <span>IMPORTE TOTAL</span>
+                  <span>S/ {boletaData.total.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Payment + Footer */}
+              <div style={{ fontSize: '10px', marginBottom: '4px' }}>
+                Forma de pago: {boletaData.paymentMethodLabel}
+              </div>
+              <div className="center" style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px', color: '#666' }}>
+                Representación impresa de la<br />
+                {boletaData.docTitle}<br />
+                Autorizado mediante Res. de Sup.<br />
+                N° 000-000/SUNAT
+              </div>
+              <div className="center" style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px', fontWeight: 700 }}>
+                ¡Gracias por su compra!
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{
+              display: 'flex',
+              gap: '12px',
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingTop: '16px',
+            }}>
               <Button
                 variant="primary"
-                icon={<Printer size={16} />}
-                disabled={paymentMethod === 'EFECTIVO' && cashNum < total}
-                onClick={handleProcessSale}
+                icon={<CheckCircle2 size={16} />}
+                onClick={handleCloseBoletaPreview}
               >
-                Emitir & Imprimir Ticket
+                Aceptar
+              </Button>
+              <Button
+                variant="outline"
+                icon={<Printer size={16} />}
+                onClick={handlePrintBoleta}
+              >
+                Imprimir Comprobante
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={handleCloseBoletaPreview}
+              >
+                Cerrar
               </Button>
             </div>
           </div>

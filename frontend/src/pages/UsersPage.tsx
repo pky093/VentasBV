@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Shield, Edit2, Trash2 } from 'lucide-react';
 import { PageHeader, Button, Badge, Modal, DataTable } from '../components/ui';
 import { usersService, UserMember } from '../lib/db-services';
+import Swal from 'sweetalert2';
 
 interface UserRecord {
   id: string;
@@ -45,26 +46,40 @@ export default function UsersPage() {
     loadUsers();
   }, []);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUser?.full_name) return;
 
-    if (selectedUser.id) {
-      setUsers(users.map((u) => (u.id === selectedUser.id ? ({ ...u, ...selectedUser } as UserRecord) : u)));
-    } else {
-      const newUser: UserRecord = {
-        id: String(Date.now()),
-        username: selectedUser.username || selectedUser.full_name.toLowerCase().replace(/\s+/g, ''),
-        full_name: selectedUser.full_name,
-        email: selectedUser.email || `${selectedUser.username || 'user'}@ventasbv.com`,
-        role: selectedUser.role || 'Vendedor',
-        branches: selectedUser.branches || ['Sede Principal'],
-        status: 'ACTIVE',
-      };
-      setUsers([...users, newUser]);
+    setIsLoading(true);
+    try {
+      if (selectedUser.id) {
+        const success = await usersService.updateUser(selectedUser.id, {
+          name: selectedUser.full_name,
+          email: selectedUser.email,
+          role: selectedUser.role,
+        });
+        if (success) {
+          await loadUsers();
+        }
+      } else {
+        const newUser = await usersService.createUser({
+          name: selectedUser.full_name,
+          email: selectedUser.email || `${selectedUser.username || 'user'}@ventasbv.com`,
+          role: selectedUser.role || 'Vendedor',
+          branch: 'Sede Principal',
+          status: 'ACTIVE',
+        });
+        if (newUser) {
+          await loadUsers();
+        }
+      }
+      setIsModalOpen(false);
+      setSelectedUser(null);
+    } catch (err) {
+      console.error('Error saving user:', err);
+    } finally {
+      setIsLoading(false);
     }
-    setIsModalOpen(false);
-    setSelectedUser(null);
   };
 
   const columns = [
@@ -143,18 +158,51 @@ export default function UsersPage() {
           actions={(row) => (
             <div className="flex gap-2 justify-end">
               <button
-                className="icon-btn btn-ghost text-secondary hover:text-primary-500"
+                className="icon-btn icon-btn-sm btn-action-edit border-none"
                 title="Editar"
                 onClick={() => { setSelectedUser(row); setIsModalOpen(true); }}
               >
-                <Edit2 size={16} />
+                <Edit2 size={14} />
               </button>
               <button
-                className="icon-btn btn-ghost text-secondary hover:text-danger-500"
+                className="icon-btn icon-btn-sm btn-action-danger border-none"
                 title="Eliminar"
-                onClick={() => setUsers(users.filter((u) => u.id !== row.id))}
+                onClick={() => {
+                  Swal.fire({
+                    title: '¿Desea eliminar este usuario?',
+                    text: `Esta acción eliminará de forma permanente al usuario "${row.full_name}" de la base de datos.`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#dc2626',
+                    cancelButtonColor: '#64748b',
+                    confirmButtonText: 'Sí, eliminar',
+                    cancelButtonText: 'Cancelar',
+                    background: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                    customClass: {
+                      popup: 'rounded-2xl border border-color shadow-xl',
+                      confirmButton: 'btn btn-danger font-semibold px-4 py-2 text-sm',
+                      cancelButton: 'btn btn-secondary font-semibold px-4 py-2 text-sm',
+                    },
+                    buttonsStyling: true,
+                  }).then(async (result) => {
+                    if (result.isConfirmed) {
+                      setIsLoading(true);
+                      try {
+                        const success = await usersService.deleteUser(row.id);
+                        if (success) {
+                          await loadUsers();
+                        }
+                      } catch (err) {
+                        console.error('Error deleting user:', err);
+                      } finally {
+                        setIsLoading(false);
+                      }
+                    }
+                  });
+                }}
               >
-                <Trash2 size={16} />
+                <Trash2 size={14} />
               </button>
             </div>
           )}

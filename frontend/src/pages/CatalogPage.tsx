@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Folder, Tag, Edit2, Trash2 } from 'lucide-react';
 import { PageHeader, Button, Tabs, DataTable, Modal, Badge } from '../components/ui';
 import { catalogService, Category, Brand } from '../lib/db-services';
+import Swal from 'sweetalert2';
 
 export default function CatalogPage() {
   const [activeTab, setActiveTab] = useState('categories');
@@ -61,16 +62,35 @@ export default function CatalogPage() {
     setSelectedItem(null);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     const itemType = activeTab === 'categories' ? 'categoría' : 'marca';
-    if (!window.confirm(`¿Desea eliminar esta ${itemType} de la base de datos?`)) return;
-
-    if (activeTab === 'categories') {
-      await catalogService.deleteCategory(id);
-    } else {
-      await catalogService.deleteBrand(id);
-    }
-    await loadData();
+    Swal.fire({
+      title: `¿Desea eliminar esta ${itemType}?`,
+      text: `Esta acción eliminará de forma permanente la ${itemType} de la base de datos.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar',
+      background: 'var(--bg-surface)',
+      color: 'var(--text-primary)',
+      customClass: {
+        popup: 'rounded-2xl border border-color shadow-xl',
+        confirmButton: 'btn btn-danger font-semibold px-4 py-2 text-sm',
+        cancelButton: 'btn btn-secondary font-semibold px-4 py-2 text-sm',
+      },
+      buttonsStyling: true,
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        if (activeTab === 'categories') {
+          await catalogService.deleteCategory(id);
+        } else {
+          await catalogService.deleteBrand(id);
+        }
+        await loadData();
+      }
+    });
   };
 
   const getActiveData = () => {
@@ -130,18 +150,18 @@ export default function CatalogPage() {
           actions={(row) => (
             <div className="flex gap-2 justify-end">
               <button
-                className="icon-btn btn-ghost text-secondary hover:text-primary-500"
+                className="icon-btn icon-btn-sm btn-action-edit border-none"
                 title="Editar"
                 onClick={() => { setSelectedItem({ id: row.id, name: row.name }); setIsModalOpen(true); }}
               >
-                <Edit2 size={16} />
+                <Edit2 size={14} />
               </button>
               <button
-                className="icon-btn btn-ghost text-secondary hover:text-danger-500"
+                className="icon-btn icon-btn-sm btn-action-danger border-none"
                 title="Eliminar"
                 onClick={() => handleDelete(row.id)}
               >
-                <Trash2 size={16} />
+                <Trash2 size={14} />
               </button>
             </div>
           )}

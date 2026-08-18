@@ -1,33 +1,34 @@
-import React, { useState } from 'react';
-import { FileText, Download, CheckCircle, Clock, AlertTriangle, Eye } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { FileText, Download, CheckCircle, Clock, Eye, RefreshCw } from 'lucide-react';
 import { PageHeader, Button, Badge, DataTable, Modal } from '../components/ui';
-
-interface Invoice {
-  id: string;
-  docType: 'BOLETA' | 'FACTURA' | 'NOTA_CREDITO';
-  series: string;
-  sequence: string;
-  customerName: string;
-  customerDoc: string;
-  total: number;
-  status: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED';
-  date: string;
-}
+import { billingService, BillingInvoice } from '../lib/db-services';
 
 export default function BillingPage() {
-  const [invoices] = useState<Invoice[]>([
-    { id: '1', docType: 'FACTURA', series: 'F001', sequence: '00000089', customerName: 'Corporación Inmobiliaria ABC S.A.C.', customerDoc: '20123456789', total: 1416.00, status: 'ACCEPTED', date: '2026-08-16 14:10' },
-    { id: '2', docType: 'BOLETA', series: 'B001', sequence: '00000124', customerName: 'Juan Carlos Pérez Ramos', customerDoc: '45890123', total: 767.00, status: 'ACCEPTED', date: '2026-08-16 15:40' },
-    { id: '3', docType: 'BOLETA', series: 'B001', sequence: '00000125', customerName: 'Cliente Varios', customerDoc: '00000000', total: 112.10, status: 'ISSUED', date: '2026-08-16 16:05' },
-  ]);
+  const [invoices, setInvoices] = useState<BillingInvoice[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedInvoice, setSelectedInvoice] = useState<BillingInvoice | null>(null);
 
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const loadInvoices = async () => {
+    setIsLoading(true);
+    try {
+      const data = await billingService.getInvoices();
+      setInvoices(data);
+    } catch (err) {
+      console.error('Error loading invoices:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInvoices();
+  }, []);
 
   const columns = [
     {
       key: 'document',
       header: 'Comprobante',
-      render: (r: Invoice) => (
+      render: (r: BillingInvoice) => (
         <div>
           <span className="font-bold text-primary-900">{r.series}-{r.sequence}</span>
           <div className="text-xs text-secondary">{r.docType}</div>
@@ -37,19 +38,19 @@ export default function BillingPage() {
     {
       key: 'customer',
       header: 'Receptor / Cliente',
-      render: (r: Invoice) => (
+      render: (r: BillingInvoice) => (
         <div>
           <div className="font-medium text-sm text-primary-800">{r.customerName}</div>
           <div className="text-xs text-secondary">Doc: {r.customerDoc}</div>
         </div>
       )
     },
-    { key: 'date', header: 'Fecha Emisión', render: (r: Invoice) => <span className="text-xs text-secondary">{r.date}</span> },
-    { key: 'total', header: 'Monto Total', render: (r: Invoice) => <span className="font-bold text-primary-900">S/ {r.total.toFixed(2)}</span> },
+    { key: 'date', header: 'Fecha Emisión', render: (r: BillingInvoice) => <span className="text-xs text-secondary">{r.date}</span> },
+    { key: 'total', header: 'Monto Total', render: (r: BillingInvoice) => <span className="font-bold text-primary-900">S/ {r.total.toFixed(2)}</span> },
     {
       key: 'status',
       header: 'Estado SUNAT',
-      render: (r: Invoice) => {
+      render: (r: BillingInvoice) => {
         if (r.status === 'ACCEPTED') return <Badge variant="success"><CheckCircle size={12} className="inline mr-1" /> Aceptado</Badge>;
         if (r.status === 'ISSUED') return <Badge variant="info"><Clock size={12} className="inline mr-1" /> Emitido</Badge>;
         return <Badge variant="warning">Pendiente</Badge>;
@@ -62,23 +63,32 @@ export default function BillingPage() {
       <PageHeader
         title="Facturación Electrónica"
         subtitle="Emisión de comprobantes de pago (Boletas, Facturas) y consulta de validez SUNAT"
+        action={
+          <Button variant="outline" size="sm" icon={<RefreshCw size={14} />} onClick={loadInvoices}>
+            Actualizar
+          </Button>
+        }
       />
 
-      <DataTable
-        columns={columns}
-        data={invoices}
-        searchPlaceholder="Buscar por número o cliente..."
-        actions={(row) => (
-          <div className="flex gap-2 justify-end">
-            <button className="p-1.5 text-neutral-500 hover:text-primary-600 hover:bg-neutral-100 rounded-md" onClick={() => setSelectedInvoice(row)} title="Vista Previa">
-              <Eye size={16} />
-            </button>
-            <button className="p-1.5 text-neutral-500 hover:text-primary-600 hover:bg-neutral-100 rounded-md" title="Descargar PDF">
-              <Download size={16} />
-            </button>
-          </div>
-        )}
-      />
+      {isLoading ? (
+        <div className="p-8 text-center text-secondary">Cargando comprobantes emitidos...</div>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={invoices}
+          searchPlaceholder="Buscar por número o cliente..."
+          actions={(row) => (
+            <div className="flex gap-2 justify-end">
+              <button className="p-1.5 text-neutral-500 hover:text-primary-600 hover:bg-neutral-100 rounded-md" onClick={() => setSelectedInvoice(row)} title="Vista Previa">
+                <Eye size={16} />
+              </button>
+              <button className="p-1.5 text-neutral-500 hover:text-primary-600 hover:bg-neutral-100 rounded-md" title="Descargar PDF">
+                <Download size={16} />
+              </button>
+            </div>
+          )}
+        />
+      )}
 
       <Modal
         isOpen={!!selectedInvoice}

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, UserCheck, Building2, Phone, Mail, Edit2, Trash2 } from 'lucide-react';
 import { PageHeader, Button, Badge, DataTable, Modal } from '../components/ui';
 import { customersService, Customer } from '../lib/db-services';
+import Swal from 'sweetalert2';
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -70,19 +71,53 @@ export default function CustomersPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('¿Desea eliminar este cliente de la base de datos?')) return;
-    try {
-      const success = await customersService.deleteCustomer(id);
-      if (success) {
-        setCustomers((prev) => prev.filter((c) => c.id !== id));
-      } else {
-        alert('No se pudo eliminar el cliente.');
+  const handleDelete = (id: string) => {
+    Swal.fire({
+      title: '¿Desea eliminar este cliente?',
+      text: 'Esta acción eliminará de forma permanente al cliente de la base de datos.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar',
+      background: 'var(--bg-surface)',
+      color: 'var(--text-primary)',
+      customClass: {
+        popup: 'rounded-2xl border border-color shadow-xl',
+        confirmButton: 'btn btn-danger font-semibold px-4 py-2 text-sm',
+        cancelButton: 'btn btn-secondary font-semibold px-4 py-2 text-sm',
+      },
+      buttonsStyling: true,
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          const success = await customersService.deleteCustomer(id);
+          if (success) {
+            setCustomers((prev) => prev.filter((c) => c.id !== id));
+          } else {
+            Swal.fire({
+              title: 'Error',
+              text: 'No se pudo eliminar el cliente.',
+              icon: 'error',
+              confirmButtonColor: '#3b82f6',
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+            });
+          }
+        } catch (err) {
+          console.error('Error deleting customer:', err);
+          Swal.fire({
+            title: 'Error',
+            text: 'Error al intentar eliminar el cliente.',
+            icon: 'error',
+            confirmButtonColor: '#3b82f6',
+            background: 'var(--bg-surface)',
+            color: 'var(--text-primary)',
+          });
+        }
       }
-    } catch (err) {
-      console.error('Error deleting customer:', err);
-      alert('Error al intentar eliminar el cliente.');
-    }
+    });
   };
 
   const columns = [
@@ -157,18 +192,18 @@ export default function CustomersPage() {
           actions={(row) => (
             <div className="flex gap-2 justify-end">
               <button
-                className="icon-btn btn-ghost text-secondary hover:text-primary-500"
+                className="icon-btn icon-btn-sm btn-action-edit border-none"
                 title="Editar"
                 onClick={() => { setSelectedCustomer(row); setIsModalOpen(true); }}
               >
-                <Edit2 size={16} />
+                <Edit2 size={14} />
               </button>
               <button
-                className="icon-btn btn-ghost text-secondary hover:text-danger-500"
+                className="icon-btn icon-btn-sm btn-action-danger border-none"
                 title="Eliminar"
                 onClick={() => handleDelete(row.id)}
               >
-                <Trash2 size={16} />
+                <Trash2 size={14} />
               </button>
             </div>
           )}

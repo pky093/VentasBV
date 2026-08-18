@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Search, ChevronLeft, ChevronRight, AlertCircle, Loader2, Filter } from 'lucide-react';
+
 
 // Buttons
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -156,6 +157,7 @@ export function DataTable<T extends Record<string, any>>({
   actions,
   loading = false,
   emptyMessage = 'No se encontraron registros',
+  initialSearch = '',
 }: {
   columns: Column<T>[];
   data: T[];
@@ -164,10 +166,15 @@ export function DataTable<T extends Record<string, any>>({
   actions?: (row: T) => React.ReactNode;
   loading?: boolean;
   emptyMessage?: string;
+  initialSearch?: string;
 }) {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [page, setPage] = useState(1);
   const pageSize = 8;
+
+  useEffect(() => {
+    setSearchTerm(initialSearch);
+  }, [initialSearch]);
 
   const filteredData = data.filter((row) =>
     Object.values(row).some(

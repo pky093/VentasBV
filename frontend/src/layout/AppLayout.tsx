@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { loadSavedTheme } from '../lib/tenant-theme';
 import { 
   LayoutDashboard, Store, Users, Shield, BookOpen, Package, 
   Archive, Truck, ShoppingCart, Users2, DollarSign, MonitorSmartphone, 
   CreditCard, FileText, BarChart3, Activity, Bell, Settings,
-  Sun, Moon, Search, ChevronDown, ArrowRight
+  Sun, Moon, Search, ChevronDown, ArrowRight, Receipt
 } from 'lucide-react';
 
 const MENU_ITEMS = [
@@ -12,32 +13,33 @@ const MENU_ITEMS = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/app' },
     { label: 'Punto de Venta', icon: MonitorSmartphone, path: '/app/pos' }
   ]},
-  { section: 'GESTIÓN', items: [
-    { label: 'Sucursales', icon: Store, path: '/app/branches' },
-    { label: 'Usuarios', icon: Users, path: '/app/users' },
-    { label: 'Roles y Permisos', icon: Shield, path: '/app/roles' }
-  ]},
-  { section: 'CATÁLOGO', items: [
-    { label: 'Categorías & Atributos', icon: BookOpen, path: '/app/catalog' },
-    { label: 'Productos', icon: Package, path: '/app/products' }
-  ]},
-  { section: 'OPERACIONES', items: [
-    { label: 'Inventario / Kardex', icon: Archive, path: '/app/inventory' },
-    { label: 'Proveedores', icon: Truck, path: '/app/suppliers' },
-    { label: 'Ordenes de Compra', icon: ShoppingCart, path: '/app/purchases' }
-  ]},
   { section: 'VENTAS', items: [
     { label: 'Clientes', icon: Users2, path: '/app/customers' },
     { label: 'Historial de Ventas', icon: DollarSign, path: '/app/sales' },
     { label: 'Caja Chica / Registro', icon: CreditCard, path: '/app/cash' }
   ]},
+  { section: 'CATÁLOGO', items: [
+    { label: 'Productos', icon: Package, path: '/app/products' },
+    { label: 'Categorías & Atributos', icon: BookOpen, path: '/app/catalog' }
+  ]},
+  { section: 'OPERACIONES', items: [
+    { label: 'Inventario / Kardex', icon: Archive, path: '/app/inventory' },
+    { label: 'Gastos Operativos', icon: Receipt, path: '/app/expenses' },
+    { label: 'Ordenes de Compra', icon: ShoppingCart, path: '/app/purchases' },
+    { label: 'Proveedores', icon: Truck, path: '/app/suppliers' }
+  ]},
   { section: 'COMPROBANTES', items: [
     { label: 'Facturación / Boletas', icon: FileText, path: '/app/billing' },
     { label: 'Reportes & BI', icon: BarChart3, path: '/app/reports' }
   ]},
+  { section: 'GESTIÓN', items: [
+    { label: 'Usuarios', icon: Users, path: '/app/users' },
+    { label: 'Roles y Permisos', icon: Shield, path: '/app/roles' },
+    { label: 'Sucursales', icon: Store, path: '/app/branches' }
+  ]},
   { section: 'SISTEMA', items: [
-    { label: 'Auditoría', icon: Activity, path: '/app/audit' },
     { label: 'Notificaciones', icon: Bell, path: '/app/notifications' },
+    { label: 'Auditoría', icon: Activity, path: '/app/audit' },
     { label: 'Configuración', icon: Settings, path: '/app/settings' }
   ]}
 ];
@@ -47,6 +49,17 @@ export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
+  });
+
+  // Collapsible sections state
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    'PRINCIPAL': true,
+    'VENTAS': true,
+    'CATÁLOGO': true,
+    'OPERACIONES': false,
+    'COMPROBANTES': false,
+    'GESTIÓN': false,
+    'SISTEMA': false,
   });
 
   // Global search state
@@ -85,8 +98,19 @@ export default function AppLayout() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    loadSavedTheme();
+  }, []);
+
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+
+  const toggleSection = (sectionName: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [sectionName]: !prev[sectionName]
+    }));
   };
 
   const handleBrandClick = () => {
@@ -134,29 +158,48 @@ export default function AppLayout() {
         </div>
 
         <nav className="sidebar-nav">
-          {MENU_ITEMS.map((group, i) => (
-            <div key={i} className="sidebar-nav-group">
-              {!collapsed && <div className="sidebar-nav-title">{group.section}</div>}
-              {group.items.map((item, j) => {
-                const Icon = item.icon;
-                const isActive = location.pathname === item.path || (item.path !== '/app' && location.pathname.startsWith(item.path));
-                return (
-                  <Link 
-                    key={j} 
-                    to={item.path} 
-                    className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
-                    title={collapsed ? item.label : undefined}
-                    onClick={() => {
-                      setMobileOpen(false);
-                    }}
+          {MENU_ITEMS.map((group, i) => {
+            const isSectionExpanded = collapsed || !!expandedSections[group.section];
+            return (
+              <div key={i} className="sidebar-nav-group">
+                {!collapsed && (
+                  <div 
+                    className="sidebar-nav-title flex justify-between items-center cursor-pointer select-none py-1 hover:text-primary-600 transition-colors"
+                    onClick={() => toggleSection(group.section)}
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                   >
-                    <Icon size={20} />
-                    {!collapsed && <span>{item.label}</span>}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+                    <span>{group.section}</span>
+                    <ChevronDown 
+                      size={12} 
+                      className={`transition-transform duration-200 ${expandedSections[group.section] ? '' : '-rotate-90'}`} 
+                    />
+                  </div>
+                )}
+                {isSectionExpanded && (
+                  <div className="sidebar-nav-group-items flex flex-col gap-0.5 mt-1">
+                    {group.items.map((item, j) => {
+                      const Icon = item.icon;
+                      const isActive = location.pathname === item.path || (item.path !== '/app' && location.pathname.startsWith(item.path));
+                      return (
+                        <Link 
+                          key={j} 
+                          to={item.path} 
+                          className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
+                          title={collapsed ? item.label : undefined}
+                          onClick={() => {
+                            setMobileOpen(false);
+                          }}
+                        >
+                          <Icon size={20} />
+                          {!collapsed && <span>{item.label}</span>}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
       </aside>
 

@@ -6,6 +6,7 @@ import {
   Info
 } from 'lucide-react';
 import { PageHeader, Button, Badge, Card, CardHeader, Modal } from '../components/ui';
+import Swal from 'sweetalert2';
 
 interface Role {
   id: string;
@@ -144,20 +145,15 @@ export default function RolesPage() {
   useEffect(() => {
     rolesService.getRoles().then((dbRoles) => {
       if (dbRoles && dbRoles.length > 0) {
-        setRoles((prev) => {
-          const map = new Map();
-          dbRoles.forEach((r) => map.set(r.id, {
-            id: r.id,
-            name: r.name,
-            description: r.description,
-            isSystem: r.isSystem,
-            userCount: r.usersCount || 1,
-            userInitials: r.isSystem ? ['AP'] : ['CV'],
-            permissions: r.isSystem ? ['*'] : ['dashboard.read', 'sales.read'],
-          }));
-          prev.forEach((p) => { if (!map.has(p.id)) map.set(p.id, p); });
-          return Array.from(map.values());
-        });
+        setRoles(dbRoles.map((r) => ({
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          isSystem: r.isSystem,
+          userCount: r.id === 'a1000000-0000-4000-a000-000000000001' ? 1 : r.id === 'a1000000-0000-4000-a000-000000000002' ? 2 : 0,
+          userInitials: r.id === 'a1000000-0000-4000-a000-000000000001' ? ['AP'] : r.id === 'a1000000-0000-4000-a000-000000000002' ? ['AP', 'CV'] : [],
+          permissions: r.permissions || [],
+        })));
       }
     });
   }, []);
@@ -180,67 +176,149 @@ export default function RolesPage() {
   };
 
   // Toggle single permission
-  const handleTogglePermission = (permId: string) => {
-    if (selectedRole?.isSystem && selectedRole?.permissions.includes('*')) return;
+  const handleTogglePermission = async (permId: string) => {
+    if (!selectedRole || (selectedRole.isSystem && selectedRole.permissions.includes('*'))) return;
 
-    const currentPerms = [...(selectedRole?.permissions || [])];
+    const currentPerms = [...(selectedRole.permissions || [])];
     const exists = currentPerms.includes(permId);
     const updatedPerms = exists 
       ? currentPerms.filter(p => p !== permId) 
       : [...currentPerms, permId];
 
+    // Optimistic Update
     setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: updatedPerms } : r));
-    showNotification('Permiso actualizado');
+
+    try {
+      const success = await rolesService.updateRolePermissions(selectedRole.id, updatedPerms);
+      if (success) {
+        showNotification('Permiso actualizado en Supabase');
+      } else {
+        setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: currentPerms } : r));
+        showNotification('Error al actualizar permiso');
+      }
+    } catch (err) {
+      console.error(err);
+      setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: currentPerms } : r));
+    }
   };
 
   // Select all permissions in a module group
-  const handleSelectAllModule = (groupPermissions: { id: string }[]) => {
-    if (selectedRole?.isSystem && selectedRole?.permissions.includes('*')) return;
+  const handleSelectAllModule = async (groupPermissions: { id: string }[]) => {
+    if (!selectedRole || (selectedRole.isSystem && selectedRole.permissions.includes('*'))) return;
 
     const groupIds = groupPermissions.map(p => p.id);
-    const currentPerms = new Set(selectedRole.permissions);
-    groupIds.forEach(id => currentPerms.add(id));
+    const currentPerms = [...(selectedRole.permissions || [])];
+    const updatedSet = new Set([...currentPerms, ...groupIds]);
+    const updatedPerms = Array.from(updatedSet);
 
-    setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: Array.from(currentPerms) } : r));
-    showNotification(`Permisos de módulo activados`);
+    setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: updatedPerms } : r));
+    
+    try {
+      const success = await rolesService.updateRolePermissions(selectedRole.id, updatedPerms);
+      if (success) {
+        showNotification('Permisos de módulo activados');
+      } else {
+        setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: currentPerms } : r));
+      }
+    } catch (err) {
+      console.error(err);
+      setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: currentPerms } : r));
+    }
   };
 
   // Deselect all permissions in a module group
-  const handleDeselectAllModule = (groupPermissions: { id: string }[]) => {
-    if (selectedRole?.isSystem && selectedRole?.permissions.includes('*')) return;
+  const handleDeselectAllModule = async (groupPermissions: { id: string }[]) => {
+    if (!selectedRole || (selectedRole.isSystem && selectedRole.permissions.includes('*'))) return;
 
     const groupIds = new Set(groupPermissions.map(p => p.id));
-    const updatedPerms = selectedRole.permissions.filter(id => !groupIds.has(id));
+    const currentPerms = [...(selectedRole.permissions || [])];
+    const updatedPerms = currentPerms.filter(id => !groupIds.has(id));
 
     setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: updatedPerms } : r));
-    showNotification(`Permisos de módulo desmarcados`);
+    
+    try {
+      const success = await rolesService.updateRolePermissions(selectedRole.id, updatedPerms);
+      if (success) {
+        showNotification('Permisos de módulo desmarcados');
+      } else {
+        setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: currentPerms } : r));
+      }
+    } catch (err) {
+      console.error(err);
+      setRoles(roles.map(r => r.id === selectedRole.id ? { ...r, permissions: currentPerms } : r));
+    }
   };
 
   // Clone Existing Role
-  const handleCloneRole = (targetRole: Role, e: React.MouseEvent) => {
+  const handleCloneRole = async (targetRole: Role, e: React.MouseEvent) => {
     e.stopPropagation();
-    const clonedRole: Role = {
-      id: String(Date.now()),
-      name: `${targetRole.name} (Copia)`,
-      description: `Perfil duplicado basado en ${targetRole.name}`,
-      isSystem: false,
-      userCount: 0,
-      userInitials: [],
-      permissions: [...targetRole.permissions],
-    };
-    setRoles([...roles, clonedRole]);
-    setActiveRoleId(clonedRole.id);
-    rolesService.createRole({ name: clonedRole.name, description: clonedRole.description, isSystem: false });
-    showNotification(`Perfil duplicado como "${clonedRole.name}"`);
+    const cloneName = `${targetRole.name} (Copia)`;
+    const cloneDesc = `Perfil duplicado basado en ${targetRole.name}`;
+
+    try {
+      const created = await rolesService.createRole({
+        name: cloneName,
+        description: cloneDesc,
+        isSystem: false,
+      }, [...targetRole.permissions]);
+
+      if (created) {
+        const clonedRole: Role = {
+          id: created.id,
+          name: cloneName,
+          description: cloneDesc,
+          isSystem: false,
+          userCount: 0,
+          userInitials: [],
+          permissions: [...targetRole.permissions],
+        };
+        setRoles([...roles, clonedRole]);
+        setActiveRoleId(clonedRole.id);
+        showNotification(`Perfil duplicado como "${clonedRole.name}"`);
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleDeleteRole = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (roles.length <= 1) return;
-    const filtered = roles.filter(r => r.id !== id);
-    setRoles(filtered);
-    if (activeRoleId === id) setActiveRoleId(filtered[0].id);
-    showNotification('Rol eliminado');
+    const roleToDelete = roles.find(r => r.id === id);
+    if (!roleToDelete) return;
+
+    Swal.fire({
+      title: '¿Desea eliminar este rol?',
+      text: `Esta acción eliminará de forma permanente el rol "${roleToDelete.name}" de la base de datos.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar',
+      background: 'var(--bg-surface)',
+      color: 'var(--text-primary)',
+      customClass: {
+        popup: 'rounded-2xl border border-color shadow-xl',
+        confirmButton: 'btn btn-danger font-semibold px-4 py-2 text-sm',
+        cancelButton: 'btn btn-secondary font-semibold px-4 py-2 text-sm',
+      },
+      buttonsStyling: true,
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          const success = await rolesService.deleteRole(id);
+          if (success) {
+            const filtered = roles.filter(r => r.id !== id);
+            setRoles(filtered);
+            if (activeRoleId === id) setActiveRoleId(filtered[0].id);
+            showNotification('Rol eliminado');
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
   };
 
   const handleSaveRoleModal = async (e: React.FormEvent) => {
@@ -248,27 +326,36 @@ export default function RolesPage() {
     if (!roleForm.name?.trim()) return;
 
     if (roleForm.id) {
-      setRoles(roles.map(r => r.id === roleForm.id ? { ...r, ...roleForm } as Role : r));
-      showNotification('Rol actualizado correctamente');
+      const success = await rolesService.updateRole(roleForm.id, {
+        name: roleForm.name,
+        description: roleForm.description,
+      });
+      if (success) {
+        setRoles(roles.map(r => r.id === roleForm.id ? { ...r, ...roleForm } as Role : r));
+        showNotification('Rol actualizado correctamente');
+      }
     } else {
+      const defaultPerms = roleForm.permissions || ['dashboard.read'];
       const created = await rolesService.createRole({
         name: roleForm.name,
         description: roleForm.description || '',
         isSystem: false,
-      });
+      }, defaultPerms);
 
-      const newRole: Role = {
-        id: created?.id || String(Date.now()),
-        name: roleForm.name,
-        description: roleForm.description || '',
-        isSystem: false,
-        userCount: 0,
-        userInitials: [],
-        permissions: roleForm.permissions || ['dashboard.read'],
-      };
-      setRoles([...roles, newRole]);
-      setActiveRoleId(newRole.id);
-      showNotification('Nuevo rol creado y guardado en Supabase');
+      if (created) {
+        const newRole: Role = {
+          id: created.id,
+          name: roleForm.name,
+          description: roleForm.description || '',
+          isSystem: false,
+          userCount: 0,
+          userInitials: [],
+          permissions: defaultPerms,
+        };
+        setRoles([...roles, newRole]);
+        setActiveRoleId(newRole.id);
+        showNotification('Nuevo rol creado y guardado en Supabase');
+      }
     }
     setIsModalOpen(false);
   };
@@ -339,10 +426,10 @@ export default function RolesPage() {
                     </div>
                   </div>
                   
-                  {/* Clean Icon-Only Action Group with Tooltips */}
-                  <div className="flex items-center gap-1 bg-app/85 p-1 rounded-lg border border-color" onClick={(e) => e.stopPropagation()}>
+                  {/* Modern borderless circle action buttons */}
+                  <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                     <button 
-                      className="p-1 text-secondary hover:text-primary-600 hover:bg-surface rounded transition-colors"
+                      className="icon-btn icon-btn-sm btn-action-edit border-none"
                       title="Duplicar / Clonar Perfil"
                       onClick={(e) => handleCloneRole(role, e)}
                     >
@@ -350,13 +437,16 @@ export default function RolesPage() {
                     </button>
 
                     {role.isSystem ? (
-                      <div className="p-1 text-muted" title="Perfil de Sistema Protegido">
+                      <div 
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-neutral-400 dark:text-neutral-500 bg-neutral-50 dark:bg-neutral-800/40" 
+                        title="Perfil de Sistema Protegido"
+                      >
                         <Lock size={12} />
                       </div>
                     ) : (
                       <>
                         <button 
-                          className="p-1 text-secondary hover:text-primary-600 hover:bg-surface rounded transition-colors"
+                          className="icon-btn icon-btn-sm btn-action-edit border-none"
                           title="Editar Nombre y Descripción"
                           onClick={(e) => {
                             setRoleForm(role);
@@ -366,7 +456,7 @@ export default function RolesPage() {
                           <Edit3 size={14} />
                         </button>
                         <button 
-                          className="p-1 text-secondary hover:text-danger-500 hover:bg-danger-50 rounded transition-colors"
+                          className="icon-btn icon-btn-sm btn-action-danger border-none"
                           title="Eliminar Rol"
                           onClick={(e) => handleDeleteRole(role.id, e)}
                         >
@@ -543,61 +633,52 @@ export default function RolesPage() {
 
                     {/* Section Body (Collapsible Content) */}
                     {!isCollapsed && (
-                      <div className="p-4 pt-2 border-t border-color bg-app/40 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {matchingPerms.map((perm) => {
-                          const isChecked = selectedRole.permissions.includes('*') || selectedRole.permissions.includes(perm.id);
+                      <div className="p-4 pt-2 border-t border-color bg-app/40 flex flex-col items-center">
+                        <div className="w-full max-w-2xl flex flex-col gap-2.5 py-1">
+                          {matchingPerms.map((perm) => {
+                            const isChecked = selectedRole.permissions.includes('*') || selectedRole.permissions.includes(perm.id);
 
-                          return (
-                            <div
-                              key={perm.id}
-                              onClick={() => !isLocked && handleTogglePermission(perm.id)}
-                              className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-200 select-none ${
-                                isLocked ? 'cursor-not-allowed' : 'cursor-pointer hover:border-neutral-300'
-                              }`}
-                              style={{
-                                borderColor: isChecked ? 'rgba(34, 197, 94, 0.3)' : 'var(--border-color)',
-                                backgroundColor: isChecked ? 'rgba(34, 197, 94, 0.04)' : 'var(--bg-surface)',
-                                opacity: isChecked ? 1 : 0.75,
-                                boxShadow: isChecked ? '0 1px 3px rgba(34, 197, 94, 0.04)' : 'none',
-                              }}
-                            >
-                              <div className="flex items-center gap-3">
-                                {/* Modern Custom Toggle Switch Button */}
-                                <div 
-                                  className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-250 ease-in-out"
-                                  style={{
-                                    backgroundColor: isChecked ? 'var(--success-500)' : 'var(--neutral-300)',
-                                    width: '36px',
-                                    height: '20px',
-                                    borderRadius: '100px',
-                                  }}
-                                >
-                                  <span 
-                                    className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-250 ease-in-out"
-                                    style={{
-                                      transform: isChecked ? 'translateX(16px)' : 'translateX(0px)',
-                                      width: '16px',
-                                      height: '16px',
-                                      borderRadius: '50%',
-                                      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.2)',
-                                    }}
-                                  />
+                            return (
+                              <div
+                                key={perm.id}
+                                onClick={() => !isLocked && handleTogglePermission(perm.id)}
+                                className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-200 select-none ${
+                                  isLocked ? 'cursor-not-allowed' : 'cursor-pointer hover:border-neutral-300'
+                                }`}
+                                style={{
+                                  borderColor: isChecked ? 'rgba(34, 197, 94, 0.3)' : 'var(--border-color)',
+                                  backgroundColor: isChecked ? 'rgba(34, 197, 94, 0.04)' : 'var(--bg-surface)',
+                                  opacity: isChecked ? 1 : 0.8,
+                                  boxShadow: isChecked ? '0 1px 3px rgba(34, 197, 94, 0.04)' : 'none',
+                                }}
+                              >
+                                <div className="flex items-center gap-3">
+                                  {/* Custom Check Circular Badge */}
+                                  {isChecked ? (
+                                    <div className="w-5 h-5 rounded-full bg-success-100 dark:bg-success-950 text-success-600 dark:text-success-400 flex items-center justify-center shrink-0">
+                                      <Check size={12} strokeWidth={3} />
+                                    </div>
+                                  ) : (
+                                    <div className="w-5 h-5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600 flex items-center justify-center shrink-0">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-neutral-300 dark:bg-neutral-600" />
+                                    </div>
+                                  )}
+                                  <span className={`text-xs font-semibold ${isChecked ? 'text-primary' : 'text-secondary'}`}>
+                                    {perm.label}
+                                  </span>
                                 </div>
-                                <span className={`text-xs font-semibold ${isChecked ? 'text-primary' : 'text-secondary'}`}>
-                                  {perm.label}
-                                </span>
-                              </div>
 
-                              <div>
-                                {isChecked ? (
-                                  <Badge variant="success" className="text-[10px] py-0.5 px-2">Permitido</Badge>
-                                ) : (
-                                  <Badge variant="neutral" className="text-[10px] py-0.5 px-2 opacity-50">Sin acceso</Badge>
-                                )}
+                                <div>
+                                  {isChecked ? (
+                                    <Badge variant="success" className="text-[10px] py-0.5 px-2">Permitido</Badge>
+                                  ) : (
+                                    <Badge variant="neutral" className="text-[10px] py-0.5 px-2 opacity-50">Sin acceso</Badge>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
