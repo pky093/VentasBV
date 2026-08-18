@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS categories (
 CREATE TABLE IF NOT EXISTS brands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     active BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -471,6 +472,8 @@ CREATE TABLE IF NOT EXISTS sales (
     tax NUMERIC(12,2) DEFAULT 0,
     total NUMERIC(12,2) DEFAULT 0,
     payment_method payment_method DEFAULT 'CASH',
+    document_type TEXT DEFAULT 'BOLETA',
+    seller_name TEXT DEFAULT 'Admin Principal',
     notes TEXT,
     created_by UUID REFERENCES profiles(id),
     created_at TIMESTAMPTZ DEFAULT now(),

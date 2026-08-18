@@ -32,11 +32,16 @@ export interface Category {
   id: string;
   name: string;
   active: boolean;
+  brands?: { id: string; name: string }[];
 }
 
 export interface Brand {
   id: string;
   name: string;
+  categoryId?: string;
+  categoryName?: string;
+  category_id?: string;
+  category_name?: string;
   active: boolean;
 }
 
@@ -294,7 +299,7 @@ export const branchesService = {
 // ---------------- CATEGORIES & BRANDS ----------------
 export const catalogService = {
   async getCategories(): Promise<Category[]> {
-    const { data, error } = await supabase
+    const { data: cats, error } = await supabase
       .from('categories')
       .select('*')
       .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
@@ -305,10 +310,25 @@ export const catalogService = {
       return [];
     }
 
-    return (data || []).map((c: any) => ({
+    const { data: brs } = await supabase
+      .from('brands')
+      .select('id, name, category_id')
+      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`);
+
+    const categoryBrandsMap = new Map<string, { id: string; name: string }[]>();
+    brs?.forEach((b) => {
+      if (b.category_id) {
+        const list = categoryBrandsMap.get(b.category_id) || [];
+        list.push({ id: b.id, name: b.name });
+        categoryBrandsMap.set(b.category_id, list);
+      }
+    });
+
+    return (cats || []).map((c: any) => ({
       id: c.id,
       name: c.name,
       active: c.active ?? true,
+      brands: categoryBrandsMap.get(c.id) || [],
     }));
   },
 
@@ -323,7 +343,7 @@ export const catalogService = {
       console.error('Error creating category:', error);
       return null;
     }
-    return { id: data.id, name: data.name, active: true };
+    return { id: data.id, name: data.name, active: true, brands: [] };
   },
 
   async updateCategory(id: string, name: string): Promise<boolean> {
@@ -339,7 +359,10 @@ export const catalogService = {
   async getBrands(): Promise<Brand[]> {
     const { data, error } = await supabase
       .from('brands')
-      .select('*')
+      .select(`
+        id, name, active, category_id,
+        categories ( name )
+      `)
       .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
       .order('name');
 
@@ -351,23 +374,42 @@ export const catalogService = {
     return (data || []).map((b: any) => ({
       id: b.id,
       name: b.name,
+      categoryId: b.category_id,
+      categoryName: b.categories?.name || 'Sin Categoría',
+      category_id: b.category_id,
+      category_name: b.categories?.name || 'Sin Categoría',
       active: b.active ?? true,
     }));
   },
 
-  async createBrand(name: string): Promise<Brand | null> {
+  async createBrand(name: string, categoryId?: string): Promise<Brand | null> {
     const { data, error } = await supabase
       .from('brands')
-      .insert({ tenant_id: DEFAULT_TENANT_ID, name })
-      .select()
+      .insert({ tenant_id: DEFAULT_TENANT_ID, name, category_id: categoryId || null })
+      .select(`
+        id, name, active, category_id,
+        categories ( name )
+      `)
       .single();
 
-    if (error || !data) return null;
-    return { id: data.id, name: data.name, active: true };
+    if (error || !data) {
+      console.error('Error creating brand:', error);
+      return null;
+    }
+    return {
+      id: data.id,
+      name: data.name,
+      categoryId: data.category_id,
+      categoryName: (data as any).categories?.name || 'Sin Categoría',
+      active: true,
+    };
   },
 
-  async updateBrand(id: string, name: string): Promise<boolean> {
-    const { error } = await supabase.from('brands').update({ name }).eq('id', id);
+  async updateBrand(id: string, name: string, categoryId?: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('brands')
+      .update({ name, category_id: categoryId || null })
+      .eq('id', id);
     return !error;
   },
 
@@ -1130,6 +1172,7 @@ export interface Sale {
   customer: string;
   customerDoc?: string;
   customerId?: string;
+  sellerName?: string;
   branch: string;
   branchId?: string;
   date: string;
@@ -1157,7 +1200,7 @@ export const salesService = {
       const { data, error } = await supabase
         .from('sales')
         .select(`
-          id, sale_number, total, subtotal, tax, payment_method, document_type, status, created_at,
+          id, sale_number, total, subtotal, tax, payment_method, document_type, seller_name, status, created_at,
           branch_id, customer_id,
           customers ( full_name, business_name, document_number ),
           branches ( name )
@@ -1179,6 +1222,7 @@ export const salesService = {
             customer: s.customers ? (s.customers.business_name || s.customers.full_name || 'Público General') : 'Público General',
             customerDoc: s.customers?.document_number || '00000000',
             customerId: s.customer_id,
+            sellerName: s.seller_name || 'Admin Principal',
             branch: s.branches?.name || 'Sede Principal',
             branchId: s.branch_id,
             date: new Date(s.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
@@ -1213,6 +1257,9 @@ export const salesService = {
 
   async createSale(sale: {
     customerId?: string;
+    customerName?: string;
+    customerDoc?: string;
+    sellerName?: string;
     branchId: string;
     branchName: string;
     total: number;
@@ -1247,31 +1294,47 @@ export const salesService = {
           total: sale.total,
           payment_method: sale.paymentMethod,
           document_type: sale.documentType || 'BOLETA',
+          seller_name: sale.sellerName || 'Admin Principal',
         })
         .select()
         .single();
 
-      if (!saleError && saleData) {
-        saleId = saleData.id;
-        finalSaleNumber = saleData.sale_number || saleNumber;
+      if (saleError || !saleData) {
+        console.error('Supabase sale insert error:', saleError?.message || saleError);
+        return null;
+      }
 
-        // 3. Insert sale items
-        const itemsToInsert = sale.items.map((item) => ({
-          tenant_id: DEFAULT_TENANT_ID,
-          sale_id: saleId,
-          product_id: item.productId,
-          quantity: item.quantity,
-          unit_price: item.unitPrice,
-          subtotal: item.subtotal,
-        }));
+      saleId = saleData.id;
+      finalSaleNumber = saleData.sale_number || saleNumber;
 
-        const { error: itemsError } = await supabase.from('sale_items').insert(itemsToInsert);
-        if (itemsError) {
-          console.error('Error inserting sale items:', itemsError);
+      // 3. Insert sale items
+      const itemsToInsert = sale.items.map((item) => ({
+        tenant_id: DEFAULT_TENANT_ID,
+        sale_id: saleId,
+        product_id: item.productId,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        subtotal: item.subtotal,
+      }));
+
+      const { error: itemsError } = await supabase.from('sale_items').insert(itemsToInsert);
+      if (itemsError) {
+        console.error('Error inserting sale items:', itemsError);
+      }
+
+      // Fetch customer name/doc if customerId exists
+      let customerName = sale.customerName || 'Público General';
+      let customerDoc = sale.customerDoc || '00000000';
+      if (isValidUuid(sale.customerId)) {
+        const { data: custData } = await supabase
+          .from('customers')
+          .select('full_name, business_name, document_number')
+          .eq('id', sale.customerId!)
+          .maybeSingle();
+        if (custData) {
+          customerName = custData.business_name || custData.full_name || customerName;
+          customerDoc = custData.document_number || customerDoc;
         }
-      } else {
-        console.warn('Supabase sale insert notice:', saleError?.message || saleError);
-        saleId = `sale-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       }
 
       // 4. Register movement and update stock for each item
@@ -1292,9 +1355,10 @@ export const salesService = {
       const newMemorySale: Sale = {
         id: saleId,
         saleNumber: finalSaleNumber,
-        customer: 'Público General',
-        customerDoc: '00000000',
+        customer: customerName,
+        customerDoc: customerDoc,
         customerId: sale.customerId,
+        sellerName: sale.sellerName || 'Admin Principal',
         branch: sale.branchName || 'Sede Principal',
         branchId: sale.branchId,
         date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
@@ -1313,6 +1377,35 @@ export const salesService = {
     } catch (err) {
       console.error('Error creating sale in database:', err);
       return null;
+    }
+  },
+
+  async getSaleItems(saleId: string): Promise<{ productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }[]> {
+    try {
+      const { data, error } = await supabase
+        .from('sale_items')
+        .select(`
+          id, product_id, quantity, unit_price, subtotal,
+          products ( name )
+        `)
+        .eq('sale_id', saleId);
+
+      if (error || !data || data.length === 0) {
+        const mem = memorySales.find(s => s.id === saleId);
+        return mem?.items || [];
+      }
+
+      return data.map((item: any) => ({
+        productId: item.product_id,
+        productName: item.products?.name || 'Producto',
+        quantity: Number(item.quantity) || 1,
+        unitPrice: Number(item.unit_price) || 0,
+        subtotal: Number(item.subtotal) || 0,
+      }));
+    } catch (err) {
+      console.error('Error in getSaleItems:', err);
+      const mem = memorySales.find(s => s.id === saleId);
+      return mem?.items || [];
     }
   }
 };
@@ -1777,7 +1870,11 @@ export const settingsService = {
         .from('tenants')
         .update({ ...updates, updated_at: new Date().toISOString() })
         .eq('id', DEFAULT_TENANT_ID);
-      return !error;
+      if (error) {
+        console.error('Error updating tenant info:', error);
+        return false;
+      }
+      return true;
     } catch (err) {
       console.error('Error updating tenant info:', err);
       return false;

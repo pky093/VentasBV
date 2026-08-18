@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, Palette, DollarSign, FileText, Save, Check, Loader2, RefreshCw } from 'lucide-react';
+import { Building2, Palette, DollarSign, FileText, Save, Check, Loader2, RefreshCw, Sliders } from 'lucide-react';
 import { PageHeader, Button, Card, CardHeader, CardBody, Tabs } from '../components/ui';
 import { settingsService } from '../lib/db-services';
-import { applyTenantTheme, getPresets } from '../lib/tenant-theme';
+import { applyTenantTheme, applyCustomTheme, getPresets, PRESETS, ThemeColors } from '../lib/tenant-theme';
 import Swal from 'sweetalert2';
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('general');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activePreset, setActivePreset] = useState('indigo_gold');
+  const [activePreset, setActivePreset] = useState('default');
 
   const [companyInfo, setCompanyInfo] = useState({
     name: '',
@@ -18,8 +18,18 @@ export default function SettingsPage() {
     phone: '',
     email: '',
     address: '',
+    logo_path: '',
     currency_code: 'PEN',
     tax_rate: '18.00',
+  });
+
+  const [customColors, setCustomColors] = useState<ThemeColors>({
+    primaryColor: '#2563eb',
+    secondaryColor: '#10b981',
+    pageBg: '#f1f5f9',
+    sidebarBg: '#0f172a',
+    sidebarText: '#94a3b8',
+    surfaceBg: '#ffffff',
   });
 
   const [seriesList, setSeriesList] = useState<{ document_type: string; series: string; next_number: number }[]>([]);
@@ -41,14 +51,23 @@ export default function SettingsPage() {
           phone: tenant.phone || '',
           email: tenant.email || '',
           address: tenant.address || '',
+          logo_path: tenant.logo_path || '',
           currency_code: tenant.currency_code || 'PEN',
           tax_rate: tenant.tax_rate?.toString() || '18.00',
         });
 
-        // Load active color preset
-        const savedPreset = tenant.primary_color || localStorage.getItem('color_preset') || 'indigo_gold';
-        setActivePreset(savedPreset);
-        applyTenantTheme(savedPreset);
+        const loadedColors: ThemeColors = {
+          primaryColor: tenant.primary_color || '#2563eb',
+          secondaryColor: tenant.secondary_color || '#10b981',
+          pageBg: tenant.page_background_color || '#f1f5f9',
+          sidebarBg: tenant.sidebar_background_color || '#0f172a',
+          sidebarText: tenant.sidebar_text_color || '#94a3b8',
+          surfaceBg: tenant.surface_color || '#ffffff',
+        };
+
+        setCustomColors(loadedColors);
+        applyCustomTheme(loadedColors);
+        setActivePreset(tenant.color_preset || 'default');
       }
 
       if (series && series.length > 0) {
@@ -76,12 +95,20 @@ export default function SettingsPage() {
         phone: companyInfo.phone,
         email: companyInfo.email,
         address: companyInfo.address,
+        logo_path: companyInfo.logo_path,
         currency_code: companyInfo.currency_code,
         tax_rate: parseFloat(companyInfo.tax_rate) || 18.00,
-        primary_color: activePreset,
+        primary_color: customColors.primaryColor,
+        secondary_color: customColors.secondaryColor,
+        page_background_color: customColors.pageBg,
+        sidebar_background_color: customColors.sidebarBg,
+        sidebar_text_color: customColors.sidebarText,
+        surface_color: customColors.surfaceBg,
+        color_preset: activePreset,
       });
 
       if (success) {
+        window.dispatchEvent(new Event('tenant_info_updated'));
         Swal.fire({
           icon: 'success',
           title: '¡Guardado!',
@@ -114,11 +141,18 @@ export default function SettingsPage() {
     }
   };
 
-  const handlePresetChange = async (presetId: string) => {
+  const handlePresetSelect = (presetId: string) => {
+    const preset = PRESETS[presetId] || PRESETS['default'];
     setActivePreset(presetId);
-    applyTenantTheme(presetId);
-    // Save to DB immediately
-    await settingsService.updateTenantInfo({ primary_color: presetId });
+    setCustomColors(preset.colors);
+    applyCustomTheme(preset.colors);
+  };
+
+  const handleColorChange = (key: keyof ThemeColors, value: string) => {
+    const updated = { ...customColors, [key]: value };
+    setCustomColors(updated);
+    applyCustomTheme(updated);
+    setActivePreset('custom');
   };
 
   const tabs = [
@@ -141,7 +175,7 @@ export default function SettingsPage() {
     <div>
       <PageHeader
         title="Configuración de la Empresa"
-        subtitle="Ajustes generales, moneda principal, IGV, series de facturación y apariencia"
+        subtitle="Ajustes generales, logo corporativo, paleta de colores personalizada y facturación"
         action={
           <div className="flex gap-2">
             <Button variant="secondary" onClick={loadSettings}>
@@ -160,28 +194,88 @@ export default function SettingsPage() {
 
       {activeTab === 'general' && (
         <Card>
-          <CardHeader title="Información General" subtitle="Datos visibles en comprobantes y reportes — estos datos aparecerán en boletas y facturas" />
+          <CardHeader title="Información General" subtitle="Datos visibles en comprobantes, logo y menú lateral de la empresa" />
           <CardBody>
             <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
+              {/* Logo Section */}
+              <div className="p-4 rounded-xl border border-color bg-slate-50 dark:bg-slate-800/40 mb-4">
+                <label className="form-label font-bold text-sm mb-2 block">Logo de la Empresa (Para menú y boletas)</label>
+                <div className="flex items-center gap-4">
+                  {companyInfo.logo_path ? (
+                    <div style={{ width: '64px', height: '64px', minWidth: '64px', minHeight: '64px', flexShrink: 0, borderRadius: '12px', border: '1px solid var(--border-color)', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', overflow: 'hidden' }}>
+                      <img src={companyInfo.logo_path} alt="Logo Empresa" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                    </div>
+                  ) : (
+                    <div style={{ width: '64px', height: '64px', minWidth: '64px', minHeight: '64px', flexShrink: 0, borderRadius: '12px', border: '2px dashed var(--border-color)', background: 'var(--bg-app)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: 600, textAlign: 'center', padding: '4px' }}>
+                      Sin Logo
+                    </div>
+                  )}
+
+                  <div className="flex-1 space-y-2">
+                    <input
+                      type="text"
+                      className="form-control text-xs"
+                      placeholder="https://... URL pública de la imagen del logo"
+                      value={companyInfo.logo_path}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, logo_path: e.target.value })}
+                    />
+                    <div className="flex items-center gap-2">
+                      <label className="btn btn-secondary text-xs cursor-pointer py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg border font-semibold">
+                        📁 Subir Imagen de Logo...
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                if (event.target?.result) {
+                                  setCompanyInfo({ ...companyInfo, logo_path: event.target.result as string });
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                      {companyInfo.logo_path && (
+                        <button
+                          type="button"
+                          className="text-xs text-red-500 hover:text-red-700 font-semibold px-2 py-1"
+                          onClick={() => setCompanyInfo({ ...companyInfo, logo_path: '' })}
+                        >
+                          Quitar Logo
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-secondary mt-2">
+                  El logo se mostrará en la parte superior del menú lateral (Imagen 2) y en la boleta/factura física e impresa.
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="form-label">Razón Social</label>
+                  <label className="form-label">Razón Social (Nombre de la Empresa)</label>
                   <input
                     type="text"
                     className="form-control"
                     value={companyInfo.name}
                     onChange={(e) => setCompanyInfo({ ...companyInfo, name: e.target.value })}
-                    placeholder="Ej: Mi Empresa S.A.C."
+                    placeholder="Ej: Venta Vehiculos"
                   />
                 </div>
                 <div>
-                  <label className="form-label">Nombre Comercial</label>
+                  <label className="form-label">Nombre Comercial / Subtítulo</label>
                   <input
                     type="text"
                     className="form-control"
                     value={companyInfo.trade_name}
                     onChange={(e) => setCompanyInfo({ ...companyInfo, trade_name: e.target.value })}
-                    placeholder="Ej: MiMarca"
+                    placeholder="Ej: Motors S.A.C."
                   />
                 </div>
               </div>
@@ -271,95 +365,206 @@ export default function SettingsPage() {
       )}
 
       {activeTab === 'branding' && (
-        <Card>
-          <CardHeader title="Apariencia y Tema de Marca" subtitle="Personaliza los colores de la interfaz — los cambios se aplican inmediatamente" />
-          <CardBody>
-            <div className="space-y-6 max-w-2xl">
-              <div>
-                <label className="form-label mb-3" style={{ display: 'block' }}>Paleta de Colores Preset</label>
-                <div className="grid grid-cols-2 gap-4" style={{ maxWidth: '500px' }}>
-                  {presets.map((preset) => (
+        <div className="space-y-6 max-w-4xl">
+          {/* Section 1: Presets */}
+          <Card>
+            <CardHeader title="Paletas de Colores por Defecto" subtitle="Selecciona un tema preconfigurado para tu plataforma" />
+            <CardBody>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {presets.map((preset) => {
+                  const isSelected = activePreset === preset.id;
+                  return (
                     <button
                       key={preset.id}
                       type="button"
-                      onClick={() => handlePresetChange(preset.id)}
+                      onClick={() => handlePresetSelect(preset.id)}
                       className="border-none"
                       style={{
                         padding: '16px',
-                        borderRadius: '12px',
+                        borderRadius: '14px',
                         textAlign: 'left' as const,
                         cursor: 'pointer',
-                        transition: 'all 0.3s ease',
-                        border: activePreset === preset.id ? '2px solid var(--primary-600)' : '2px solid var(--border-color)',
-                        background: activePreset === preset.id ? 'var(--primary-50, #eff6ff)' : 'var(--bg-surface)',
-                        transform: activePreset === preset.id ? 'scale(1.02)' : 'scale(1)',
-                        boxShadow: activePreset === preset.id ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
+                        transition: 'all 0.2s ease',
+                        border: isSelected ? '2px solid var(--primary-600)' : '1px solid var(--border-color)',
+                        background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-surface)',
+                        boxShadow: isSelected ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
                       }}
                     >
-                      <div style={{
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        color: 'var(--text-primary)',
-                        marginBottom: '8px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                      }}>
-                        {activePreset === preset.id && <Check size={14} style={{ color: 'var(--primary-600)' }} />}
-                        {preset.name}
+                      <div className="font-bold text-sm flex items-center justify-between mb-3" style={{ color: 'var(--text-primary)' }}>
+                        <span>{preset.name}</span>
+                        {isSelected && <Check size={16} className="text-primary-600" />}
                       </div>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        <div style={{
-                          width: '32px',
-                          height: '32px',
-                          borderRadius: '8px',
-                          background: preset.colors[0],
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                        }} />
-                        <div style={{
-                          width: '32px',
-                          height: '32px',
-                          borderRadius: '8px',
-                          background: preset.colors[1],
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                        }} />
-                        <div style={{
-                          width: '32px',
-                          height: '32px',
-                          borderRadius: '8px',
-                          background: `linear-gradient(135deg, ${preset.colors[0]}, ${preset.colors[1]})`,
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                        }} />
+                      <div className="flex gap-2 items-center">
+                        <div title="Primario" style={{ width: '26px', height: '26px', borderRadius: '50%', background: preset.colors.primaryColor, border: '1px solid rgba(0,0,0,0.1)' }} />
+                        <div title="Secundario / Accent" style={{ width: '26px', height: '26px', borderRadius: '50%', background: preset.colors.secondaryColor, border: '1px solid rgba(0,0,0,0.1)' }} />
+                        <div title="Menú Lateral" style={{ width: '26px', height: '26px', borderRadius: '50%', background: preset.colors.sidebarBg, border: '1px solid rgba(0,0,0,0.1)' }} />
+                        <div title="Fondo Página" style={{ width: '26px', height: '26px', borderRadius: '50%', background: preset.colors.pageBg, border: '1px solid rgba(0,0,0,0.1)' }} />
                       </div>
                     </button>
-                  ))}
+                  );
+                })}
+              </div>
+            </CardBody>
+          </Card>
+
+          {/* Section 2: Custom Color Pickers */}
+          <Card>
+            <CardHeader title="Personalización de Colores a tu Gusto" subtitle="Cambia individualmente cada color del sistema: primario, secundario, fondo de página y menú lateral" />
+            <CardBody>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Primary Color */}
+                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                  <div>
+                    <div className="font-semibold text-sm">Color Primario</div>
+                    <div className="text-xs text-secondary">Botones principales, íconos y acentos primarios</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      value={customColors.primaryColor}
+                      onChange={(e) => handleColorChange('primaryColor', e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      className="form-control text-xs uppercase font-mono w-24"
+                      value={customColors.primaryColor}
+                      onChange={(e) => handleColorChange('primaryColor', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Secondary Color */}
+                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                  <div>
+                    <div className="font-semibold text-sm">Color Secundario / Destacado</div>
+                    <div className="text-xs text-secondary">Badges, enlaces activos y acentos secundarios</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      value={customColors.secondaryColor}
+                      onChange={(e) => handleColorChange('secondaryColor', e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      className="form-control text-xs uppercase font-mono w-24"
+                      value={customColors.secondaryColor}
+                      onChange={(e) => handleColorChange('secondaryColor', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Page Background */}
+                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                  <div>
+                    <div className="font-semibold text-sm">Fondo de la Página</div>
+                    <div className="text-xs text-secondary">Color general del fondo de la aplicación</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      value={customColors.pageBg}
+                      onChange={(e) => handleColorChange('pageBg', e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      className="form-control text-xs uppercase font-mono w-24"
+                      value={customColors.pageBg}
+                      onChange={(e) => handleColorChange('pageBg', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Sidebar Background */}
+                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                  <div>
+                    <div className="font-semibold text-sm">Fondo del Menú Lateral</div>
+                    <div className="text-xs text-secondary">Color de fondo del panel de navegación lateral</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      value={customColors.sidebarBg}
+                      onChange={(e) => handleColorChange('sidebarBg', e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      className="form-control text-xs uppercase font-mono w-24"
+                      value={customColors.sidebarBg}
+                      onChange={(e) => handleColorChange('sidebarBg', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Sidebar Text Color */}
+                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                  <div>
+                    <div className="font-semibold text-sm">Color Texto del Menú</div>
+                    <div className="text-xs text-secondary">Color de los enlaces y etiquetas del menú lateral</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      value={customColors.sidebarText}
+                      onChange={(e) => handleColorChange('sidebarText', e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      className="form-control text-xs uppercase font-mono w-24"
+                      value={customColors.sidebarText}
+                      onChange={(e) => handleColorChange('sidebarText', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Surface Background */}
+                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                  <div>
+                    <div className="font-semibold text-sm">Fondo de Tarjetas (Surface)</div>
+                    <div className="text-xs text-secondary">Color de fondo de las tarjetas y contenedores</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      value={customColors.surfaceBg}
+                      onChange={(e) => handleColorChange('surfaceBg', e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      className="form-control text-xs uppercase font-mono w-24"
+                      value={customColors.surfaceBg}
+                      onChange={(e) => handleColorChange('surfaceBg', e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* Live Preview Box */}
               <div style={{
+                marginTop: '20px',
                 padding: '16px',
                 borderRadius: '12px',
                 background: 'var(--bg-app)',
                 border: '1px solid var(--border-color)',
               }}>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase' as const }}>
-                  Vista Previa del Tema Activo
+                <div className="text-xs font-semibold text-secondary uppercase mb-3">
+                  Vista Previa en Tiempo Real
                 </div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' as const }}>
-                  <div style={{ padding: '8px 16px', borderRadius: '8px', background: 'var(--primary-600)', color: '#fff', fontSize: '12px', fontWeight: 700 }}>
-                    Botón Primario
-                  </div>
-                  <div style={{ padding: '8px 16px', borderRadius: '8px', background: 'var(--primary-100, #dbeafe)', color: 'var(--primary-700)', fontSize: '12px', fontWeight: 700 }}>
-                    Badge Info
-                  </div>
-                  <div style={{ padding: '8px 16px', borderRadius: '8px', background: 'var(--accent-500, #10b981)', color: '#fff', fontSize: '12px', fontWeight: 700 }}>
-                    Accent
-                  </div>
+                <div className="flex gap-3 flex-wrap">
+                  <button className="btn btn-primary text-xs">Botón Primario</button>
+                  <button className="btn btn-secondary text-xs">Botón Secundario</button>
+                  <span className="badge badge-success text-xs">Estado Activo</span>
                 </div>
               </div>
-            </div>
-          </CardBody>
-        </Card>
+            </CardBody>
+          </Card>
+        </div>
       )}
 
       {activeTab === 'billing' && (

@@ -44,12 +44,51 @@ const MENU_ITEMS = [
   ]}
 ];
 
+import { settingsService } from '../lib/db-services';
+
+import { applyCustomTheme } from '../lib/tenant-theme';
+
 export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
   });
+  const [tenantInfo, setTenantInfo] = useState<{ name?: string; trade_name?: string; logo_path?: string }>({});
+
+  const loadTenantData = async () => {
+    try {
+      const info = await settingsService.getTenantInfo();
+      if (info) {
+        setTenantInfo({
+          name: info.name,
+          trade_name: info.trade_name,
+          logo_path: info.logo_path,
+        });
+
+        if (info.primary_color) {
+          applyCustomTheme({
+            primaryColor: info.primary_color || '#2563eb',
+            secondaryColor: info.secondary_color || '#10b981',
+            pageBg: info.page_background_color || '#f1f5f9',
+            sidebarBg: info.sidebar_background_color || '#0f172a',
+            sidebarText: info.sidebar_text_color || '#94a3b8',
+            surfaceBg: info.surface_color || '#ffffff',
+          });
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    loadTenantData();
+    window.addEventListener('tenant_info_updated', loadTenantData);
+    return () => {
+      window.removeEventListener('tenant_info_updated', loadTenantData);
+    };
+  }, []);
 
   // Collapsible sections state
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -141,18 +180,40 @@ export default function AppLayout() {
         className={`app-sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}
       >
         <div 
-          className="sidebar-header"
+          className="sidebar-header flex items-center gap-3 cursor-pointer select-none"
           onClick={handleBrandClick}
           title="Haz clic para desplegar / ocultar menú"
         >
-          <div className="sidebar-logo">V</div>
+          {tenantInfo.logo_path ? (
+            <img
+              src={tenantInfo.logo_path}
+              alt="Logo"
+              style={{
+                maxHeight: '36px',
+                maxWidth: '48px',
+                objectFit: 'contain',
+                flexShrink: 0,
+                borderRadius: '8px',
+                overflow: 'hidden',
+                background: 'transparent',
+                border: 'none',
+                boxShadow: 'none',
+              }}
+            />
+          ) : (
+            <div className="sidebar-logo">
+              {tenantInfo.name ? tenantInfo.name.charAt(0).toUpperCase() : 'V'}
+            </div>
+          )}
           {!collapsed && (
-            <div className="sidebar-title-container">
-              <div className="sidebar-title">
-                Ventas B&V
-                <ChevronDown size={14} className="opacity-70 ml-1" />
+            <div className="sidebar-title-container min-w-0 flex-1">
+              <div className="sidebar-title flex items-center truncate">
+                <span>{tenantInfo.name || 'Ventas B&V'}</span>
+                <ChevronDown size={14} className="opacity-70 ml-1 shrink-0" />
               </div>
-              <div className="sidebar-subtitle">Enterprise POS</div>
+              <div className="sidebar-subtitle text-xs text-emerald-400 font-semibold truncate">
+                {tenantInfo.trade_name || 'ENTERPRISE POS'}
+              </div>
             </div>
           )}
         </div>

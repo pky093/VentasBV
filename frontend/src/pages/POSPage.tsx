@@ -19,6 +19,7 @@ import {
 import { Button, Modal, Badge } from '../components/ui';
 import { productsService, customersService, catalogService, salesService, settingsService, Product as DBProduct } from '../lib/db-services';
 import { DEFAULT_BRANCH_ID } from '../lib/supabase';
+import { numberToSpanishWords } from '../lib/numberToWords';
 
 interface Product {
   id: string;
@@ -57,9 +58,11 @@ export default function POSPage() {
   const [showBoletaPreview, setShowBoletaPreview] = useState(false);
   const [boletaData, setBoletaData] = useState<{
     companyName: string;
+    companyTradeName?: string;
     companyRuc: string;
     companyAddress: string;
     companyPhone: string;
+    logoPath?: string;
     docTitle: string;
     series: string;
     number: string;
@@ -104,19 +107,15 @@ export default function POSPage() {
       setCategories(Array.from(new Set(catList)));
 
       // Set Customers dynamically
-      if (dbCusts && dbCusts.length > 0) {
-        const mappedCusts = dbCusts.map((c) => ({
-          id: c.id,
-          name: c.name,
-          doc: c.documentNumber || '00000000',
-        }));
-        setCustomers(mappedCusts);
-        setSelectedCustomer(mappedCusts[0]);
-      } else {
-        const defaultCust = { id: 'default', name: 'Público General', doc: '00000000' };
-        setCustomers([defaultCust]);
-        setSelectedCustomer(defaultCust);
-      }
+      const defaultCust = { id: 'default', name: 'Público General', doc: '00000000' };
+      const mappedCusts = (dbCusts || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        doc: c.documentNumber || '00000000',
+      }));
+      const allCusts = [defaultCust, ...mappedCusts.filter((c) => c.id !== 'default')];
+      setCustomers(allCusts);
+      setSelectedCustomer(defaultCust);
     } catch (err) {
       console.error('Error loading POS data from Supabase:', err);
     } finally {
@@ -216,6 +215,9 @@ export default function POSPage() {
 
       const createdSaleId = await salesService.createSale({
         customerId: selectedCustomer && selectedCustomer.id !== 'default' ? selectedCustomer.id : undefined,
+        customerName: selectedCustomer?.name || 'Público General',
+        customerDoc: selectedCustomer?.doc || '00000000',
+        sellerName: 'Admin Principal',
         branchId: DEFAULT_BRANCH_ID,
         branchName: 'Sede Principal',
         total: total,
@@ -237,10 +239,12 @@ export default function POSPage() {
       // 5. Build boleta preview data
       const now = new Date();
       setBoletaData({
-        companyName: tenant.name || 'Empresa S.A.C.',
-        companyRuc: tenant.ruc || '20000000000',
-        companyAddress: tenant.address || 'Dirección no configurada',
-        companyPhone: tenant.phone || '',
+        companyName: tenant.name || 'Venta Vehiculos',
+        companyTradeName: tenant.trade_name || '',
+        companyRuc: tenant.ruc || '20601234567',
+        companyAddress: tenant.address || 'Av. Principal 123, Lima',
+        companyPhone: tenant.phone || '+51 987654321',
+        logoPath: tenant.logo_path || '',
         docTitle: docType === 'BOLETA' ? 'BOLETA DE VENTA ELECTRÓNICA' : 'FACTURA ELECTRÓNICA',
         series: seriesStr,
         number: `${seriesStr}-${numStr}`,
@@ -274,30 +278,45 @@ export default function POSPage() {
   const handlePrintBoleta = () => {
     const printContent = document.getElementById('boleta-preview-content');
     if (!printContent) return;
-    const printWindow = window.open('', '_blank', 'width=400,height=700');
+    const printWindow = window.open('', '_blank', 'width=450,height=750');
     if (!printWindow) return;
     printWindow.document.write(`
+      <!DOCTYPE html>
       <html>
         <head>
-          <title>Comprobante</title>
+          <title>Comprobante ${boletaData?.number || ''}</title>
           <style>
-            @page { size: 80mm auto; margin: 4mm; }
-            body { font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.4; color: #000; margin: 0; padding: 8px; }
-            .center { text-align: center; }
-            .bold { font-weight: bold; }
-            .divider { border-top: 1px dashed #000; margin: 6px 0; }
-            .row { display: flex; justify-content: space-between; }
-            .items-table { width: 100%; border-collapse: collapse; }
-            .items-table td { padding: 2px 0; font-size: 10px; }
-            .items-table .qty-col { width: 30px; text-align: center; }
-            .items-table .price-col { width: 60px; text-align: right; }
-            .items-table .total-col { width: 60px; text-align: right; }
-            .totals .row { font-size: 11px; }
-            .grand-total { font-size: 14px; font-weight: bold; }
+            @page { size: 80mm auto; margin: 0; }
+            body {
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 11px;
+              line-height: 1.4;
+              color: #000;
+              margin: 0;
+              padding: 10px;
+              background: #fff;
+            }
+            * { box-sizing: border-box; }
+            .ticket-container {
+              width: 100%;
+              max-width: 320px;
+              margin: 0 auto;
+            }
+            @media print {
+              body { padding: 4px; }
+            }
           </style>
         </head>
-        <body>${printContent.innerHTML}
-          <script>window.onload = () => { window.print(); window.close(); }<\/script>
+        <body>
+          <div class="ticket-container">
+            ${printContent.innerHTML}
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            };
+          </script>
         </body>
       </html>
     `);
@@ -754,109 +773,178 @@ export default function POSPage() {
             <div
               id="boleta-preview-content"
               style={{
-                maxWidth: '340px',
+                maxWidth: '320px',
                 margin: '0 auto',
-                padding: '20px 16px',
+                padding: '24px 18px',
                 background: '#fff',
                 color: '#000',
-                fontFamily: "'Courier New', monospace",
+                fontFamily: "'Courier New', Courier, monospace",
                 fontSize: '11px',
-                lineHeight: 1.5,
-                borderRadius: '8px',
-                border: '1px solid #e5e7eb',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                lineHeight: 1.35,
+                borderRadius: '4px',
+                border: '1px solid #cbd5e1',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.08)',
               }}
             >
-              {/* Company Header */}
-              <div className="center" style={{ textAlign: 'center', marginBottom: '8px' }}>
-                <div className="bold" style={{ fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>{boletaData.companyName}</div>
-                <div style={{ fontSize: '10px' }}>RUC: {boletaData.companyRuc}</div>
-                <div style={{ fontSize: '10px' }}>{boletaData.companyAddress}</div>
-                {boletaData.companyPhone && <div style={{ fontSize: '10px' }}>Tel: {boletaData.companyPhone}</div>}
+              {/* Header */}
+              <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+                {boletaData.logoPath && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <img
+                      src={boletaData.logoPath}
+                      alt="Logo Empresa"
+                      style={{ maxHeight: '55px', maxWidth: '160px', margin: '0 auto', display: 'block', objectFit: 'contain' }}
+                    />
+                  </div>
+                )}
+                <div style={{ fontWeight: 700, fontSize: '18px', letterSpacing: '-0.02em', marginBottom: '2px', color: '#000' }}>
+                  {boletaData.companyName}
+                </div>
+                {boletaData.companyTradeName && (
+                  <div style={{ fontSize: '11px', color: '#1e293b' }}>
+                    {boletaData.companyTradeName}
+                  </div>
+                )}
+                <div style={{ fontSize: '11px', color: '#1e293b' }}>
+                  {boletaData.companyAddress}
+                </div>
+                {boletaData.companyPhone && (
+                  <div style={{ fontSize: '11px', color: '#1e293b' }}>
+                    Tel. {boletaData.companyPhone}
+                  </div>
+                )}
               </div>
 
-              {/* Divider */}
-              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              {/* Dashed Line */}
+              <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
 
-              {/* Document Title */}
-              <div className="center bold" style={{ textAlign: 'center', fontWeight: 700, fontSize: '12px', margin: '6px 0' }}>
-                {boletaData.docTitle}
-              </div>
-              <div className="center" style={{ textAlign: 'center', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
-                {boletaData.number}
-              </div>
-
-              {/* Divider */}
-              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
-
-              {/* Date, Customer */}
-              <div className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
-                <span>Fecha: {boletaData.date}</span>
-                <span>Hora: {boletaData.time}</span>
-              </div>
-              <div style={{ fontSize: '10px', marginTop: '4px' }}>
-                Cliente: {boletaData.customerName}
-              </div>
-              <div style={{ fontSize: '10px' }}>
-                {docType === 'FACTURA' ? 'RUC' : 'DNI'}: {boletaData.customerDoc}
+              {/* RUC & Document Title */}
+              <div style={{ textAlign: 'center', margin: '6px 0' }}>
+                <div style={{ fontWeight: 700, fontSize: '13px' }}>
+                  RUC {boletaData.companyRuc}
+                </div>
+                <div style={{ fontWeight: 700, fontSize: '13px', marginTop: '2px' }}>
+                  {boletaData.docTitle}
+                </div>
+                <div style={{ fontWeight: 700, fontSize: '13px', marginTop: '2px' }}>
+                  {boletaData.number.includes('-') && boletaData.number.split('-')[1].length < 8
+                    ? `${boletaData.number.split('-')[0]}-${boletaData.number.split('-')[1].padStart(8, '0')}`
+                    : boletaData.number}
+                </div>
               </div>
 
-              {/* Divider */}
-              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              {/* Dashed Line */}
+              <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
 
-              {/* Items Header */}
-              <div className="row bold" style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '10px', marginBottom: '4px' }}>
-                <span style={{ flex: 1 }}>DESCRIPCIÓN</span>
-                <span style={{ width: '30px', textAlign: 'center' }}>CANT</span>
-                <span style={{ width: '55px', textAlign: 'right' }}>P.UNIT</span>
-                <span style={{ width: '55px', textAlign: 'right' }}>TOTAL</span>
+              {/* Subtitle */}
+              <div style={{ textAlign: 'center', fontSize: '9.5px', color: '#334155', marginBottom: '8px' }}>
+                Representación impresa de la boleta de venta electrónica
               </div>
 
-              {/* Items */}
+              {/* Solid Double Divider Line */}
+              <div style={{ borderBottom: '2px solid #000', margin: '6px 0' }} />
+
+              {/* Metadata Table */}
+              <div style={{ fontSize: '11px', margin: '8px 0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Fecha de emisión:</span>
+                  <span>{boletaData.date}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Hora de emisión:</span>
+                  <span>{boletaData.time}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Moneda:</span>
+                  <span>Soles</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Cliente:</span>
+                  <span>{boletaData.customerName === 'Público General' ? 'Consumidor final' : boletaData.customerName}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Documento:</span>
+                  <span>{boletaData.customerDoc && boletaData.customerDoc !== '00000000' ? boletaData.customerDoc : '-'}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Forma de pago:</span>
+                  <span>{boletaData.paymentMethodLabel}</span>
+                </div>
+              </div>
+
+              {/* Dashed Line */}
+              <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Items Table Header */}
+              <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 60px 60px', fontWeight: 700, fontSize: '10px', margin: '4px 0 6px 0' }}>
+                <span>CANT.</span>
+                <span>DESCRIPCIÓN</span>
+                <span style={{ textAlign: 'right' }}>P.UNIT.</span>
+                <span style={{ textAlign: 'right' }}>IMPORTE</span>
+              </div>
+
+              {/* Items Rows */}
               {boletaData.items.map((item, i) => (
-                <div key={i} className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', padding: '1px 0' }}>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                  <span style={{ width: '30px', textAlign: 'center' }}>{item.qty}</span>
-                  <span style={{ width: '55px', textAlign: 'right' }}>{item.unitPrice.toFixed(2)}</span>
-                  <span style={{ width: '55px', textAlign: 'right' }}>{item.total.toFixed(2)}</span>
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '40px 1fr 60px 60px', fontSize: '10.5px', padding: '3px 0' }}>
+                  <span>{item.qty} und.</span>
+                  <span style={{ paddingRight: '4px', wordBreak: 'break-word' }}>{item.name}</span>
+                  <span style={{ textAlign: 'right' }}>{item.unitPrice.toFixed(2)}</span>
+                  <span style={{ textAlign: 'right' }}>{item.total.toFixed(2)}</span>
                 </div>
               ))}
 
-              {/* Divider */}
-              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              {/* Solid Line */}
+              <div style={{ borderBottom: '2px solid #000', margin: '8px 0' }} />
 
-              {/* Totals */}
-              <div className="totals">
-                <div className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
-                  <span>OP. GRAVADA</span>
-                  <span>S/ {boletaData.opGravada.toFixed(2)}</span>
+              {/* Totals Breakdown */}
+              <div style={{ textAlign: 'right', fontSize: '11px', margin: '6px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', marginBottom: '3px' }}>
+                  <span style={{ width: '110px' }}>Op. gravada</span>
+                  <span style={{ width: '80px', fontWeight: 600 }}>S/ {boletaData.opGravada.toFixed(2)}</span>
                 </div>
-                <div className="row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
-                  <span>IGV (18%)</span>
-                  <span>S/ {boletaData.igv.toFixed(2)}</span>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', marginBottom: '6px' }}>
+                  <span style={{ width: '110px' }}>IGV (18%)</span>
+                  <span style={{ width: '80px', fontWeight: 600 }}>S/ {boletaData.igv.toFixed(2)}</span>
                 </div>
-                <div className="divider" style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
-                <div className="row grand-total" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 700 }}>
-                  <span>IMPORTE TOTAL</span>
-                  <span>S/ {boletaData.total.toFixed(2)}</span>
+
+                {/* Solid Divider Line for Total */}
+                <div style={{ borderBottom: '2px solid #000', width: '220px', marginLeft: 'auto', margin: '6px 0' }} />
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', fontSize: '13px', fontWeight: 700, marginTop: '4px' }}>
+                  <span style={{ width: '130px' }}>IMPORTE TOTAL</span>
+                  <span style={{ width: '90px' }}>S/ {boletaData.total.toFixed(2)}</span>
                 </div>
               </div>
 
-              {/* Divider */}
-              <div className="divider" style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              {/* Amount in Words */}
+              <div style={{ fontSize: '9.5px', fontWeight: 700, margin: '10px 0 6px 0', textTransform: 'uppercase' }}>
+                SON: {numberToSpanishWords(boletaData.total)}
+              </div>
 
-              {/* Payment + Footer */}
-              <div style={{ fontSize: '10px', marginBottom: '4px' }}>
-                Forma de pago: {boletaData.paymentMethodLabel}
+              {/* Dashed Line */}
+              <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Test Banner */}
+              <div style={{ textAlign: 'center', fontWeight: 700, fontSize: '10px', margin: '8px 0', letterSpacing: '0.02em' }}>
+                AMBIENTE DE PRUEBAS - SIN VALIDEZ TRIBUTARIA
               </div>
-              <div className="center" style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px', color: '#666' }}>
-                Representación impresa de la<br />
-                {boletaData.docTitle}<br />
-                Autorizado mediante Res. de Sup.<br />
-                N° 000-000/SUNAT
-              </div>
-              <div className="center" style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px', fontWeight: 700 }}>
-                ¡Gracias por su compra!
+
+              {/* QR Code & Footer */}
+              <div style={{ textAlign: 'center', marginTop: '10px' }}>
+                <div style={{ display: 'inline-flex', padding: '4px', background: '#fff' }}>
+                  <QrCode size={110} className="text-black" />
+                </div>
+                <div style={{ fontSize: '8.5px', color: '#334155', marginTop: '8px', padding: '0 4px', lineHeight: 1.3 }}>
+                  Consulte y descargue su comprobante escaneando el QR o en:<br />
+                  <span style={{ wordBreak: 'break-all' }}>https://restaurante-rho-liart.vercel.app/cpe/81db4f00-2acc-4b3f-919f-a28c167da62f</span>
+                </div>
+                <div style={{ fontSize: '8px', color: '#64748b', marginTop: '4px', wordBreak: 'break-all' }}>
+                  Huella digital: KCHh3pS4HsRVixnpQfh80iMVervaqwliUS4G8NP643o=<br />
+                  CDR: 0
+                </div>
+                <div style={{ fontSize: '11px', fontWeight: 700, marginTop: '12px' }}>
+                  Gracias por su preferencia
+                </div>
               </div>
             </div>
 

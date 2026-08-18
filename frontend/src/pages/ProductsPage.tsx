@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search } from 'lucide-react';
 import { PageHeader, Button, Badge, Modal, DataTable, Tabs } from '../components/ui';
-import { productsService, catalogService, Product } from '../lib/db-services';
+import { productsService, catalogService, Product, Category, Brand } from '../lib/db-services';
 import Swal from 'sweetalert2';
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
-  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Partial<Product> | null>(null);
@@ -20,161 +20,54 @@ export default function ProductsPage() {
   // Competitor pricing lookup simulation states
   const [isSearchingMarket, setIsSearchingMarket] = useState(false);
   const [marketCompetitors, setMarketCompetitors] = useState<any[]>([]);
+  const [customMarginPct, setCustomMarginPct] = useState<string>('30');
 
-  const handleSearchCompetitors = () => {
+  const [geminiSummary, setGeminiSummary] = useState('');
+  const [geminiError, setGeminiError] = useState('');
+
+  const handleSearchCompetitors = async () => {
     if (!selectedProduct?.name?.trim()) {
       alert('Ingresa el nombre del producto para realizar la consulta.');
       return;
     }
     setIsSearchingMarket(true);
     setMarketCompetitors([]);
-    
-    // Simulate real web scraping query with 1.2s loader delay
-    setTimeout(() => {
-      const name = selectedProduct.name || '';
-      const cost = selectedProduct.cost || 0;
-      const category = selectedProduct.category || '';
-      const lowerName = name.toLowerCase();
-      
-      const isMoto = category.toLowerCase().includes('moto') || 
-                     lowerName.includes('moto') || 
-                     lowerName.includes('navi') || 
-                     lowerName.includes('pulsar');
-      
-      const tc = 3.40; // Reference Exchange Rate USD -> PEN from somosmoto.pe
-      
-      let stores = [];
-      
-      if (isMoto) {
-        // Motorcycle specialized stores (Somos Moto, Honda Oficial, Galgo, La Curacao, Efe)
-        let baseUsd = 1710; // Default Honda Navi 110 price
-        
-        if (lowerName.includes('navi')) {
-          baseUsd = 1710;
-        } else if (lowerName.includes('pulsar')) {
-          baseUsd = cost > 0 ? (cost / 3.75) * 1.45 : 3100;
-        } else if (cost > 0) {
-          baseUsd = cost / 3.75 * 1.5;
-        }
-        
-        const isNaviSpecific = lowerName.includes('navi');
-        const isPulsarSpecific = lowerName.includes('pulsar');
-        
-        stores = [
-          {
-            name: 'Somos Moto',
-            pricePEN: isNaviSpecific ? 5814 : baseUsd * tc,
-            priceUSD: baseUsd,
-            currency: 'USD',
-            color: '#000000',
-            textColor: '#FFF159',
-            url: isNaviSpecific 
-              ? 'https://somosmoto.pe/honda/scooter/navi-110-2026/YaXv'
-              : isPulsarSpecific
-              ? 'https://somosmoto.pe/bajaj/pistera/pulsar-ns-200-fi-abs/NSPJ'
-              : `https://www.google.com/search?q=site:somosmoto.pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'Honda Perú',
-            pricePEN: isNaviSpecific ? 5814 : (baseUsd * 1.02) * tc,
-            priceUSD: isNaviSpecific ? 1710 : baseUsd * 1.02,
-            currency: 'USD',
-            color: '#EC1C24',
-            textColor: '#FFFFFF',
-            url: isNaviSpecific
-              ? 'https://motos.honda.com.pe/modelo/navi-110'
-              : `https://www.google.com/search?q=site:motos.honda.com.pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'Galgo Perú',
-            pricePEN: isNaviSpecific ? 5790 : baseUsd * tc,
-            priceUSD: undefined,
-            currency: 'PEN',
-            color: '#10B981',
-            textColor: '#FFFFFF',
-            url: isNaviSpecific
-              ? 'https://www.galgo.com/pe/motos/PE155-honda-navi'
-              : isPulsarSpecific
-              ? 'https://www.galgo.com/pe/moto/bajaj-pulsar-ns-200'
-              : `https://www.google.com/search?q=site:galgo.com/pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'La Curacao',
-            pricePEN: isNaviSpecific ? 6159 : baseUsd * 1.08 * tc,
-            priceUSD: undefined,
-            currency: 'PEN',
-            color: '#005CA9',
-            textColor: '#FFFFFF',
-            url: isNaviSpecific
-              ? 'https://www.lacuracao.pe/moto-honda-paseo-navi-verde-mhnapave/p'
-              : isPulsarSpecific
-              ? 'https://www.lacuracao.pe/moto-bajaj-pulsar-ns-200/p'
-              : `https://www.google.com/search?q=site:lacuracao.pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'Tiendas Efe',
-            pricePEN: isNaviSpecific ? 5934.97 : baseUsd * 1.05 * tc,
-            priceUSD: undefined,
-            currency: 'PEN',
-            color: '#E30613',
-            textColor: '#FFFFFF',
-            url: isNaviSpecific
-              ? 'https://www.efe.com.pe/motocicleta-navi-rojo-ch-navi110cc-rj.html'
-              : isPulsarSpecific
-              ? 'https://www.efe.com.pe/moto-bajaj-pulsar-ns-200/p'
-              : `https://www.google.com/search?q=site:efe.com.pe+${encodeURIComponent(name)}`
-          }
-        ];
+    setGeminiSummary('');
+    setGeminiError('');
+
+    try {
+      const { queryMarketPrices } = await import('../lib/gemini-market');
+      const result = await queryMarketPrices(
+        selectedProduct.category || '',
+        selectedProduct.brand || '',
+        selectedProduct.name || ''
+      );
+
+      if (result.error) {
+        setGeminiError(result.error);
+        setMarketCompetitors([]);
       } else {
-        // General retail stores
-        const basePen = cost > 0 ? cost * 1.5 : 50;
-        stores = [
-          {
-            name: 'Ripley',
-            pricePEN: basePen * 1.05,
-            currency: 'PEN',
-            color: '#5A2C87',
-            textColor: '#FFFFFF',
-            url: `https://www.google.com/search?q=site:simple.ripley.com.pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'Sodimac',
-            pricePEN: basePen * 1.08,
-            currency: 'PEN',
-            color: '#EC1C24',
-            textColor: '#FFFFFF',
-            url: `https://www.google.com/search?q=site:sodimac.com.pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'Promart',
-            pricePEN: basePen * 1.02,
-            currency: 'PEN',
-            color: '#FF6200',
-            textColor: '#FFFFFF',
-            url: `https://www.google.com/search?q=site:promart.pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'Falabella',
-            pricePEN: basePen * 1.12,
-            currency: 'PEN',
-            color: '#00875A',
-            textColor: '#FFFFFF',
-            url: `https://www.google.com/search?q=site:falabella.com.pe+${encodeURIComponent(name)}`
-          },
-          {
-            name: 'Plaza Vea',
-            pricePEN: basePen * 0.95,
-            currency: 'PEN',
-            color: '#E30613',
-            textColor: '#FFFFFF',
-            url: `https://www.google.com/search?q=site:plazavea.com.pe+${encodeURIComponent(name)}`
-          }
-        ];
+        setGeminiSummary(result.summary);
+        // Map Gemini results to the format our UI expects
+        const storeColors = ['#0f172a', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
+        const mapped = result.stores.map((s, idx) => ({
+          name: s.storeName,
+          pricePEN: s.pricePEN,
+          priceUSD: s.priceUSD,
+          currency: s.priceUSD ? 'USD' : 'PEN',
+          color: storeColors[idx % storeColors.length],
+          textColor: '#FFFFFF',
+          url: s.url,
+          notes: s.notes || '',
+        }));
+        setMarketCompetitors(mapped);
       }
-      
-      setMarketCompetitors(stores);
+    } catch (err) {
+      console.error('Error al consultar Gemini:', err);
+      setGeminiError('Error inesperado al consultar precios de mercado.');
+    } finally {
       setIsSearchingMarket(false);
-    }, 1200);
+    }
   };
 
   const loadData = async () => {
@@ -612,7 +505,30 @@ export default function ProductsPage() {
                   <select
                     className="form-control"
                     value={selectedProduct?.category || (categories[0]?.name ?? '')}
-                    onChange={(e) => setSelectedProduct({ ...selectedProduct, category: e.target.value })}
+                    onChange={(e) => {
+                      const newCategoryName = e.target.value;
+                      const catObj = categories.find(c => c.name === newCategoryName);
+                      
+                      const matchingBrands = catObj
+                        ? brands.filter(b => 
+                            (b.categoryId && b.categoryId === catObj.id) || 
+                            (b.category_id && b.category_id === catObj.id) || 
+                            (b.categoryName && b.categoryName === newCategoryName) || 
+                            (b.category_name && b.category_name === newCategoryName)
+                          )
+                        : brands;
+                        
+                      const newBrandName = matchingBrands.length > 0 ? matchingBrands[0].name : '';
+                      const newBrandId = matchingBrands.length > 0 ? matchingBrands[0].id : '';
+
+                      setSelectedProduct({
+                        ...selectedProduct,
+                        category: newCategoryName,
+                        categoryId: catObj?.id,
+                        brand: newBrandName,
+                        brandId: newBrandId,
+                      });
+                    }}
                   >
                     {categories.map((c) => (
                       <option key={c.id} value={c.name}>
@@ -622,19 +538,42 @@ export default function ProductsPage() {
                   </select>
                 </div>
 
-                {/* MARCA */}
+                {/* MARCA (Filtrada por Categoría Seleccionada) */}
                 <div className="form-group">
                   <label className="form-label font-bold">Marca</label>
                   <select
                     className="form-control"
-                    value={selectedProduct?.brand || (brands[0]?.name ?? '')}
-                    onChange={(e) => setSelectedProduct({ ...selectedProduct, brand: e.target.value })}
+                    value={selectedProduct?.brand || ''}
+                    onChange={(e) => {
+                      const bObj = brands.find(b => b.name === e.target.value);
+                      setSelectedProduct({
+                        ...selectedProduct,
+                        brand: e.target.value,
+                        brandId: bObj?.id,
+                      });
+                    }}
                   >
-                    {brands.map((b) => (
-                      <option key={b.id} value={b.name}>
-                        {b.name}
-                      </option>
-                    ))}
+                    {(() => {
+                      const currentCatObj = categories.find(c => c.name === selectedProduct?.category);
+                      const filteredBrands = currentCatObj
+                        ? brands.filter(b => 
+                            (b.categoryId && b.categoryId === currentCatObj.id) || 
+                            (b.category_id && b.category_id === currentCatObj.id) || 
+                            (b.categoryName && b.categoryName === currentCatObj.name) || 
+                            (b.category_name && b.category_name === currentCatObj.name)
+                          )
+                        : brands;
+
+                      if (filteredBrands.length === 0) {
+                        return <option value="">Sin marcas vinculadas</option>;
+                      }
+
+                      return filteredBrands.map((b) => (
+                        <option key={b.id} value={b.name}>
+                          {b.name}
+                        </option>
+                      ));
+                    })()}
                   </select>
                 </div>
 
@@ -662,6 +601,19 @@ export default function ProductsPage() {
                     placeholder="0.00"
                     value={selectedProduct?.cost ?? ''}
                     onChange={(e) => setSelectedProduct({ ...selectedProduct, cost: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+
+                {/* STOCK ACTUAL */}
+                <div className="form-group">
+                  <label className="form-label font-bold">Stock Inicial</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    placeholder="10"
+                    value={selectedProduct?.stock ?? ''}
+                    onChange={(e) => setSelectedProduct({ ...selectedProduct, stock: parseInt(e.target.value) || 0 })}
+                    required
                   />
                 </div>
 
@@ -701,112 +653,229 @@ export default function ProductsPage() {
             {/* RIGHT 1/3 COLUMN: PRICING INTELLIGENCE SIDEBAR */}
             <div className="lg:col-span-1 space-y-4">
               {/* SUGGESTED MARGINS CARD */}
-              <div className="border border-color rounded-xl p-4 bg-surface shadow-xs">
-                <h4 className="font-extrabold text-sm text-primary mb-2.5 flex items-center gap-1.5">
-                  💡 Márgenes Sugeridos
-                </h4>
-                <p className="text-[10px] text-secondary mb-3 leading-relaxed">
-                  Calculados sobre el costo de compra (<strong>S/ {(selectedProduct?.cost || 0).toFixed(2)}</strong>). Haz clic en uno para fijar el precio:
-                </p>
-                
-                <div className="space-y-2">
-                  {[
-                    { pct: '10%', mult: 1.10, desc: 'Rotación Rápida' },
-                    { pct: '50%', mult: 1.50, desc: 'Margen Estándar' },
-                    { pct: '100%', mult: 2.00, desc: 'Margen Alto / Premium' }
-                  ].map((item, idx) => {
-                    const priceVal = parseFloat(((selectedProduct?.cost || 0) * item.mult).toFixed(2));
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        className="margin-suggestion-btn"
-                        onClick={() => setSelectedProduct({ ...selectedProduct, price: priceVal })}
-                      >
-                        <div>
-                          <div className="text-[11px] font-extrabold text-primary">{item.pct} ganancia</div>
-                          <div className="text-[9px] text-secondary">{item.desc}</div>
-                        </div>
-                        <div className="text-xs font-extrabold text-primary-600">
-                          S/ {priceVal.toFixed(2)}
-                        </div>
-                      </button>
-                    );
-                  })}
+              <div className="border border-color rounded-xl p-4 bg-surface shadow-xs space-y-4">
+                <div>
+                  <h4 className="font-extrabold text-sm text-primary mb-1">
+                    Márgenes Sugeridos
+                  </h4>
+                  <p className="text-[10px] text-secondary leading-relaxed">
+                    Calculados sobre el costo de compra (<strong>S/ {(selectedProduct?.cost || 0).toFixed(2)}</strong>).
+                  </p>
+                </div>
+
+                {/* Custom Margin Input */}
+                <div className="p-3 rounded-lg border border-color bg-app space-y-2">
+                  <label className="text-[11px] font-bold text-primary block">
+                    Margen Personalizado
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center rounded-lg border border-color bg-surface px-2.5 py-1 focus-within:border-primary-600 flex-1">
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        className="w-full bg-transparent text-xs font-bold text-primary outline-none"
+                        placeholder="30"
+                        value={customMarginPct}
+                        onChange={(e) => setCustomMarginPct(e.target.value)}
+                      />
+                      <span className="text-xs font-bold text-secondary ml-1 shrink-0">%</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm text-xs font-bold px-3 py-1.5 shrink-0"
+                      onClick={() => {
+                        const pctVal = parseFloat(customMarginPct) || 0;
+                        const costVal = selectedProduct?.cost || 0;
+                        const calculatedPrice = parseFloat((costVal * (1 + pctVal / 100)).toFixed(2));
+                        setSelectedProduct({ ...selectedProduct, price: calculatedPrice });
+                      }}
+                    >
+                      Aplicar S/ {((selectedProduct?.cost || 0) * (1 + (parseFloat(customMarginPct) || 0) / 100)).toFixed(2)}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Preset Options */}
+                <div>
+                  <div className="text-[10px] font-bold text-secondary uppercase mb-2">Preajustes Rápidos</div>
+                  <div className="space-y-2">
+                    {[
+                      { pct: '10%', mult: 1.10, desc: 'Rotación Rápida' },
+                      { pct: '50%', mult: 1.50, desc: 'Margen Estándar' },
+                      { pct: '100%', mult: 2.00, desc: 'Margen Alto / Premium' }
+                    ].map((item, idx) => {
+                      const priceVal = parseFloat(((selectedProduct?.cost || 0) * item.mult).toFixed(2));
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          className="margin-suggestion-btn"
+                          onClick={() => {
+                            setCustomMarginPct(item.pct.replace('%', ''));
+                            setSelectedProduct({ ...selectedProduct, price: priceVal });
+                          }}
+                        >
+                          <div>
+                            <div className="text-[11px] font-extrabold text-primary">{item.pct} ganancia</div>
+                            <div className="text-[9px] text-secondary">{item.desc}</div>
+                          </div>
+                          <div className="text-xs font-extrabold text-primary-600">
+                            S/ {priceVal.toFixed(2)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
               {/* COMPETITOR MARKET PRICE CHECKER */}
-              <div className="border border-color rounded-xl p-4 bg-surface shadow-xs">
-                <div className="flex justify-between items-center mb-2.5">
-                  <h4 className="font-extrabold text-sm text-primary flex items-center gap-1.5">
-                    🔍 Consultar Mercado
+              <div className="border border-color rounded-xl p-4 bg-surface shadow-xs space-y-3">
+                <div>
+                  <h4 className="font-extrabold text-sm text-primary mb-1">
+                    Consultar Mercado (IA)
                   </h4>
-                  {selectedProduct?.name?.trim() && (
-                    <button
-                      type="button"
-                      onClick={handleSearchCompetitors}
-                      className="btn btn-outline btn-sm py-0.5 px-2.5 text-[9px] font-bold inline-flex items-center gap-1"
-                      disabled={isSearchingMarket}
-                    >
-                      <Search size={10} />
-                      {isSearchingMarket ? 'Buscando...' : 'Consultar'}
-                    </button>
-                  )}
+                  <p className="text-[10px] text-secondary leading-relaxed">
+                    Obtén precios de referencia y tiendas donde se comercializa este producto en Perú.
+                  </p>
                 </div>
 
                 {isSearchingMarket ? (
-                  <div className="py-6 text-center">
-                    <div className="animate-spin inline-block w-5 h-5 border-2 border-primary-600 border-t-transparent rounded-full mb-2"></div>
-                    <p className="text-[9px] text-secondary">Buscando en tiendas retail...</p>
-                  </div>
-                ) : marketCompetitors.length > 0 ? (
-                  <div className="space-y-2">
-                    <p className="text-[9px] text-secondary leading-relaxed">
-                      Precios estimados de competidores. <strong>Haz clic en cualquier globo</strong> para abrir la búsqueda directa en la tienda:
-                    </p>
-                    <div className="flex flex-col gap-1.5">
-                      {marketCompetitors.map((comp, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => window.open(comp.url, '_blank')}
-                          className="flex items-center justify-between p-2 rounded-lg border border-color hover:border-primary-500 hover:bg-app/40 transition-all cursor-pointer group"
-                        >
-                          <span 
-                            className="px-2 py-0.5 rounded-full text-[9px] font-extrabold border"
-                            style={{ 
-                              backgroundColor: comp.color, 
-                              color: comp.textColor,
-                              borderColor: 'rgba(0,0,0,0.1)'
-                            }}
-                          >
-                            {comp.name}
-                          </span>
-                          <span className="text-[11px] font-extrabold text-primary flex items-center gap-1.5 flex-wrap justify-end">
-                            {comp.currency === 'USD' && comp.priceUSD ? (
-                              <>
-                                <span className="text-secondary font-medium text-[9px]">USD ${comp.priceUSD.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                                <span className="text-primary font-extrabold">(S/ {comp.pricePEN.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>
-                              </>
-                            ) : (
-                              <span>S/ {comp.pricePEN.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                            )}
-                            <span className="text-[9px] text-primary-500 opacity-0 group-hover:opacity-100 transition-opacity">↗</span>
-                          </span>
-                        </div>
-                      ))}
+                  <div className="py-8 text-center">
+                    <div className="relative inline-flex items-center justify-center mb-3">
+                      <div className="animate-spin w-8 h-8 border-[3px] border-primary-200 border-t-primary-600 rounded-full"></div>
+                      <Search size={12} className="absolute text-primary-600" />
                     </div>
+                    <p className="text-[11px] text-primary font-bold">Consultando precios de mercado...</p>
+                    <p className="text-[9px] text-muted mt-1">Buscando en tiendas activas de Perú</p>
                   </div>
-                ) : (
-                  <div className="py-5 text-center border border-dashed border-color rounded-xl bg-app/30">
-                    <p className="text-[11px] font-bold text-secondary mb-1">Precios en Tiendas Retail</p>
-                    <p className="text-[9px] text-muted px-4 mb-2.5">Consulta cuánto cuesta este producto en Falabella, Sodimac, Promart y más.</p>
+                ) : geminiError ? (
+                  <div className="py-3 px-3 text-center border border-dashed border-red-300 rounded-xl bg-red-50/30 space-y-2">
+                    <p className="text-[10px] text-red-600 font-bold">Error al realizar la consulta</p>
+                    <p className="text-[9px] text-red-500 leading-relaxed">{geminiError}</p>
                     <button
                       type="button"
                       onClick={handleSearchCompetitors}
-                      className="btn btn-primary btn-sm py-1 px-2.5 text-[9px]"
+                      className="btn btn-primary btn-sm py-1.5 px-3 text-[10px] w-full font-bold"
                     >
-                      Analizar precios de mercado
+                      Reintentar Consulta
+                    </button>
+                  </div>
+                ) : marketCompetitors.length > 0 ? (
+                  <div className="space-y-3">
+                    {/* AI Summary */}
+                    {geminiSummary && (
+                      <div className="p-3 rounded-xl border border-primary-200 bg-gradient-to-r from-primary-50/50 to-transparent">
+                        <p className="text-[10px] text-secondary leading-relaxed">
+                          <span className="font-bold text-primary">Resumen:</span>{' '}
+                          {geminiSummary}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Store Cards */}
+                    <div className="space-y-2.5">
+                      {marketCompetitors.map((comp, idx) => {
+                        const positionColors = [
+                          { bg: 'from-emerald-500 to-emerald-600', label: 'Mejor precio', text: 'text-emerald-700' },
+                          { bg: 'from-blue-500 to-blue-600', label: '', text: 'text-blue-600' },
+                          { bg: 'from-amber-500 to-amber-600', label: '', text: 'text-amber-600' },
+                          { bg: 'from-slate-500 to-slate-600', label: '', text: 'text-slate-600' },
+                          { bg: 'from-rose-500 to-rose-600', label: '', text: 'text-rose-600' },
+                        ];
+                        const pos = positionColors[idx] || positionColors[positionColors.length - 1];
+                        return (
+                          <div
+                            key={idx}
+                            className="rounded-xl border border-color overflow-hidden hover:shadow-md transition-all group"
+                          >
+                            {/* Store header row */}
+                            <div className="flex items-center justify-between px-3 py-2.5 bg-app/50">
+                              <div className="flex items-center gap-2">
+                                <span className={`flex items-center justify-center w-5 h-5 rounded-full bg-gradient-to-br ${pos.bg} text-white text-[9px] font-black shrink-0`}>
+                                  {idx + 1}
+                                </span>
+                                <div>
+                                  <span className="text-[11px] font-extrabold text-primary block leading-tight">
+                                    {comp.name}
+                                  </span>
+                                  {idx === 0 && (
+                                    <span className="text-[8px] font-bold text-emerald-600 uppercase tracking-wide">Mejor precio</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                {comp.currency === 'USD' && comp.priceUSD ? (
+                                  <>
+                                    <span className="text-[13px] font-black text-primary block leading-tight">
+                                      S/ {comp.pricePEN.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    <span className="text-[9px] text-secondary font-medium">
+                                      USD ${comp.priceUSD.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-[13px] font-black text-primary block leading-tight">
+                                    S/ {comp.pricePEN.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Link row */}
+                            <div className="px-3 py-2 border-t border-color/50 flex items-center justify-between gap-2">
+                              <a
+                                href={comp.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[9px] text-primary-500 hover:text-primary-700 underline underline-offset-2 truncate flex-1 font-medium transition-colors"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {comp.url}
+                              </a>
+                              <a
+                                href={comp.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="shrink-0 text-[9px] font-bold text-primary-600 hover:text-primary-800 bg-primary-50 hover:bg-primary-100 px-2 py-0.5 rounded-md transition-colors"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Visitar
+                              </a>
+                            </div>
+
+                            {/* Notes */}
+                            {comp.notes && (
+                              <div className="px-3 pb-2">
+                                <span className="text-[8px] text-secondary italic">{comp.notes}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[8px] text-muted">Los precios pueden variar</span>
+                      <button
+                        type="button"
+                        onClick={handleSearchCompetitors}
+                        className="text-[9px] font-bold text-primary-600 hover:text-primary-800 transition-colors"
+                      >
+                        Actualizar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={handleSearchCompetitors}
+                      className="btn btn-primary btn-sm py-2 px-3 text-[11px] w-full font-bold"
+                    >
+                      Consultar Precios de Mercado
                     </button>
                   </div>
                 )}

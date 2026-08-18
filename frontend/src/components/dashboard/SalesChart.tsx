@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Sale } from '../../lib/db-services';
+import { Tabs } from '../ui';
 
 interface SalesChartProps {
   sales: Sale[];
@@ -13,15 +14,14 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
   // 1. Get the last 7 days (including today)
   const days: { date: Date; dateStr: string; label: string; sales: number; gastos: number; ganancias: number }[] = [];
   const today = new Date();
-  
+
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(today.getDate() - i);
-    
-    // Label format: "Lun 17"
+
     const label = d.toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric' });
     const dateStr = d.toISOString().split('T')[0];
-    
+
     days.push({
       date: d,
       dateStr,
@@ -34,7 +34,6 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
 
   // 2. Compute Ventas, Gastos and Ganancias per day
   days.forEach((day, index) => {
-    // Find sales for this day
     const daySales = sales.filter((sale) => {
       if (sale.status === 'COMPLETED' || sale.status === 'PAID') {
         const saleDateStr = new Date(sale.rawDate).toISOString().split('T')[0];
@@ -46,26 +45,23 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
     const salesSum = daySales.reduce((sum, s) => sum + s.total, 0);
     day.sales = salesSum;
 
-    // Simulate Expenses: Cost of Goods Sold (approx 60% of sales total) + operational overhead (S/ 40 if active) + dynamic inventory imports based on date index
     const cogs = salesSum * 0.58;
     const overhead = salesSum > 0 ? 50 : 15;
     let inventoryPurchase = 0;
-    if (index === 1) inventoryPurchase = 200; // Simulated inventory restock expenses
+    if (index === 1) inventoryPurchase = 200;
     if (index === 4) inventoryPurchase = 350;
 
     day.gastos = cogs + overhead + inventoryPurchase;
-
-    // Net profits: Sales - Expenses (or 35% margin floor to keep curves healthy)
     day.ganancias = Math.max(salesSum * 0.35, salesSum - day.gastos);
   });
 
-  // 3. Chart Dimensions (reduced height for a more compact design)
+  // 3. Chart Dimensions
   const width = 600;
-  const height = 175; // Reduced from 240 to 175
+  const height = 185;
   const paddingLeft = 65;
   const paddingRight = 20;
-  const paddingTop = 15;
-  const paddingBottom = 25;
+  const paddingTop = 20;
+  const paddingBottom = 30;
 
   const chartWidth = width - paddingLeft - paddingRight;
   const chartHeight = height - paddingTop - paddingBottom;
@@ -78,8 +74,8 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
   };
 
   // 5. Calculate scales
-  const maxVal = Math.max(...days.map((d) => getActiveValue(d)), 500); 
-  const roundedMaxVal = Math.ceil(maxVal / 250) * 250; // round to nearest 250 for cleaner labels
+  const maxVal = Math.max(...days.map((d) => getActiveValue(d)), 500);
+  const roundedMaxVal = Math.ceil(maxVal / 250) * 250;
 
   const getX = (index: number) => paddingLeft + (index * chartWidth) / (days.length - 1);
   const getY = (value: number) => height - paddingBottom - (value / roundedMaxVal) * chartHeight;
@@ -105,32 +101,29 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
     }
   });
 
-  // Y-axis ticks
   const yTicks = [0, roundedMaxVal * 0.25, roundedMaxVal * 0.5, roundedMaxVal * 0.75, roundedMaxVal];
 
-  // Formatting helpers
   const formatMoney = (amount: number) => {
     if (!showBalances) return 'S/ •••';
     return `S/ ${amount.toLocaleString('es-PE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
-  // Tab Styling Configuration (Colors match active metrics)
   const colors = {
     ventas: {
-      stroke: 'var(--primary-500)',
-      gradientStop: 'var(--primary-500)',
+      stroke: 'var(--primary-600, #3b82f6)',
+      gradientStop: 'var(--primary-600, #3b82f6)',
       label: 'Ventas',
     },
     gastos: {
-      stroke: 'var(--danger-500)',
-      gradientStop: 'var(--danger-500)',
+      stroke: '#ef4444',
+      gradientStop: '#ef4444',
       label: 'Gastos',
     },
     ganancias: {
-      stroke: 'var(--success-500)',
-      gradientStop: 'var(--success-500)',
+      stroke: '#10b981',
+      gradientStop: '#10b981',
       label: 'Ganancias',
-    }
+    },
   };
 
   const activeColor = colors[activeTab];
@@ -139,38 +132,28 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
     <div className="card h-full flex flex-col">
       <div className="card-header pb-2 flex flex-wrap justify-between items-center gap-4">
         <div>
-          <h3 className="font-bold text-base">Evolución Comercial</h3>
-          <p className="text-xs text-secondary">Ventas, gastos y ganancias de los últimos 7 días</p>
+          <h3 className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>Evolución Comercial</h3>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Ventas, gastos y ganancias de los últimos 7 días</p>
         </div>
-        
-        {/* Toggle Pill Selector */}
-        <div className="flex bg-neutral-100 dark:bg-neutral-800 p-0.5 rounded-lg border border-color text-xs">
-          <button 
-            onClick={() => setActiveTab('ventas')}
-            className={`px-3 py-1 font-semibold rounded-md transition-all ${activeTab === 'ventas' ? 'bg-white dark:bg-neutral-700 text-primary-600 dark:text-white shadow-sm' : 'text-secondary hover:text-primary'}`}
-            style={{ border: 'none', cursor: 'pointer' }}
-          >
-            Ventas
-          </button>
-          <button 
-            onClick={() => setActiveTab('gastos')}
-            className={`px-3 py-1 font-semibold rounded-md transition-all ${activeTab === 'gastos' ? 'bg-white dark:bg-neutral-700 text-danger-600 dark:text-white shadow-sm' : 'text-secondary hover:text-primary'}`}
-            style={{ border: 'none', cursor: 'pointer' }}
-          >
-            Gastos
-          </button>
-          <button 
-            onClick={() => setActiveTab('ganancias')}
-            className={`px-3 py-1 font-semibold rounded-md transition-all ${activeTab === 'ganancias' ? 'bg-white dark:bg-neutral-700 text-success-600 dark:text-white shadow-sm' : 'text-secondary hover:text-primary'}`}
-            style={{ border: 'none', cursor: 'pointer' }}
-          >
-            Ganancias
-          </button>
+
+        {/* Reused Tabs Pill Selector */}
+        <div>
+          <Tabs
+            tabs={[
+              { id: 'ventas', label: 'Ventas' },
+              { id: 'gastos', label: 'Gastos' },
+              { id: 'ganancias', label: 'Ganancias' },
+            ]}
+            activeTab={activeTab}
+            onChange={(id) => setActiveTab(id as 'ventas' | 'gastos' | 'ganancias')}
+            variant="pills"
+            className="!mb-0"
+          />
         </div>
       </div>
 
       <div className="card-body p-4 flex-1 flex flex-col justify-center relative select-none">
-        <div className="relative w-full h-[175px]">
+        <div className="relative w-full h-[185px]">
           <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
             <defs>
               <linearGradient id={`chartGradient-${activeTab}`} x1="0" y1="0" x2="0" y2="1">
@@ -183,7 +166,7 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
             {yTicks.map((tick, index) => {
               const y = getY(tick);
               return (
-                <g key={index} className="opacity-80">
+                <g key={index}>
                   <line
                     x1={paddingLeft}
                     y1={y}
@@ -192,12 +175,14 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
                     stroke="var(--border-color)"
                     strokeWidth="1"
                     strokeDasharray={index === 0 ? '0' : '4 4'}
+                    opacity={index === 0 ? 0.8 : 0.4}
                   />
                   <text
                     x={paddingLeft - 10}
                     y={y + 3.5}
                     textAnchor="end"
-                    className="text-[10px] fill-secondary font-medium"
+                    fill="var(--text-secondary)"
+                    style={{ fontSize: '10px', fontWeight: 500, fontFamily: 'inherit' }}
                   >
                     {formatMoney(tick)}
                   </text>
@@ -212,9 +197,10 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
                 <text
                   key={index}
                   x={x}
-                  y={height - paddingBottom + 16}
+                  y={height - paddingBottom + 18}
                   textAnchor="middle"
-                  className="text-[10px] fill-secondary font-medium"
+                  fill="var(--text-secondary)"
+                  style={{ fontSize: '10px', fontWeight: 500, fontFamily: 'inherit' }}
                 >
                   {day.label}
                 </text>
@@ -296,21 +282,24 @@ export const SalesChart: React.FC<SalesChartProps> = ({ sales, showBalances = tr
           {/* HTML Tooltip */}
           {hoveredIndex !== null && (
             <div
-              className="absolute z-10 bg-bg-surface border border-color rounded-lg shadow-lg p-2 flex flex-col gap-0.5 pointer-events-none transition-all duration-100"
+              className="absolute z-10 rounded-xl p-2.5 flex flex-col gap-1 pointer-events-none transition-all duration-100 shadow-lg"
               style={{
                 left: `${(getX(hoveredIndex) / width) * 100}%`,
                 top: `${(getY(getActiveValue(days[hoveredIndex])) / height) * 100 - 25}%`,
                 transform: 'translate(-50%, -100%)',
-                minWidth: '120px',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                minWidth: '130px',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-primary)',
+                boxShadow: 'var(--shadow-md)',
               }}
             >
-              <span className="text-[9px] text-secondary font-medium">
+              <span className="text-[10px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
                 {days[hoveredIndex].date.toLocaleDateString('es-PE', { dateStyle: 'long' })}
               </span>
               <div className="flex justify-between items-center gap-2 mt-0.5">
-                <span className="text-[10px] text-secondary font-medium">{activeColor.label}:</span>
-                <span className="font-bold text-primary text-xs">
+                <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>{activeColor.label}:</span>
+                <span className="font-bold text-xs" style={{ color: activeColor.stroke }}>
                   {showBalances
                     ? `S/ ${getActiveValue(days[hoveredIndex]).toLocaleString('es-PE', { minimumFractionDigits: 2 })}`
                     : 'S/ ••••••'}

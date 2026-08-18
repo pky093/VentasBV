@@ -282,6 +282,7 @@ export interface TabsProps {
   activeTab: string;
   onChange: (id: string) => void;
   variant?: 'pills' | 'underline';
+  className?: string;
 }
 
 export const Tabs: React.FC<TabsProps> = ({
@@ -289,10 +290,11 @@ export const Tabs: React.FC<TabsProps> = ({
   activeTab,
   onChange,
   variant = 'pills',
+  className = '',
 }) => {
   const isPills = variant === 'pills';
   return (
-    <div className={isPills ? 'tab-list-pills' : 'tab-list-underline'}>
+    <div className={`${isPills ? 'tab-list-pills' : 'tab-list-underline'} ${className}`}>
       {tabs.map((tab) => {
         const isActive = activeTab === tab.id;
         return (

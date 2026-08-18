@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, Tag, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Folder, Tag, Edit2, Trash2, Link as LinkIcon } from 'lucide-react';
 import { PageHeader, Button, Tabs, DataTable, Modal, Badge } from '../components/ui';
 import { catalogService, Category, Brand } from '../lib/db-services';
 import Swal from 'sweetalert2';
@@ -12,7 +12,7 @@ export default function CatalogPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<{ id?: string; name: string } | null>(null);
+  const [selectedItem, setSelectedItem] = useState<{ id?: string; name: string; categoryId?: string } | null>(null);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -51,9 +51,9 @@ export default function CatalogPage() {
       }
     } else {
       if (selectedItem.id) {
-        await catalogService.updateBrand(selectedItem.id, selectedItem.name.trim());
+        await catalogService.updateBrand(selectedItem.id, selectedItem.name.trim(), selectedItem.categoryId);
       } else {
-        await catalogService.createBrand(selectedItem.name.trim());
+        await catalogService.createBrand(selectedItem.name.trim(), selectedItem.categoryId);
       }
     }
 
@@ -98,25 +98,78 @@ export default function CatalogPage() {
     return brands;
   };
 
-  const columns = [
+  const columns = activeTab === 'categories' ? [
     {
       key: 'name',
-      header: 'Nombre',
-      render: (r: any) => (
-        <div className="font-semibold text-primary flex items-center gap-2">
-          {activeTab === 'categories' ? (
-            <Folder size={16} className="text-primary-500" />
+      header: 'Categoría',
+      render: (r: Category) => (
+        <div className="font-bold text-primary flex items-center gap-2">
+          <Folder size={16} className="text-primary-600" />
+          <span>{r.name}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'brands',
+      header: 'Marcas Vinculadas',
+      render: (r: Category) => (
+        <div className="flex flex-wrap gap-1.5 items-center">
+          {r.brands && r.brands.length > 0 ? (
+            r.brands.map((b) => (
+              <span
+                key={b.id}
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200"
+              >
+                <Tag size={10} className="text-slate-500" />
+                {b.name}
+              </span>
+            ))
           ) : (
-            <Tag size={16} className="text-accent-500" />
+            <span className="text-xs text-secondary italic">Sin marcas asociadas</span>
           )}
-          {r.name}
         </div>
       ),
     },
     {
       key: 'active',
       header: 'Estado',
-      render: (r: any) => (
+      render: (r: Category) => (
+        <Badge variant={r.active !== false ? 'success' : 'secondary'}>
+          {r.active !== false ? 'Activo' : 'Inactivo'}
+        </Badge>
+      ),
+    },
+  ] : [
+    {
+      key: 'name',
+      header: 'Marca',
+      render: (r: Brand) => (
+        <div className="font-bold text-primary flex items-center gap-2">
+          <Tag size={16} className="text-accent-600" />
+          <span>{r.name}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'categoryName',
+      header: 'Categoría Vinculada',
+      render: (r: Brand) => (
+        <div className="flex items-center gap-1.5">
+          {r.categoryId ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <Folder size={12} />
+              {r.categoryName}
+            </span>
+          ) : (
+            <span className="text-xs text-secondary italic">Sin categoría (General)</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'active',
+      header: 'Estado',
+      render: (r: Brand) => (
         <Badge variant={r.active !== false ? 'success' : 'secondary'}>
           {r.active !== false ? 'Activo' : 'Inactivo'}
         </Badge>
@@ -128,9 +181,9 @@ export default function CatalogPage() {
     <div>
       <PageHeader
         title="Catálogo Base"
-        subtitle="Administración de categorías y marcas en la base de datos Supabase"
+        subtitle="Administración de categorías y vinculación de marcas asociadas"
         action={
-          <Button onClick={() => { setSelectedItem({ name: '' }); setIsModalOpen(true); }}>
+          <Button onClick={() => { setSelectedItem({ name: '', categoryId: '' }); setIsModalOpen(true); }}>
             <Plus size={18} className="mr-1.5 inline" /> {activeTab === 'categories' ? 'Nueva Categoría' : 'Nueva Marca'}
           </Button>
         }
@@ -147,12 +200,19 @@ export default function CatalogPage() {
           columns={columns}
           data={getActiveData()}
           searchPlaceholder={`Buscar en ${activeTab === 'categories' ? 'categorías' : 'marcas'}...`}
-          actions={(row) => (
+          actions={(row: any) => (
             <div className="flex gap-2 justify-end">
               <button
                 className="icon-btn icon-btn-sm btn-action-edit border-none"
                 title="Editar"
-                onClick={() => { setSelectedItem({ id: row.id, name: row.name }); setIsModalOpen(true); }}
+                onClick={() => {
+                  setSelectedItem({
+                    id: row.id,
+                    name: row.name,
+                    categoryId: row.categoryId || '',
+                  });
+                  setIsModalOpen(true);
+                }}
               >
                 <Edit2 size={14} />
               </button>
@@ -168,6 +228,7 @@ export default function CatalogPage() {
         />
       )}
 
+      {/* Modal for Creating / Editing Category or Brand */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -179,16 +240,42 @@ export default function CatalogPage() {
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <label className="form-label">Nombre</label>
+            <label className="form-label font-semibold">
+              Nombre de la {activeTab === 'categories' ? 'Categoría' : 'Marca'}
+            </label>
             <input
               type="text"
               className="form-control"
-              placeholder={activeTab === 'categories' ? 'Ej. Laptops' : 'Ej. Logitech'}
+              placeholder={activeTab === 'categories' ? 'Ej. Motocicleta, Repuesto' : 'Ej. Pulsar, Yamaha, Chino'}
               value={selectedItem?.name || ''}
-              onChange={(e) => setSelectedItem({ ...selectedItem, name: e.target.value })}
+              onChange={(e) => setSelectedItem(prev => ({ id: prev?.id, name: e.target.value, categoryId: prev?.categoryId }))}
               required
             />
           </div>
+
+          {activeTab === 'brands' && (
+            <div>
+              <label className="form-label font-semibold flex items-center gap-1.5">
+                <LinkIcon size={14} className="text-primary-600" />
+                Vincular a Categoría
+              </label>
+              <select
+                className="form-control"
+                value={selectedItem?.categoryId || ''}
+                onChange={(e) => setSelectedItem(prev => ({ id: prev?.id, name: prev?.name || '', categoryId: e.target.value }))}
+              >
+                <option value="">-- Sin Categoría (General) --</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-secondary mt-1">
+                Al vincular esta marca a una categoría (ej. Motocicleta), aparecerá asociada a ella en todo el sistema.
+              </p>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-4 border-t border-color">
             <Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>

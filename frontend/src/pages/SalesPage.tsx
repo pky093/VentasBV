@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Eye } from 'lucide-react';
+import { FileText, Eye } from 'lucide-react';
 import { PageHeader, Badge, DataTable } from '../components/ui';
 import { salesService, Sale } from '../lib/db-services';
+import { SaleDetailModal } from '../components/sales/SaleDetailModal';
 
 export default function SalesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchParams] = useSearchParams();
   const initialSearch = searchParams.get('search') || '';
 
@@ -16,6 +19,11 @@ export default function SalesPage() {
       setIsLoading(false);
     });
   }, []);
+
+  const handleOpenModal = (sale: Sale) => {
+    setSelectedSale(sale);
+    setIsModalOpen(true);
+  };
 
   const columns = [
     { key: 'saleNumber', header: 'Venta N°', render: (r: Sale) => <span className="font-bold text-primary-900">{r.saleNumber}</span> },
@@ -50,11 +58,43 @@ export default function SalesPage() {
         initialSearch={initialSearch}
         actions={(row) => (
           <div className="flex gap-2 justify-end">
-            <button className="p-1.5 text-neutral-500 hover:text-primary-600 hover:bg-neutral-100 rounded-md" style={{ background: 'none', border: 'none', cursor: 'pointer' }} title="Ver Detalle">
-              <Eye size={16} />
+            <button
+              onClick={() => handleOpenModal(row)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                fontWeight: 600,
+                background: 'var(--primary-50, #ecfdf5)',
+                color: 'var(--primary-700, #047857)',
+                border: '1px solid var(--primary-200, #a7f3d0)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--primary-100, #d1fae5)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--primary-50, #ecfdf5)';
+              }}
+              title="Ver Comprobante y Detalle"
+            >
+              <FileText size={14} />
+              <span>Ver Comprobante</span>
             </button>
           </div>
         )}
+      />
+
+      {/* Sale Detail & Ticket Modal */}
+      <SaleDetailModal
+        sale={selectedSale}
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
       />
     </div>
   );
