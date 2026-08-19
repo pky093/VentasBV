@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, Download, TrendingUp, DollarSign, Package, ShoppingCart } from 'lucide-react';
+import ExcelJS from 'exceljs';
 import { PageHeader, Button, Tabs, Card, CardHeader, CardBody, StatCard } from '../components/ui';
 import { reportsService, ReportSummary } from '../lib/db-services';
 
@@ -30,202 +31,378 @@ export default function ReportsPage() {
     return `S/ ${amount.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  // Detailed Excel spreadsheet export containing all audit trails
-  const exportToExcel = (summaryData: ReportSummary) => {
-    const dateStr = new Date().toLocaleDateString('es-PE');
-    let html = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head>
-        <meta http-equiv="content-type" content="application/vnd.ms-excel; charset=UTF-8">
-        <style>
-          body { font-family: Arial, sans-serif; }
-          table { border-collapse: collapse; margin-bottom: 25px; }
-          th { background-color: #1e3a8a; color: white; font-weight: bold; border: 1px solid #cbd5e1; padding: 8px; font-size: 11px; text-align: left; }
-          td { border: 1px solid #cbd5e1; padding: 8px; font-size: 11px; }
-          .title { font-size: 16px; font-weight: bold; color: #1e3a8a; padding: 10px 0; }
-          .subtitle { font-size: 13px; font-weight: bold; color: #0f172a; padding: 5px 0; margin-top: 15px; }
-          .meta { font-size: 11px; color: #64748b; padding-bottom: 15px; }
-          .metric-label { font-weight: bold; background-color: #f1f5f9; }
-          .metric-value { text-align: right; font-weight: bold; color: #0f172a; }
-          .text-right { text-align: right; }
-          .bold { font-weight: bold; }
-          .bg-success { background-color: #f0fdf4; color: #15803d; }
-          .bg-danger { background-color: #fef2f2; color: #b91c1c; }
-        </style>
-      </head>
-      <body>
-        <div class="title">AUDITORÍA COMERCIAL Y FINANCIERA - VENTAS B&V</div>
-        <div class="meta">Generado el: ${dateStr} | Sede Principal</div>
-        
-        <div class="subtitle">1. RESUMEN FINANCIERO MENSUAL</div>
-        <table>
-          <thead>
-            <tr>
-              <th colspan="2">Indicador</th>
-              <th class="text-right">Monto</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="metric-label" colspan="2">Ventas del Mes (Ingreso Bruto)</td>
-              <td class="metric-value">S/ ${summaryData.ventasMes.toFixed(2)}</td>
-            </tr>
-            <tr>
-              <td class="metric-label" colspan="2">Ganancia Bruta (Ventas - Costos de Adquisición)</td>
-              <td class="metric-value bg-success">S/ ${summaryData.gananciasBrutas.toFixed(2)}</td>
-            </tr>
-            <tr>
-              <td class="metric-label" colspan="2">Ganancia Neta (Ganancia Bruta - Gastos)</td>
-              <td class="metric-value bg-success">S/ ${summaryData.gananciasNetas.toFixed(2)}</td>
-            </tr>
-            <tr>
-              <td class="metric-label" colspan="2">Gastos Consolidados del Mes</td>
-              <td class="metric-value bg-danger">S/ ${summaryData.gastosMes.toFixed(2)}</td>
-            </tr>
-            <tr>
-              <td class="metric-label" colspan="2">Valorización Total de Almacén (Inventario a Costo)</td>
-              <td class="metric-value">S/ ${summaryData.valorizacionAlmacen.toFixed(2)}</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div class="subtitle">2. DETALLE DE VENTAS DEL MES (INGRESOS REGISTRADOS)</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Documento</th>
-              <th>Cliente</th>
-              <th>Medio de Pago</th>
-              <th class="text-right">Total Facturado</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${summaryData.salesList.map(s => `
-              <tr>
-                <td>${s.date}</td>
-                <td class="bold">${s.docNumber}</td>
-                <td>${s.customer}</td>
-                <td>${s.method}</td>
-                <td class="text-right bold">S/ ${s.total.toFixed(2)}</td>
-              </tr>
-            `).join('')}
-            <tr class="metric-label">
-              <td colspan="4" class="bold">TOTAL VENTAS</td>
-              <td class="text-right bold">S/ ${summaryData.ventasMes.toFixed(2)}</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div class="subtitle">3. DETALLE DE GANANCIA BRUTA (COSTO DE VENTAS / COGS POR ITEM)</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Documento</th>
-              <th>Producto</th>
-              <th class="text-right">Cant.</th>
-              <th class="text-right">P. Unitario</th>
-              <th class="text-right">Subtotal</th>
-              <th class="text-right">Costo Unit.</th>
-              <th class="text-right">Costo Total</th>
-              <th class="text-right">Ganancia Bruta</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${summaryData.grossProfitList.map(gp => `
-              <tr>
-                <td>${gp.docNumber}</td>
-                <td class="bold">${gp.product}</td>
-                <td class="text-right">${gp.qty}</td>
-                <td class="text-right">S/ ${gp.price.toFixed(2)}</td>
-                <td class="text-right">S/ ${gp.subtotal.toFixed(2)}</td>
-                <td class="text-right">S/ ${gp.cost.toFixed(2)}</td>
-                <td class="text-right">S/ ${gp.totalCost.toFixed(2)}</td>
-                <td class="text-right bold bg-success">S/ ${gp.profit.toFixed(2)}</td>
-              </tr>
-            `).join('')}
-            <tr class="metric-label">
-              <td colspan="4" class="bold">TOTALES</td>
-              <td class="text-right bold">S/ ${summaryData.ventasMes.toFixed(2)}</td>
-              <td>-</td>
-              <td class="text-right bold">S/ ${(summaryData.ventasMes - summaryData.gananciasBrutas).toFixed(2)}</td>
-              <td class="text-right bold bg-success">S/ ${summaryData.gananciasBrutas.toFixed(2)}</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div class="subtitle">4. DETALLE DE GASTOS (COMPRAS COMERCIALES Y OPERATIVOS)</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Fecha / Documento</th>
-              <th>Descripción / Proveedor</th>
-              <th>Tipo de Gasto</th>
-              <th class="text-right">Monto</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td colspan="4" style="background-color: #f8fafc; font-weight: bold; color: #1e3a8a;">A. Compras de Inventario / Mercadería</td></tr>
-            ${summaryData.purchasesList.map(p => `
-              <tr>
-                <td>${p.date} (${p.docNumber})</td>
-                <td>${p.supplier}</td>
-                <td>Compra de Stock</td>
-                <td class="text-right bold">S/ ${p.total.toFixed(2)}</td>
-              </tr>
-            `).join('')}
-            <tr><td colspan="4" style="background-color: #f8fafc; font-weight: bold; color: #1e3a8a;">B. Gastos Operativos (Fijos & Variables)</td></tr>
-            ${summaryData.expensesList.map(e => `
-              <tr>
-                <td>${e.date}</td>
-                <td>${e.description}</td>
-                <td>${e.type}</td>
-                <td class="text-right bold">S/ ${e.amount.toFixed(2)}</td>
-              </tr>
-            `).join('')}
-            <tr class="metric-label">
-              <td colspan="3" class="bold">TOTAL GASTOS CONSOLIDADOS</td>
-              <td class="text-right bold bg-danger">S/ ${summaryData.gastosMes.toFixed(2)}</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div class="subtitle">5. VALORIZACIÓN DETALLADA DE ALMACÉN (INVENTARIO FÍSICO)</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Código</th>
-              <th>Nombre del Producto</th>
-              <th class="text-right">Stock Actual</th>
-              <th class="text-right">Costo Unitario</th>
-              <th class="text-right">Valorización Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${summaryData.inventoryList.map(item => `
-              <tr>
-                <td>${item.code}</td>
-                <td class="bold">${item.name}</td>
-                <td class="text-right">${item.stock}</td>
-                <td class="text-right">S/ ${item.cost.toFixed(2)}</td>
-                <td class="text-right bold">S/ ${item.totalValue.toFixed(2)}</td>
-              </tr>
-            `).join('')}
-            <tr class="metric-label">
-              <td colspan="4" class="bold">TOTAL VALORIZACIÓN ALMACÉN</td>
-              <td class="text-right bold">S/ ${summaryData.valorizacionAlmacen.toFixed(2)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `;
+  // Export native binary .xlsx file with executive styling, pastel headers, and full table borders
+  const exportToExcel = async (summaryData: ReportSummary) => {
+    const dateStr = new Date().toLocaleDateString('es-PE', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
 
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Ventas B&V';
+    workbook.created = new Date();
+
+    const thinBorder: Partial<ExcelJS.Borders> = {
+      top: { style: 'thin', color: { argb: 'D1D5DB' } },
+      left: { style: 'thin', color: { argb: 'D1D5DB' } },
+      bottom: { style: 'thin', color: { argb: 'D1D5DB' } },
+      right: { style: 'thin', color: { argb: 'D1D5DB' } },
+    };
+
+    const totalBorder: Partial<ExcelJS.Borders> = {
+      top: { style: 'thin', color: { argb: '1E293B' } },
+      left: { style: 'thin', color: { argb: 'D1D5DB' } },
+      bottom: { style: 'double', color: { argb: '1E293B' } },
+      right: { style: 'thin', color: { argb: 'D1D5DB' } },
+    };
+
+    // ==========================================
+    // SHEET 1: 1. Resumen Ejecutivo
+    // ==========================================
+    const ws1 = workbook.addWorksheet('1. Resumen Ejecutivo', { views: [{ showGridLines: true }] });
+
+    ws1.mergeCells('A1:B1');
+    const titleCell1 = ws1.getCell('A1');
+    titleCell1.value = 'REPORTING EJECUTIVO Y AUDITORÍA FINANCIERA - VENTAS B&V';
+    titleCell1.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: 'FFFFFF' } };
+    titleCell1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E1B4B' } };
+    titleCell1.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws1.getRow(1).height = 35;
+
+    ws1.mergeCells('A2:B2');
+    const subCell1 = ws1.getCell('A2');
+    subCell1.value = `Generado el: ${dateStr}  |  Sede Principal  |  Moneda: Nuevos Soles (S/)`;
+    subCell1.font = { name: 'Segoe UI', size: 10, italic: true, color: { argb: 'C7D2FE' } };
+    subCell1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '312E81' } };
+    subCell1.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws1.getRow(2).height = 24;
+
+    ws1.addRow([]);
+
+    const secRow1 = ws1.addRow(['1. AUDITORÍA FINANCIERA Y CONSOLIDADO MENSUAL', '']);
+    ws1.mergeCells(`A${secRow1.number}:B${secRow1.number}`);
+    secRow1.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '1E3A8A' } };
+    secRow1.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E0E7FF' } }; // Pastel indigo
+    secRow1.getCell(1).border = thinBorder;
+    secRow1.height = 26;
+
+    const headerRow1 = ws1.addRow(['Indicador Financiero / KPI', 'Monto Total']);
+    headerRow1.height = 24;
+    headerRow1.eachCell((cell, colNum) => {
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '1E293B' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'C7D2FE' } };
+      cell.border = thinBorder;
+      cell.alignment = colNum === 2 ? { horizontal: 'right', vertical: 'middle' } : { horizontal: 'left', vertical: 'middle' };
+    });
+
+    const kpiData = [
+      { label: 'Ventas Totales del Mes (Ingreso Bruto)', value: summaryData.ventasMes, bg: 'F8FAFC', fg: '0F172A' },
+      { label: 'Ganancia Bruta (Ventas - Costos de Adquisición / COGS)', value: summaryData.gananciasBrutas, bg: 'DCFCE7', fg: '15803D' },
+      { label: 'Ganancia Neta (Ganancia Bruta - Gastos Operativos)', value: summaryData.gananciasNetas, bg: 'ECFDF5', fg: '047857' },
+      { label: 'Gastos Consolidados (Compras de Stock + Operativos)', value: summaryData.gastosMes, bg: 'FEE2E2', fg: 'B91C1C' },
+      { label: 'Valorización Total de Almacén (Inventario Actual)', value: summaryData.valorizacionAlmacen, bg: 'F1F5F9', fg: '0F172A' },
+    ];
+
+    kpiData.forEach((kpi) => {
+      const r = ws1.addRow([kpi.label, kpi.value]);
+      r.height = 22;
+
+      r.getCell(1).font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '334155' } };
+      r.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+      r.getCell(1).border = thinBorder;
+
+      r.getCell(2).font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: kpi.fg } };
+      r.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: kpi.bg } };
+      r.getCell(2).numFmt = '"S/" #,##0.00';
+      r.getCell(2).border = thinBorder;
+      r.getCell(2).alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+
+    ws1.getColumn(1).width = 58;
+    ws1.getColumn(2).width = 24;
+
+    // ==========================================
+    // SHEET 2: 2. Ventas y Ganancias
+    // ==========================================
+    const ws2 = workbook.addWorksheet('2. Ventas y Ganancias', { views: [{ showGridLines: true }] });
+
+    const secRow2_1 = ws2.addRow(['1. DETALLE REGISTRADO DE VENTAS DEL MES', '', '', '', '']);
+    ws2.mergeCells(`A${secRow2_1.number}:E${secRow2_1.number}`);
+    secRow2_1.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '1E3A8A' } };
+    secRow2_1.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DBEAFE' } }; // Pastel Blue
+    secRow2_1.getCell(1).border = thinBorder;
+    secRow2_1.height = 26;
+
+    const headerRow2_1 = ws2.addRow(['Fecha y Hora', 'N° Comprobante', 'Cliente / Receptor', 'Medio de Pago', 'Total Facturado']);
+    headerRow2_1.height = 24;
+    headerRow2_1.eachCell((cell, colNum) => {
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '1E3A8A' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'BFDBFE' } };
+      cell.border = thinBorder;
+      cell.alignment = colNum === 5 ? { horizontal: 'right', vertical: 'middle' } : { horizontal: 'left', vertical: 'middle' };
+    });
+
+    summaryData.salesList.forEach((s, idx) => {
+      const r = ws2.addRow([s.date, s.docNumber, s.customer, s.method, s.total]);
+      r.height = 20;
+      const bg = idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF';
+
+      r.eachCell((cell, colNum) => {
+        cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: '1E293B' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.border = thinBorder;
+        if (colNum === 2) cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '1E3A8A' } };
+        if (colNum === 5) {
+          cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '0F172A' } };
+          cell.numFmt = '"S/" #,##0.00';
+          cell.alignment = { horizontal: 'right', vertical: 'middle' };
+        }
+      });
+    });
+
+    const totalSalesRow = ws2.addRow(['TOTAL INGRESOS POR VENTAS', '', '', '', summaryData.ventasMes]);
+    totalSalesRow.height = 24;
+    ws2.mergeCells(`A${totalSalesRow.number}:D${totalSalesRow.number}`);
+    totalSalesRow.getCell(1).font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '0F172A' } };
+    totalSalesRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } };
+    totalSalesRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
+    totalSalesRow.getCell(1).border = totalBorder;
+
+    totalSalesRow.getCell(5).font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: '1E3A8A' } };
+    totalSalesRow.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DBEAFE' } };
+    totalSalesRow.getCell(5).numFmt = '"S/" #,##0.00';
+    totalSalesRow.getCell(5).alignment = { horizontal: 'right', vertical: 'middle' };
+    totalSalesRow.getCell(5).border = totalBorder;
+
+    ws2.addRow([]);
+
+    const secRow2_2 = ws2.addRow(['2. DESGLOSE DE GANANCIA BRUTA POR ÍTEM (COSTO VS PRECIO)', '', '', '', '', '', '', '']);
+    ws2.mergeCells(`A${secRow2_2.number}:H${secRow2_2.number}`);
+    secRow2_2.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '065F46' } };
+    secRow2_2.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DCFCE7' } }; // Pastel Emerald
+    secRow2_2.getCell(1).border = thinBorder;
+    secRow2_2.height = 26;
+
+    const headerRow2_2 = ws2.addRow(['Comprobante', 'Producto / Descripción', 'Cant.', 'Precio Unit.', 'Subtotal Venta', 'Costo Unit.', 'Costo Total', 'Ganancia Bruta']);
+    headerRow2_2.height = 24;
+    headerRow2_2.eachCell((cell, colNum) => {
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '065F46' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'BBF7D0' } };
+      cell.border = thinBorder;
+      if (colNum === 3) cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      else if (colNum >= 4) cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+
+    summaryData.grossProfitList.forEach((gp, idx) => {
+      const r = ws2.addRow([gp.docNumber, gp.product, gp.qty, gp.price, gp.subtotal, gp.cost, gp.totalCost, gp.profit]);
+      r.height = 20;
+      const bg = idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF';
+
+      r.eachCell((cell, colNum) => {
+        cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: '1E293B' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.border = thinBorder;
+        if (colNum === 2) cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '0F172A' } };
+        if (colNum === 3) cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        if (colNum >= 4) {
+          cell.numFmt = '"S/" #,##0.00';
+          cell.alignment = { horizontal: 'right', vertical: 'middle' };
+        }
+        if (colNum === 8) {
+          cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '15803D' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'ECFDF5' } };
+        }
+      });
+    });
+
+    const totalGPRow = ws2.addRow([
+      'TOTALES CONSOLIDADOS',
+      '',
+      '',
+      '',
+      summaryData.ventasMes,
+      '',
+      summaryData.ventasMes - summaryData.gananciasBrutas,
+      summaryData.gananciasBrutas,
+    ]);
+    totalGPRow.height = 24;
+    ws2.mergeCells(`A${totalGPRow.number}:D${totalGPRow.number}`);
+    totalGPRow.getCell(1).font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '0F172A' } };
+    totalGPRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } };
+    totalGPRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
+    totalGPRow.getCell(1).border = totalBorder;
+
+    [5, 7, 8].forEach((c) => {
+      const cell = totalGPRow.getCell(c);
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: c === 8 ? { argb: '15803D' } : { argb: '0F172A' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: c === 8 ? { argb: 'DCFCE7' } : { argb: 'F1F5F9' } };
+      cell.numFmt = '"S/" #,##0.00';
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      cell.border = totalBorder;
+    });
+
+    ws2.getColumn(1).width = 18;
+    ws2.getColumn(2).width = 36;
+    ws2.getColumn(3).width = 10;
+    ws2.getColumn(4).width = 16;
+    ws2.getColumn(5).width = 18;
+    ws2.getColumn(6).width = 16;
+    ws2.getColumn(7).width = 18;
+    ws2.getColumn(8).width = 20;
+
+    // ==========================================
+    // SHEET 3: 3. Gastos y Compras
+    // ==========================================
+    const ws3 = workbook.addWorksheet('3. Gastos y Compras', { views: [{ showGridLines: true }] });
+
+    const secRow3 = ws3.addRow(['DETALLE DE GASTOS Y REPOSICIÓN DE MERCADERÍA', '', '', '']);
+    ws3.mergeCells(`A${secRow3.number}:D${secRow3.number}`);
+    secRow3.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '991B1B' } };
+    secRow3.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FEE2E2' } }; // Pastel Red
+    secRow3.getCell(1).border = thinBorder;
+    secRow3.height = 26;
+
+    const headerRow3 = ws3.addRow(['Fecha / N° Registro', 'Descripción / Proveedor', 'Categoría / Tipo', 'Monto Total']);
+    headerRow3.height = 24;
+    headerRow3.eachCell((cell, colNum) => {
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '991B1B' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FCA5A5' } };
+      cell.border = thinBorder;
+      if (colNum === 4) cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+
+    const subA = ws3.addRow(['A. COMPRAS DE INVENTARIO Y MERCADERÍA', '', '', '']);
+    ws3.mergeCells(`A${subA.number}:D${subA.number}`);
+    subA.getCell(1).font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '1E3A8A' } };
+    subA.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DBEAFE' } };
+    subA.getCell(1).border = thinBorder;
+
+    summaryData.purchasesList.forEach((p, idx) => {
+      const r = ws3.addRow([`${p.date} (${p.docNumber})`, p.supplier, 'Compra de Stock', p.total]);
+      r.height = 20;
+      const bg = idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF';
+      r.eachCell((cell, colNum) => {
+        cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: '1E293B' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.border = thinBorder;
+        if (colNum === 4) {
+          cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '991B1B' } };
+          cell.numFmt = '"S/" #,##0.00';
+          cell.alignment = { horizontal: 'right', vertical: 'middle' };
+        }
+      });
+    });
+
+    const subB = ws3.addRow(['B. GASTOS OPERATIVOS Y ADMINISTRATIVOS', '', '', '']);
+    ws3.mergeCells(`A${subB.number}:D${subB.number}`);
+    subB.getCell(1).font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '1E3A8A' } };
+    subB.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DBEAFE' } };
+    subB.getCell(1).border = thinBorder;
+
+    summaryData.expensesList.forEach((e, idx) => {
+      const r = ws3.addRow([e.date, e.description, e.type, e.amount]);
+      r.height = 20;
+      const bg = idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF';
+      r.eachCell((cell, colNum) => {
+        cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: '1E293B' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.border = thinBorder;
+        if (colNum === 4) {
+          cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '991B1B' } };
+          cell.numFmt = '"S/" #,##0.00';
+          cell.alignment = { horizontal: 'right', vertical: 'middle' };
+        }
+      });
+    });
+
+    const totalExpRow = ws3.addRow(['TOTAL GASTOS Y COMPRAS CONSOLIDADAS', '', '', summaryData.gastosMes]);
+    totalExpRow.height = 24;
+    ws3.mergeCells(`A${totalExpRow.number}:C${totalExpRow.number}`);
+    totalExpRow.getCell(1).font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '0F172A' } };
+    totalExpRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } };
+    totalExpRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
+    totalExpRow.getCell(1).border = totalBorder;
+
+    totalExpRow.getCell(4).font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: 'B91C1C' } };
+    totalExpRow.getCell(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FEE2E2' } };
+    totalExpRow.getCell(4).numFmt = '"S/" #,##0.00';
+    totalExpRow.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
+    totalExpRow.getCell(4).border = totalBorder;
+
+    ws3.getColumn(1).width = 26;
+    ws3.getColumn(2).width = 42;
+    ws3.getColumn(3).width = 28;
+    ws3.getColumn(4).width = 22;
+
+    // ==========================================
+    // SHEET 4: 4. Almacén e Inventario
+    // ==========================================
+    const ws4 = workbook.addWorksheet('4. Almacén e Inventario', { views: [{ showGridLines: true }] });
+
+    const secRow4 = ws4.addRow(['VALORIZACIÓN DETALLADA DE ALMACÉN (INVENTARIO FÍSICO)', '', '', '', '']);
+    ws4.mergeCells(`A${secRow4.number}:E${secRow4.number}`);
+    secRow4.getCell(1).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: '92400E' } };
+    secRow4.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FEF3C7' } }; // Pastel Amber
+    secRow4.getCell(1).border = thinBorder;
+    secRow4.height = 26;
+
+    const headerRow4 = ws4.addRow(['Código SKU', 'Nombre del Producto', 'Stock Actual', 'Costo Unitario', 'Valorización Total']);
+    headerRow4.height = 24;
+    headerRow4.eachCell((cell, colNum) => {
+      cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '92400E' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FDE68A' } };
+      cell.border = thinBorder;
+      if (colNum === 3) cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      if (colNum >= 4) cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+
+    summaryData.inventoryList.forEach((item, idx) => {
+      const r = ws4.addRow([item.code, item.name, item.stock, item.cost, item.totalValue]);
+      r.height = 20;
+      const bg = idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF';
+      r.eachCell((cell, colNum) => {
+        cell.font = { name: 'Segoe UI', size: 9.5, color: { argb: '1E293B' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.border = thinBorder;
+        if (colNum === 2) cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '0F172A' } };
+        if (colNum === 3) cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        if (colNum >= 4) {
+          cell.numFmt = '"S/" #,##0.00';
+          cell.alignment = { horizontal: 'right', vertical: 'middle' };
+        }
+        if (colNum === 5) cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: '0F172A' } };
+      });
+    });
+
+    const totalInvRow = ws4.addRow(['VALORIZACIÓN TOTAL DEL INVENTARIO', '', '', '', summaryData.valorizacionAlmacen]);
+    totalInvRow.height = 24;
+    ws4.mergeCells(`A${totalInvRow.number}:D${totalInvRow.number}`);
+    totalInvRow.getCell(1).font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: '0F172A' } };
+    totalInvRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } };
+    totalInvRow.getCell(1).alignment = { horizontal: 'right', vertical: 'middle' };
+    totalInvRow.getCell(1).border = totalBorder;
+
+    totalInvRow.getCell(5).font = { name: 'Segoe UI', size: 10.5, bold: true, color: { argb: '92400E' } };
+    totalInvRow.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FEF3C7' } };
+    totalInvRow.getCell(5).numFmt = '"S/" #,##0.00';
+    totalInvRow.getCell(5).alignment = { horizontal: 'right', vertical: 'middle' };
+    totalInvRow.getCell(5).border = totalBorder;
+
+    ws4.getColumn(1).width = 18;
+    ws4.getColumn(2).width = 42;
+    ws4.getColumn(3).width = 14;
+    ws4.getColumn(4).width = 20;
+    ws4.getColumn(5).width = 24;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Reporte_Auditoria_B&V_${new Date().toISOString().split('T')[0]}.xls`;
+    link.download = `Reporte_Auditoria_BV_${new Date().toISOString().split('T')[0]}.xlsx`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

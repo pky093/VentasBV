@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Store, Users, Shield, BookOpen, Package, 
   Archive, Truck, ShoppingCart, Users2, DollarSign, MonitorSmartphone, 
   CreditCard, FileText, BarChart3, Activity, Bell, Settings,
-  Sun, Moon, Search, ChevronDown, ArrowRight, Receipt
+  Sun, Moon, Search, ChevronDown, ArrowRight, Receipt, Menu
 } from 'lucide-react';
 
 const MENU_ITEMS = [
@@ -268,6 +268,16 @@ export default function AppLayout() {
       <div className="app-main">
         <header className="app-header">
           <div className="header-left">
+            <button
+              className="icon-btn mobile-menu-btn"
+              onClick={() => {
+                setMobileOpen(prev => !prev);
+                setCollapsed(false);
+              }}
+              title="Abrir Menú"
+            >
+              <Menu size={20} />
+            </button>
             <div className="header-title-section">
               <div className="header-title">Sistema de Gestión Comercial</div>
               <div className="header-subtitle">Ventas B&V • Sede Principal</div>

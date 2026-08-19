@@ -538,6 +538,29 @@ a:hover {
   line-height: 1.25;
 }
 
+@media (max-width: 639px) {
+  .user-profile-info {
+    display: none !important;
+  }
+  .user-profile-pill {
+    padding: 0.25rem;
+    border: none;
+    background: transparent;
+  }
+}
+
+.mobile-menu-btn {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
 .user-profile-name {
   font-size: 0.8125rem;
   font-weight: 700;
@@ -1158,6 +1181,24 @@ a:hover {
   vertical-align: middle;
 }
 
+/* DataTable View Modes */
+.data-table-desktop-view {
+  display: block;
+}
+.data-table-mobile-view {
+  display: none !important;
+}
+
+@media (max-width: 767px) {
+  .data-table-desktop-view {
+    display: none !important;
+  }
+  .data-table-mobile-view {
+    display: block !important;
+    margin: 0.75rem !important;
+  }
+}
+
 .table tbody tr {
   transition: background-color var(--transition-fast);
 }
@@ -1349,22 +1390,45 @@ a:hover {
 
 @media (max-width: 640px) {
   .app-header {
-    padding: 0 1rem;
+    padding: 0 0.75rem;
+    height: 56px;
   }
   .app-content {
-    padding: 1rem;
+    padding: 0.75rem;
   }
   .header-search {
     display: none;
   }
+  .header-title {
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 170px;
+  }
+  .header-subtitle {
+    display: none;
+  }
+  .page-title {
+    font-size: 1.25rem !important;
+  }
+  .page-subtitle {
+    font-size: 0.75rem !important;
+  }
 }
 
-/* Modal Size overrides */
-.max-w-md { max-width: 440px !important; }
-.max-w-xl { max-width: 640px !important; }
-.max-w-3xl { max-width: 800px !important; }
-.max-w-5xl { max-width: 1040px !important; }
-.max-w-6xl { max-width: 1200px !important; }
+/* Modal Size overrides with mobile screen safety */
+.modal-content {
+  max-width: calc(100vw - 1.5rem) !important;
+}
+
+@media (min-width: 640px) {
+  .max-w-md { max-width: 440px !important; }
+  .max-w-xl { max-width: 640px !important; }
+  .max-w-3xl { max-width: 800px !important; }
+  .max-w-5xl { max-width: 1040px !important; }
+  .max-w-6xl { max-width: 1200px !important; }
+}
 
 /* ==========================================
    Modern Tabs Component

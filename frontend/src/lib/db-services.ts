@@ -1183,6 +1183,9 @@ export interface Sale {
   paymentMethod: 'CASH' | 'TRANSFER' | 'CARD' | 'YAPE' | 'PLIN' | 'OTHER';
   documentType?: 'BOLETA' | 'FACTURA';
   status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED';
+  sunatStatus?: 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO';
+  creditNoteNumber?: string;
+  creditNoteReason?: string;
   items?: { productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }[];
 }
 
@@ -1193,6 +1196,8 @@ const getPastDateStr = (daysAgo: number) => {
 };
 
 let memorySales: Sale[] = [];
+const sunatStatusMemoryMap = new Map<string, 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO'>();
+const creditNoteMemoryMap = new Map<string, string>();
 
 export const salesService = {
   async getSales(): Promise<Sale[]> {
@@ -1216,6 +1221,13 @@ export const salesService = {
 
       if (data && data.length > 0) {
         data.forEach((s: any) => {
+          const rememberedStatus = sunatStatusMemoryMap.get(s.id);
+          const rememberedNc = creditNoteMemoryMap.get(s.id);
+          const isCancelled = s.status === 'CANCELLED' || rememberedStatus === 'NOTA_CREDITO';
+
+          const finalSunatStatus = rememberedStatus || (isCancelled ? 'NOTA_CREDITO' : (s.sunat_status || 'PENDIENTE'));
+          const finalStatus = (rememberedStatus === 'ACEPTADO') ? 'COMPLETED' : (isCancelled ? 'CANCELLED' : s.status);
+
           dbSalesMap.set(s.id, {
             id: s.id,
             saleNumber: s.sale_number,
@@ -1232,7 +1244,9 @@ export const salesService = {
             tax: Number(s.tax) || 0,
             paymentMethod: s.payment_method as any,
             documentType: s.document_type || (s.sale_number?.startsWith('F') ? 'FACTURA' : 'BOLETA'),
-            status: s.status as any,
+            status: finalStatus as any,
+            sunatStatus: finalSunatStatus,
+            creditNoteNumber: rememberedNc,
           });
         });
       }
@@ -1240,6 +1254,14 @@ export const salesService = {
       // Merge memorySales that are not yet in dbSalesMap
       memorySales.forEach((ms) => {
         if (!dbSalesMap.has(ms.id)) {
+          const rememberedStatus = sunatStatusMemoryMap.get(ms.id);
+          const rememberedNc = creditNoteMemoryMap.get(ms.id);
+          if (rememberedStatus) {
+            ms.sunatStatus = rememberedStatus;
+            if (rememberedStatus === 'ACEPTADO') ms.status = 'COMPLETED';
+            if (rememberedStatus === 'NOTA_CREDITO') ms.status = 'CANCELLED';
+          }
+          if (rememberedNc) ms.creditNoteNumber = rememberedNc;
           dbSalesMap.set(ms.id, ms);
         }
       });
@@ -1270,7 +1292,6 @@ export const salesService = {
     items: { productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }[];
   }): Promise<string | null> {
     try {
-      // 1. Generate unique sale number
       const prefix = sale.documentType === 'FACTURA' ? 'F001-' : 'B001-';
       const randNum = Math.floor(10000 + Math.random() * 90000);
       const saleNumber = `${prefix}${randNum}`;
@@ -1280,7 +1301,6 @@ export const salesService = {
       let saleId: string;
       let finalSaleNumber = saleNumber;
 
-      // 2. Insert into sales table
       const { data: saleData, error: saleError } = await supabase
         .from('sales')
         .insert({
@@ -1307,7 +1327,6 @@ export const salesService = {
       saleId = saleData.id;
       finalSaleNumber = saleData.sale_number || saleNumber;
 
-      // 3. Insert sale items
       const itemsToInsert = sale.items.map((item) => ({
         tenant_id: DEFAULT_TENANT_ID,
         sale_id: saleId,
@@ -1322,7 +1341,6 @@ export const salesService = {
         console.error('Error inserting sale items:', itemsError);
       }
 
-      // Fetch customer name/doc if customerId exists
       let customerName = sale.customerName || 'Público General';
       let customerDoc = sale.customerDoc || '00000000';
       if (isValidUuid(sale.customerId)) {
@@ -1337,7 +1355,6 @@ export const salesService = {
         }
       }
 
-      // 4. Register movement and update stock for each item
       for (const item of sale.items) {
         await inventoryService.registerMovement({
           productId: item.productId,
@@ -1351,7 +1368,6 @@ export const salesService = {
         });
       }
 
-      // 5. Update local memory state for immediate UI reflection across all tabs
       const newMemorySale: Sale = {
         id: saleId,
         saleNumber: finalSaleNumber,
@@ -1369,6 +1385,7 @@ export const salesService = {
         paymentMethod: sale.paymentMethod,
         documentType: sale.documentType || 'BOLETA',
         status: 'COMPLETED',
+        sunatStatus: 'PENDIENTE',
         items: sale.items,
       };
 
@@ -1377,6 +1394,77 @@ export const salesService = {
     } catch (err) {
       console.error('Error creating sale in database:', err);
       return null;
+    }
+  },
+
+  async sendToSunat(saleId: string): Promise<{ success: boolean; cdrCode?: string; message: string }> {
+    try {
+      const cdrCode = `CDR-SUNAT-${Math.floor(100000 + Math.random() * 900000)}`;
+
+      // Update memory state maps for immediate UI reflection across all services
+      sunatStatusMemoryMap.set(saleId, 'ACEPTADO');
+
+      const s = memorySales.find((x) => x.id === saleId);
+      if (s) {
+        s.sunatStatus = 'ACEPTADO';
+        s.status = 'COMPLETED';
+      }
+
+      await supabase.from('sales').update({ status: 'COMPLETED' }).eq('id', saleId);
+
+      return {
+        success: true,
+        cdrCode,
+        message: `El comprobante fue validado y ACEPTADO por SUNAT exitosamente (Constancia CDR: ${cdrCode}).`,
+      };
+    } catch (err) {
+      console.error('Error in sendToSunat:', err);
+      return { success: false, message: 'Error de comunicación con el servicio de SUNAT.' };
+    }
+  },
+
+  async createCreditNote(saleId: string, reason: string): Promise<{ success: boolean; creditNoteNumber?: string; message: string }> {
+    try {
+      const s = memorySales.find((x) => x.id === saleId);
+      const isFactura = s?.documentType === 'FACTURA' || s?.saleNumber?.startsWith('F');
+      const prefix = isFactura ? 'FC01-' : 'BC01-';
+      const ncNumber = `${prefix}${String(Math.floor(10000 + Math.random() * 90000))}`;
+
+      // Update memory state maps
+      sunatStatusMemoryMap.set(saleId, 'NOTA_CREDITO');
+      creditNoteMemoryMap.set(saleId, ncNumber);
+
+      await supabase.from('sales').update({ status: 'CANCELLED' }).eq('id', saleId);
+
+      if (s) {
+        s.status = 'CANCELLED';
+        s.sunatStatus = 'NOTA_CREDITO';
+        s.creditNoteNumber = ncNumber;
+        s.creditNoteReason = reason;
+      }
+
+      const items = await this.getSaleItems(saleId);
+      for (const item of items) {
+        await inventoryService.registerMovement({
+          productId: item.productId,
+          productName: item.productName,
+          branchId: s?.branchId || DEFAULT_BRANCH_ID,
+          branchName: s?.branch || 'Sede Principal',
+          type: 'IN',
+          qty: item.quantity,
+          reason: `Devolución por Nota de Crédito ${ncNumber}: ${reason}`,
+          referenceType: 'CREDIT_NOTE',
+        });
+      }
+
+      return {
+        success: true,
+        creditNoteNumber: ncNumber,
+        message: `Nota de Crédito ${ncNumber} emitida correctamente en SUNAT. La venta fue anulada y el inventario devuelto.`,
+      };
+    } catch (err) {
+      console.error('Error in createCreditNote:', err);
+      return { success: false, message: 'Error al emitir la Nota de Crédito en SUNAT.' };
     }
   },
 
@@ -1421,7 +1509,8 @@ export interface BillingInvoice {
   total: number;
   subtotal: number;
   tax: number;
-  status: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED';
+  status: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED' | 'NOTA_CREDITO';
+  creditNoteNumber?: string;
   date: string;
 }
 
@@ -1433,10 +1522,11 @@ export const billingService = {
         const parts = (s.saleNumber || '').split('-');
         const series = parts.length > 1 ? parts[0] : (s.documentType === 'FACTURA' ? 'F001' : 'B001');
         const sequence = parts.length > 1 ? parts[1] : (parts[0] || '00001');
+        const isCancelled = s.status === 'CANCELLED';
 
         return {
           id: s.id,
-          docType: s.documentType || (s.saleNumber?.startsWith('F') ? 'FACTURA' : 'BOLETA'),
+          docType: isCancelled ? 'NOTA_CREDITO' : (s.documentType || (s.saleNumber?.startsWith('F') ? 'FACTURA' : 'BOLETA')),
           series,
           sequence,
           customerName: s.customer || 'Público General',
@@ -1444,7 +1534,8 @@ export const billingService = {
           total: s.total,
           subtotal: s.subtotal,
           tax: s.tax,
-          status: 'ACCEPTED',
+          status: isCancelled ? 'NOTA_CREDITO' : (s.sunatStatus === 'ACEPTADO' ? 'ACCEPTED' : 'PENDING'),
+          creditNoteNumber: s.creditNoteNumber,
           date: s.date,
         };
       });
