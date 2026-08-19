@@ -12,6 +12,7 @@ interface UserRecord {
   role: string;
   branches: string[];
   status: 'ACTIVE' | 'DISABLED';
+  password?: string;
 }
 
 export default function UsersPage() {
@@ -253,9 +254,9 @@ export default function UsersPage() {
           </div>
 
           <div>
-            <label className="form-label">Rol Asignado</label>
+            <label className="form-label font-bold text-xs">Rol Asignado</label>
             <select
-              className="form-control"
+              className="form-control text-xs font-semibold"
               value={selectedUser?.role || 'Vendedor'}
               onChange={(e) => setSelectedUser({ ...selectedUser, role: e.target.value })}
             >
@@ -264,6 +265,18 @@ export default function UsersPage() {
               <option value="Cajero POS">Cajero POS</option>
               <option value="Vendedor">Vendedor</option>
             </select>
+          </div>
+
+          <div>
+            <label className="form-label font-bold text-xs">Contraseña de Acceso</label>
+            <input
+              type="password"
+              className="form-control text-xs font-mono"
+              placeholder={selectedUser?.id ? '•••••••• (Dejar en blanco para mantener)' : 'Ingresa la contraseña del usuario'}
+              value={selectedUser?.password || ''}
+              onChange={(e) => setSelectedUser({ ...selectedUser, password: e.target.value })}
+              required={!selectedUser?.id}
+            />
           </div>
 
           <div className="flex justify-end gap-2 pt-4">

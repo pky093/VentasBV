@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search } from 'lucide-react';
+import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search, ArrowRightLeft, Building2 } from 'lucide-react';
 import { PageHeader, Button, Badge, Modal, DataTable, Tabs } from '../components/ui';
 import { productsService, catalogService, Product, Category, Brand } from '../lib/db-services';
+import { useBranch } from '../context/BranchContext';
+import { TransferModal } from '../components/inventory/TransferModal';
 import Swal from 'sweetalert2';
 
 export default function ProductsPage() {
+  const { activeBranchId, activeBranch, branches: contextBranches } = useBranch();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -12,6 +15,10 @@ export default function ProductsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Partial<Product> | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Inter-branch Transfer Modal State
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferTargetProduct, setTransferTargetProduct] = useState<Product | null>(null);
 
   // Cover image input modes: 'FILE' or 'URL'
   const [imageInputMode, setImageInputMode] = useState<'FILE' | 'URL'>('URL');
@@ -151,6 +158,16 @@ export default function ProductsPage() {
           const success = await productsService.deleteProduct(id);
           if (success) {
             setProducts((prev) => prev.filter((p) => p.id !== id));
+            Swal.fire({
+              title: '¡Eliminado!',
+              text: 'El producto ha sido eliminado correctamente de la base de datos.',
+              icon: 'success',
+              confirmButtonColor: '#3b82f6',
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              timer: 2000,
+              showConfirmButton: false,
+            });
           } else {
             Swal.fire({
               title: 'Error',
@@ -299,18 +316,60 @@ export default function ProductsPage() {
     },
     {
       key: 'stock',
-      header: 'Stock Actual',
+      header: activeBranchId === 'ALL' ? 'Stock Total (Todas las Sedes)' : `Stock (${activeBranch?.name || 'Sede Activa'})`,
       render: (row: Product) => {
         const isCritical = row.stock <= row.minStock;
+        const otherBranchStockCount = row.branchStocks
+          ?.filter((bs) => bs.branchId !== activeBranchId)
+          .reduce((sum, bs) => sum + bs.stock, 0) || 0;
+
+        const hasStockInOtherBranches = row.branchStocks?.some(
+          (bs) => bs.branchId !== activeBranchId && bs.stock > 0
+        );
+
         return (
-          <div>
-            <span className={`font-bold text-xs ${isCritical ? 'text-danger-500' : 'text-primary'}`}>
-              {row.stock} unid.
-            </span>
-            {isCritical && (
-              <Badge variant="danger" className="ml-2 text-[10px]">
-                Stock Bajo
-              </Badge>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className={`font-bold text-xs ${isCritical ? 'text-danger-500 font-mono' : 'text-primary font-mono'}`}>
+                {row.stock} unid.
+              </span>
+              {isCritical && (
+                <Badge variant="danger" className="text-[10px]">
+                  Stock Bajo
+                </Badge>
+              )}
+            </div>
+
+            {/* Other branches breakdown preview */}
+            {row.branchStocks && row.branchStocks.length > 0 && (
+              <div className="text-[11px] text-secondary flex flex-wrap gap-1 items-center">
+                {row.branchStocks.map((bs) => (
+                  <span
+                    key={bs.branchId}
+                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${
+                      bs.branchId === activeBranchId
+                        ? 'bg-primary-500/10 text-primary-600 dark:text-primary-400 font-bold border border-primary-500/20'
+                        : 'bg-surface border border-color opacity-80'
+                    }`}
+                  >
+                    {bs.branchName}: {bs.stock} u.
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Recommendation badge if active branch has 0 or low stock but other branches have stock */}
+            {activeBranchId !== 'ALL' && row.stock <= row.minStock && hasStockInOtherBranches && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTransferTargetProduct(row);
+                  setIsTransferModalOpen(true);
+                }}
+                className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-md border border-blue-200 dark:border-blue-800"
+              >
+                <ArrowRightLeft size={11} /> Recomendar Traspaso ({otherBranchStockCount} en otra sede)
+              </button>
             )}
           </div>
         );
@@ -331,11 +390,23 @@ export default function ProductsPage() {
     <div>
       <PageHeader
         title="Gestión de Productos"
-        subtitle="Administra el inventario de catálogo, imágenes de portada, precios y stock en Supabase"
+        subtitle={`Catálogo de inventario ${activeBranchId === 'ALL' ? '(Consolidado - Todas las Sedes)' : `• ${activeBranch?.name || 'Sede Principal'}`}`}
         action={
-          <Button variant="primary" icon={<Plus size={18} />} onClick={openCreateModal}>
-            Nuevo Producto
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              icon={<ArrowRightLeft size={16} />}
+              onClick={() => {
+                setTransferTargetProduct(products[0] || null);
+                setIsTransferModalOpen(true);
+              }}
+            >
+              Traspaso entre Sedes
+            </Button>
+            <Button variant="primary" icon={<Plus size={18} />} onClick={openCreateModal}>
+              Nuevo Producto
+            </Button>
+          </div>
         }
       />
 
@@ -349,6 +420,16 @@ export default function ProductsPage() {
           actions={(row) => (
             <div className="flex gap-2 justify-end">
               <button
+                className="icon-btn icon-btn-sm btn-action-secondary border-none"
+                title="Traspasar entre Sedes"
+                onClick={() => {
+                  setTransferTargetProduct(row);
+                  setIsTransferModalOpen(true);
+                }}
+              >
+                <ArrowRightLeft size={14} />
+              </button>
+              <button
                 className="icon-btn icon-btn-sm btn-action-edit border-none"
                 title="Editar Producto"
                 onClick={() => openEditModal(row)}
@@ -357,7 +438,7 @@ export default function ProductsPage() {
               </button>
               <button
                 className="icon-btn icon-btn-sm btn-action-danger border-none"
-                title="Eliminar Gasto"
+                title="Eliminar Producto"
                 onClick={() => handleDelete(row.id)}
               >
                 <Trash2 size={14} />
@@ -894,6 +975,22 @@ export default function ProductsPage() {
           </div>
         </form>
       </Modal>
+
+      {/* Transfer Modal for Inter-Branch Stock Transfer */}
+      <TransferModal
+        isOpen={isTransferModalOpen}
+        onClose={() => {
+          setIsTransferModalOpen(false);
+          setTransferTargetProduct(null);
+        }}
+        products={products}
+        branches={contextBranches}
+        preselectedProduct={transferTargetProduct}
+        targetBranchId={activeBranchId}
+        onSuccess={() => {
+          loadData();
+        }}
+      />
     </div>
   );
 }

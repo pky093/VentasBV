@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { CreditCard, ArrowDownRight, ArrowUpRight, Lock, Unlock, DollarSign } from 'lucide-react';
 import { PageHeader, Button, Badge, Card, CardHeader, CardBody, DataTable, Modal } from '../components/ui';
 
+import { useBranch } from '../context/BranchContext';
+
 interface Movement {
   id: string;
   type: 'INCOME' | 'EXPENSE';
@@ -11,6 +13,7 @@ interface Movement {
 }
 
 export default function CashRegisterPage() {
+  const { activeBranchId, activeBranch } = useBranch();
   const [isOpen, setIsOpen] = useState(true);
   const [openingAmount] = useState(200.00);
 
@@ -46,7 +49,7 @@ export default function CashRegisterPage() {
     <div>
       <PageHeader
         title="Caja Chica y Turno de Caja"
-        subtitle="Control de apertura, cierre de turno e ingresos/egresos de efectivo"
+        subtitle={`Control de apertura, cierre de turno e ingresos/egresos de efectivo • ${activeBranchId === 'ALL' ? 'Todas las Sedes (Consolidado)' : activeBranch?.name || 'Sede Principal'}`}
         action={
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => setIsModalOpen(true)}>

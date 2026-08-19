@@ -22,8 +22,11 @@ import {
   Branch,
   InventoryMovement,
 } from '../lib/db-services';
+import { useBranch } from '../context/BranchContext';
+import { TransferModal } from '../components/inventory/TransferModal';
 
 export default function InventoryPage() {
+  const { activeBranchId, activeBranch, branches: contextBranches } = useBranch();
   const [activeTab, setActiveTab] = useState('stock');
   const [products, setProducts] = useState<Product[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -44,14 +47,7 @@ export default function InventoryPage() {
   const [selectedBranchId, setSelectedBranchId] = useState('');
   const [movementQty, setMovementQty] = useState(1);
   const [movementReason, setMovementReason] = useState('');
-  const [adjustmentMode, setAdjustmentMode] = useState<'DELTA' | 'SET'>('DELTA'); // DELTA (+/-) or SET (nuevo stock total)
-
-  // Form inputs for Transfer Modal
-  const [transferProductId, setTransferProductId] = useState('');
-  const [sourceBranchId, setSourceBranchId] = useState('');
-  const [targetBranchId, setTargetBranchId] = useState('');
-  const [transferQty, setTransferQty] = useState(1);
-  const [transferReason, setTransferReason] = useState('');
+  const [adjustmentMode, setAdjustmentMode] = useState<'DELTA' | 'SET'>('DELTA');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -60,9 +56,9 @@ export default function InventoryPage() {
     setIsLoading(true);
     try {
       const [prods, brs, movs] = await Promise.all([
-        productsService.getProducts(),
+        productsService.getProducts(activeBranchId),
         branchesService.getBranches(),
-        inventoryService.getMovements(),
+        inventoryService.getMovements(activeBranchId),
       ]);
 
       setProducts(prods);
@@ -71,12 +67,10 @@ export default function InventoryPage() {
 
       if (prods.length > 0 && !selectedProductId) {
         setSelectedProductId(prods[0].id);
-        setTransferProductId(prods[0].id);
       }
       if (brs.length > 0) {
-        if (!selectedBranchId) setSelectedBranchId(brs[0].id);
-        if (!sourceBranchId) setSourceBranchId(brs[0].id);
-        if (!targetBranchId && brs.length > 1) setTargetBranchId(brs[1].id);
+        const defaultBId = activeBranchId !== 'ALL' ? activeBranchId : brs[0].id;
+        setSelectedBranchId(defaultBId);
       }
     } catch (err) {
       console.error('Error loading inventory data:', err);
@@ -87,7 +81,7 @@ export default function InventoryPage() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [activeBranchId]);
 
   const openMovementModal = (type: 'IN' | 'OUT' | 'ADJUSTMENT', preselectedProdId?: string) => {
     setMovementType(type);
@@ -111,15 +105,7 @@ export default function InventoryPage() {
     setIsMovementModalOpen(true);
   };
 
-  const openTransferModal = (preselectedProdId?: string) => {
-    if (preselectedProdId) {
-      setTransferProductId(preselectedProdId);
-    } else if (products.length > 0 && !transferProductId) {
-      setTransferProductId(products[0].id);
-    }
-
-    setTransferQty(1);
-    setTransferReason('Transferencia de reabastecimiento entre sedes');
+  const openTransferModal = (_preselectedProdId?: string) => {
     setIsTransferModalOpen(true);
   };
 
@@ -138,7 +124,6 @@ export default function InventoryPage() {
       let finalQty = Number(movementQty);
 
       if (movementType === 'ADJUSTMENT' && adjustmentMode === 'SET') {
-        // SET mode: quantity input is target new stock, so delta = target - current
         finalQty = Number(movementQty) - prod.stock;
       }
 
@@ -167,54 +152,6 @@ export default function InventoryPage() {
     } catch (err) {
       console.error('Error saving movement:', err);
       setFeedbackMsg({ type: 'error', text: 'Error inesperado al registrar el movimiento.' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSaveTransfer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!transferProductId) return;
-
-    const prod = products.find((p) => p.id === transferProductId);
-    const srcBranch = branches.find((b) => b.id === sourceBranchId) || branches[0];
-    const tgtBranch = branches.find((b) => b.id === targetBranchId) || branches[1] || branches[0];
-
-    if (!prod) return;
-
-    if (sourceBranchId === targetBranchId) {
-      alert('La sede de origen y la sede de destino deben ser diferentes.');
-      return;
-    }
-
-    setIsSubmitting(true);
-    setFeedbackMsg(null);
-
-    try {
-      const success = await inventoryService.registerTransfer({
-        productId: prod.id,
-        productName: prod.name,
-        sourceBranchId: srcBranch?.id || '',
-        sourceBranchName: srcBranch?.name || 'Sede Origen',
-        targetBranchId: tgtBranch?.id || '',
-        targetBranchName: tgtBranch?.name || 'Sede Destino',
-        qty: Number(transferQty),
-        reason: transferReason || `Transferencia hacia ${tgtBranch?.name}`,
-      });
-
-      if (success) {
-        setFeedbackMsg({
-          type: 'success',
-          text: `Transferencia de ${transferQty} unid. de "${prod.name}" a ${tgtBranch?.name} completada.`,
-        });
-        await loadData();
-        setIsTransferModalOpen(false);
-      } else {
-        setFeedbackMsg({ type: 'error', text: 'No se pudo registrar la transferencia.' });
-      }
-    } catch (err) {
-      console.error('Error saving transfer:', err);
-      setFeedbackMsg({ type: 'error', text: 'Error al procesar la transferencia.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -714,101 +651,17 @@ export default function InventoryPage() {
         </form>
       </Modal>
 
-      {/* MODAL 2: TRANSFERENCIA ENTRE SEDES */}
-      <Modal
+      {/* Inter-Branch Transfer Modal */}
+      <TransferModal
         isOpen={isTransferModalOpen}
         onClose={() => setIsTransferModalOpen(false)}
-        title="⇄ Transferir Stock Entre Sedes / Sucursales"
-        size="lg"
-      >
-        <form onSubmit={handleSaveTransfer} className="space-y-4">
-          <div className="form-group">
-            <label className="form-label font-bold">Producto a Transferir</label>
-            <select
-              className="form-control"
-              value={transferProductId}
-              onChange={(e) => setTransferProductId(e.target.value)}
-              required
-            >
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.code}) — Stock Disponible: {p.stock} unid.
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="form-group">
-              <label className="form-label font-bold">Sede Origen (Salida)</label>
-              <select
-                className="form-control"
-                value={sourceBranchId}
-                onChange={(e) => setSourceBranchId(e.target.value)}
-                required
-              >
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label font-bold">Sede Destino (Ingreso)</label>
-              <select
-                className="form-control"
-                value={targetBranchId}
-                onChange={(e) => setTargetBranchId(e.target.value)}
-                required
-              >
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id} disabled={b.id === sourceBranchId}>
-                    {b.name} {b.id === sourceBranchId ? '(Misma sede)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="form-group">
-              <label className="form-label font-bold">Cantidad a Transferir</label>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                className="form-control font-bold text-lg"
-                value={transferQty}
-                onChange={(e) => setTransferQty(parseInt(e.target.value) || 1)}
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label font-bold font-bold">Motivo / Observación</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Ej. Reabastecimiento por alta demanda"
-                value={transferReason}
-                onChange={(e) => setTransferReason(e.target.value)}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-4 border-t border-color">
-            <Button variant="secondary" type="button" onClick={() => setIsTransferModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button variant="primary" type="submit" loading={isSubmitting}>
-              Confirmar Transferencia
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        products={products}
+        branches={contextBranches}
+        targetBranchId={activeBranchId}
+        onSuccess={() => {
+          loadData();
+        }}
+      />
     </div>
   );
 }

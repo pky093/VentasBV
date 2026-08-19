@@ -5,7 +5,10 @@ import { PageHeader, Badge, Button, DataTable } from '../components/ui';
 import { salesService, Sale } from '../lib/db-services';
 import { SaleDetailModal } from '../components/sales/SaleDetailModal';
 
+import { useBranch } from '../context/BranchContext';
+
 export default function SalesPage() {
+  const { activeBranchId, activeBranch } = useBranch();
   const [sales, setSales] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -14,11 +17,18 @@ export default function SalesPage() {
   const initialSearch = searchParams.get('search') || '';
 
   useEffect(() => {
+    setIsLoading(true);
     salesService.getSales().then((data) => {
-      setSales(data);
+      let filtered = data;
+      if (activeBranchId !== 'ALL') {
+        filtered = data.filter(
+          (s) => s.branchId === activeBranchId || s.branch === activeBranch?.name
+        );
+      }
+      setSales(filtered);
       setIsLoading(false);
     });
-  }, []);
+  }, [activeBranchId, activeBranch]);
 
   const handleOpenModal = (sale: Sale) => {
     setSelectedSale(sale);

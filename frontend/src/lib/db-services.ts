@@ -1,6 +1,11 @@
 import { supabase, DEFAULT_TENANT_ID, DEFAULT_BRANCH_ID } from './supabase';
 
-// Types
+export interface BranchStock {
+  branchId: string;
+  branchName: string;
+  stock: number;
+}
+
 export interface Product {
   id: string;
   code: string;
@@ -16,6 +21,7 @@ export interface Product {
   minStock: number;
   status: 'ACTIVE' | 'INACTIVE';
   imagePath?: string;
+  branchStocks?: BranchStock[];
 }
 
 export interface Branch {
@@ -90,7 +96,7 @@ export interface UserMember {
 
 // ---------------- PRODUCTS ----------------
 export const productsService = {
-  async getProducts(): Promise<Product[]> {
+  async getProducts(branchId?: string): Promise<Product[]> {
     const { data: prods, error: pError } = await supabase
       .from('products')
       .select(`
@@ -106,30 +112,60 @@ export const productsService = {
       return [];
     }
 
-    const { data: stocks } = await supabase
-      .from('branch_inventory')
-      .select('product_id, quantity')
+    const { data: branches } = await supabase
+      .from('branches')
+      .select('id, name')
       .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`);
 
-    const stockMap = new Map<string, number>();
-    stocks?.forEach((s) => stockMap.set(s.product_id, Number(s.quantity) || 0));
+    const branchNameMap = new Map<string, string>();
+    branches?.forEach((b) => branchNameMap.set(b.id, b.name));
 
-    return (prods || []).map((p: any) => ({
-      id: p.id,
-      code: p.code || p.sku || 'PROD',
-      sku: p.sku || p.code || '',
-      name: p.name,
-      category: p.categories?.name || 'Sin categoría',
-      categoryId: p.category_id,
-      brand: p.brands?.name || 'Sin marca',
-      brandId: p.brand_id,
-      price: Number(p.price) || 0,
-      cost: Number(p.cost) || 0,
-      stock: stockMap.get(p.id) ?? 0,
-      minStock: Number(p.min_stock) || 5,
-      status: p.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
-      imagePath: p.image_path || '',
-    }));
+    const { data: stocks } = await supabase
+      .from('branch_inventory')
+      .select('product_id, branch_id, quantity')
+      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`);
+
+    const productStocksMap = new Map<string, BranchStock[]>();
+    stocks?.forEach((s) => {
+      const pid = s.product_id;
+      const bId = s.branch_id;
+      const bName = branchNameMap.get(bId) || 'Sede Principal';
+      const qty = Number(s.quantity) || 0;
+
+      const list = productStocksMap.get(pid) || [];
+      list.push({ branchId: bId, branchName: bName, stock: qty });
+      productStocksMap.set(pid, list);
+    });
+
+    return (prods || []).map((p: any) => {
+      const branchStocks = productStocksMap.get(p.id) || [];
+      let calculatedStock = 0;
+
+      if (branchId && branchId !== 'ALL') {
+        const found = branchStocks.find((bs) => bs.branchId === branchId);
+        calculatedStock = found ? found.stock : 0;
+      } else {
+        calculatedStock = branchStocks.reduce((sum, bs) => sum + bs.stock, 0);
+      }
+
+      return {
+        id: p.id,
+        code: p.code || p.sku || 'PROD',
+        sku: p.sku || p.code || '',
+        name: p.name,
+        category: p.categories?.name || 'Sin categoría',
+        categoryId: p.category_id,
+        brand: p.brands?.name || 'Sin marca',
+        brandId: p.brand_id,
+        price: Number(p.price) || 0,
+        cost: Number(p.cost) || 0,
+        stock: calculatedStock,
+        minStock: Number(p.min_stock) || 5,
+        status: p.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+        imagePath: p.image_path || '',
+        branchStocks,
+      };
+    });
   },
 
   async createProduct(prod: Omit<Product, 'id'>): Promise<Product | null> {
@@ -214,10 +250,23 @@ export const productsService = {
   },
 
   async deleteProduct(id: string): Promise<boolean> {
-    await supabase.from('branch_inventory').delete().eq('product_id', id);
-    const { error } = await supabase.from('products').delete().eq('id', id);
-    if (error) console.error('Error deleting product:', error);
-    return !error;
+    try {
+      await supabase.from('sale_items').delete().eq('product_id', id);
+      await supabase.from('purchase_items').delete().eq('product_id', id);
+      await supabase.from('purchase_order_items').delete().eq('product_id', id);
+      await supabase.from('inventory_movements').delete().eq('product_id', id);
+      await supabase.from('physical_count_items').delete().eq('product_id', id);
+      await supabase.from('branch_inventory').delete().eq('product_id', id);
+      const { error } = await supabase.from('products').delete().eq('id', id);
+      if (error) {
+        console.error('Error deleting product:', error);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('Error deleting product:', err);
+      return false;
+    }
   },
 };
 
@@ -983,9 +1032,9 @@ export interface InventoryTransfer {
 let memoryMovements: InventoryMovement[] = [];
 
 export const inventoryService = {
-  async getMovements(): Promise<InventoryMovement[]> {
+  async getMovements(branchId?: string): Promise<InventoryMovement[]> {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('inventory_movements')
         .select(`
           id, movement_type, quantity, previous_stock, resulting_stock, reason, created_at,
@@ -996,7 +1045,16 @@ export const inventoryService = {
         .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
         .order('created_at', { ascending: false });
 
+      if (branchId && branchId !== 'ALL') {
+        query = query.or(`branch_id.eq.${branchId},source_branch_id.eq.${branchId},target_branch_id.eq.${branchId}`);
+      }
+
+      const { data, error } = await query;
+
       if (error || !data || data.length === 0) {
+        if (branchId && branchId !== 'ALL') {
+          return memoryMovements.filter(m => m.branchId === branchId || m.sourceBranchId === branchId || m.targetBranchId === branchId);
+        }
         return memoryMovements;
       }
 
@@ -1034,11 +1092,13 @@ export const inventoryService = {
   }): Promise<boolean> {
     const { productId, productName, branchId, branchName, type, qty, reason } = params;
 
+    const targetBranch = branchId || DEFAULT_BRANCH_ID;
     let currentStock = 0;
     const { data: inv } = await supabase
       .from('branch_inventory')
       .select('id, quantity')
       .eq('product_id', productId)
+      .eq('branch_id', targetBranch)
       .maybeSingle();
 
     if (inv) {
@@ -1064,7 +1124,7 @@ export const inventoryService = {
     } else {
       await supabase.from('branch_inventory').insert({
         tenant_id: DEFAULT_TENANT_ID,
-        branch_id: branchId || DEFAULT_BRANCH_ID,
+        branch_id: targetBranch,
         product_id: productId,
         quantity: resultingStock,
       });
@@ -1072,7 +1132,7 @@ export const inventoryService = {
 
     const { error: movErr } = await supabase.from('inventory_movements').insert({
       tenant_id: DEFAULT_TENANT_ID,
-      branch_id: branchId || DEFAULT_BRANCH_ID,
+      branch_id: targetBranch,
       product_id: productId,
       movement_type: type,
       quantity: Math.abs(qtyChange),
@@ -1091,7 +1151,7 @@ export const inventoryService = {
       date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
       productId,
       product: productName,
-      branchId,
+      branchId: targetBranch,
       branchName,
       type,
       qty: type === 'OUT' ? -Math.abs(qty) : qtyChange,
@@ -1112,32 +1172,66 @@ export const inventoryService = {
     targetBranchId: string;
     targetBranchName: string;
     qty: number;
+    estimatedDays?: number;
     reason: string;
   }): Promise<boolean> {
-    const { productId, productName, sourceBranchId, sourceBranchName, targetBranchId, targetBranchName, qty, reason } = params;
+    const { productId, productName, sourceBranchId, sourceBranchName, targetBranchId, targetBranchName, qty, estimatedDays, reason } = params;
 
+    // 1. Decrement Source Branch
     const { data: sourceInv } = await supabase
       .from('branch_inventory')
       .select('id, quantity')
       .eq('product_id', productId)
+      .eq('branch_id', sourceBranchId)
       .maybeSingle();
 
-    const currentSourceStock = Number(sourceInv?.quantity) || 10;
+    const currentSourceStock = Number(sourceInv?.quantity) || 0;
     const newSourceStock = Math.max(0, currentSourceStock - qty);
 
     if (sourceInv) {
       await supabase.from('branch_inventory').update({ quantity: newSourceStock }).eq('id', sourceInv.id);
+    } else {
+      await supabase.from('branch_inventory').insert({
+        tenant_id: DEFAULT_TENANT_ID,
+        branch_id: sourceBranchId,
+        product_id: productId,
+        quantity: newSourceStock,
+      });
     }
+
+    // 2. Increment Target Branch
+    const { data: targetInv } = await supabase
+      .from('branch_inventory')
+      .select('id, quantity')
+      .eq('product_id', productId)
+      .eq('branch_id', targetBranchId)
+      .maybeSingle();
+
+    const currentTargetStock = Number(targetInv?.quantity) || 0;
+    const newTargetStock = currentTargetStock + qty;
+
+    if (targetInv) {
+      await supabase.from('branch_inventory').update({ quantity: newTargetStock }).eq('id', targetInv.id);
+    } else {
+      await supabase.from('branch_inventory').insert({
+        tenant_id: DEFAULT_TENANT_ID,
+        branch_id: targetBranchId,
+        product_id: productId,
+        quantity: newTargetStock,
+      });
+    }
+
+    const transferNote = `${reason || 'Traspaso de reabastecimiento entre sedes'}${estimatedDays ? ` • (Tiempo est.: ${estimatedDays} día${estimatedDays > 1 ? 's' : ''})` : ''}`;
 
     await supabase.from('inventory_movements').insert({
       tenant_id: DEFAULT_TENANT_ID,
-      branch_id: sourceBranchId,
+      branch_id: targetBranchId,
       product_id: productId,
       movement_type: 'TRANSFER',
       quantity: qty,
-      previous_stock: currentSourceStock,
-      resulting_stock: newSourceStock,
-      reason: reason || `Transferencia a ${targetBranchName}`,
+      previous_stock: currentTargetStock,
+      resulting_stock: newTargetStock,
+      reason: transferNote,
       source_branch_id: sourceBranchId,
       target_branch_id: targetBranchId,
     });

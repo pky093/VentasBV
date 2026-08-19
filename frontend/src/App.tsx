@@ -28,37 +28,63 @@ import NotificationsPage from './pages/NotificationsPage';
 import SettingsPage from './pages/SettingsPage';
 import ProfilePage from './pages/ProfilePage';
 
+import { BranchProvider } from './context/BranchContext';
+
+const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const isLoggedIn = localStorage.getItem('is_logged_in') === 'true';
+  if (!isLoggedIn) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+};
+
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/app" replace />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/set-password" element={<SetPasswordPage />} />
-      <Route path="/platform" element={<PlatformPage />} />
-      
-      <Route path="/app" element={<AppLayout />}>
-        <Route index element={<DashboardPage />} />
-        <Route path="branches" element={<BranchesPage />} />
-        <Route path="users" element={<UsersPage />} />
-        <Route path="roles" element={<RolesPage />} />
-        <Route path="catalog" element={<CatalogPage />} />
-        <Route path="products" element={<ProductsPage />} />
-        <Route path="products/:id" element={<ProductDetailPage />} />
-        <Route path="inventory" element={<InventoryPage />} />
-        <Route path="suppliers" element={<SuppliersPage />} />
-        <Route path="purchases" element={<PurchasesPage />} />
-        <Route path="customers" element={<CustomersPage />} />
-        <Route path="sales" element={<SalesPage />} />
-        <Route path="pos" element={<POSPage />} />
-        <Route path="cash" element={<CashRegisterPage />} />
-        <Route path="billing" element={<BillingPage />} />
-        <Route path="reports" element={<ReportsPage />} />
-        <Route path="expenses" element={<ExpensesPage />} />
-        <Route path="audit" element={<AuditPage />} />
-        <Route path="notifications" element={<NotificationsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="profile" element={<ProfilePage />} />
-      </Route>
-    </Routes>
+    <BranchProvider>
+      <Routes>
+        <Route path="/" element={<Navigate to="/login" replace />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/set-password" element={<SetPasswordPage />} />
+        <Route
+          path="/platform"
+          element={
+            <ProtectedRoute>
+              <PlatformPage />
+            </ProtectedRoute>
+          }
+        />
+        
+        <Route
+          path="/app"
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<DashboardPage />} />
+          <Route path="branches" element={<BranchesPage />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="roles" element={<RolesPage />} />
+          <Route path="catalog" element={<CatalogPage />} />
+          <Route path="products" element={<ProductsPage />} />
+          <Route path="products/:id" element={<ProductDetailPage />} />
+          <Route path="inventory" element={<InventoryPage />} />
+          <Route path="suppliers" element={<SuppliersPage />} />
+          <Route path="purchases" element={<PurchasesPage />} />
+          <Route path="customers" element={<CustomersPage />} />
+          <Route path="sales" element={<SalesPage />} />
+          <Route path="pos" element={<POSPage />} />
+          <Route path="cash" element={<CashRegisterPage />} />
+          <Route path="billing" element={<BillingPage />} />
+          <Route path="reports" element={<ReportsPage />} />
+          <Route path="expenses" element={<ExpensesPage />} />
+          <Route path="audit" element={<AuditPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="profile" element={<ProfilePage />} />
+        </Route>
+      </Routes>
+    </BranchProvider>
   );
 }

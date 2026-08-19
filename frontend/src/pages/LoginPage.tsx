@@ -1,79 +1,105 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React from 'react';
+import { ShoppingCart, Shield } from 'lucide-react';
+import { LoginCard } from '../components/auth/LoginCard';
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<'admin' | 'staff'>('admin');
-  const navigate = useNavigate();
-
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    navigate('/app');
-  };
-
   return (
-    <div className="flex min-h-screen bg-bg-app">
-      <div className="hidden lg:flex lg:w-1/2 bg-primary-900 text-white p-12 flex-col justify-between">
-        <div>
-          <h1 className="text-4xl font-display font-bold text-accent-500 mb-4">Ventas B&V</h1>
-          <p className="text-primary-100 text-lg">El sistema definitivo para la gestión de tus ventas e inventario.</p>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'row',
+        width: '100vw',
+        height: '100vh',
+        backgroundColor: '#050811',
+        overflow: 'hidden',
+        fontFamily: "'IBM Plex Sans', sans-serif"
+      }}
+    >
+      {/* LEFT COLUMN: DARK BRAND CONTAINER WITH LOGO IMAGE (50% WIDTH) */}
+      <div
+        style={{
+          width: '50%',
+          height: '100%',
+          backgroundColor: '#04070e',
+          padding: '2.5rem',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          borderRight: '1px solid rgba(245, 158, 11, 0.2)',
+          boxSizing: 'border-box',
+          position: 'relative'
+        }}
+      >
+        {/* TOP BRAND HEADER */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
+          <div
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '12px',
+              backgroundColor: 'rgba(245, 158, 11, 0.15)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#f59e0b',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+            }}
+          >
+            <ShoppingCart size={20} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontSize: '20px', fontWeight: '900', color: '#ffffff', letterSpacing: '0.02em', lineHeight: 1.1 }}>
+              B&V Ventas
+            </span>
+            <span style={{ fontSize: '10px', fontWeight: '800', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.12em', marginTop: '2px' }}>
+              Plataforma POS Empresarial
+            </span>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-6">
-          <div className="p-6 bg-white/10 rounded-xl backdrop-blur">
-            <h3 className="font-bold text-xl text-accent-400 mb-2">Punto de Venta</h3>
-            <p className="text-sm text-primary-100">Facturación rápida, control de caja y múltiples métodos de pago en tiempo real.</p>
+
+        {/* CENTER HERO IMAGE */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, padding: '2rem 0' }}>
+          <img
+            src="/bv-hero-logo.png"
+            alt="B&V Ventas"
+            style={{
+              maxWidth: '440px',
+              maxHeight: '60vh',
+              width: '100%',
+              objectFit: 'contain',
+              filter: 'drop-shadow(0 20px 35px rgba(245, 158, 11, 0.12))'
+            }}
+          />
+        </div>
+
+        {/* BOTTOM BRAND FOOTER */}
+        <div style={{ display: 'flex', alignItems: 'center', fontSize: '12px', color: '#64748b', fontWeight: '500', zIndex: 10, paddingTop: '16px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Shield size={14} color="#f59e0b" />
+            <span style={{ color: '#e2e8f0', fontWeight: '700' }}>VENTAS B&V</span>
           </div>
-          <div className="p-6 bg-white/10 rounded-xl backdrop-blur">
-            <h3 className="font-bold text-xl text-accent-400 mb-2">Inventario</h3>
-            <p className="text-sm text-primary-100">Kardex detallado, múltiples sucursales y alertas automáticas de stock bajo.</p>
-          </div>
+          <span style={{ marginLeft: 'auto' }}>Soluciones • Tecnologías • Sistemas</span>
         </div>
       </div>
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-white">
-        <div className="w-full max-w-md">
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold text-primary-900 mb-2">Bienvenido</h2>
-            <p className="text-secondary">Inicia sesión en tu cuenta para continuar</p>
-          </div>
-          
-          <div className="flex p-1 bg-neutral-100 rounded-lg mb-8">
-            <button 
-              className={`flex-1 py-2 text-sm font-medium rounded-md ${mode === 'admin' ? 'bg-white shadow text-primary-700' : 'text-secondary'}`}
-              onClick={() => setMode('admin')}
-            >
-              Administrador
-            </button>
-            <button 
-              className={`flex-1 py-2 text-sm font-medium rounded-md ${mode === 'staff' ? 'bg-white shadow text-primary-700' : 'text-secondary'}`}
-              onClick={() => setMode('staff')}
-            >
-              Personal
-            </button>
-          </div>
 
-          <form onSubmit={handleLogin}>
-            {mode === 'staff' && (
-              <div className="form-group">
-                <label className="form-label">RUC de la Empresa</label>
-                <input type="text" className="form-control" placeholder="20123456789" required />
-              </div>
-            )}
-            <div className="form-group">
-              <label className="form-label">Usuario o Correo</label>
-              <input type="text" className="form-control" placeholder="admin@ventas.com" required />
-            </div>
-            <div className="form-group">
-              <div className="flex justify-between items-center">
-                <label className="form-label">Contraseña</label>
-                <a href="#" className="text-xs text-primary-500 hover:underline">¿Olvidaste tu contraseña?</a>
-              </div>
-              <input type="password" className="form-control" placeholder="••••••••" required />
-            </div>
-            
-            <button type="submit" className="btn btn-primary w-full mt-6 py-2.5 text-base">
-              Ingresar al Sistema
-            </button>
-          </form>
-        </div>
+      {/* RIGHT COLUMN: DARK SLATE CONTAINER WITH LOGIN CARD (50% WIDTH) */}
+      <div
+        style={{
+          width: '50%',
+          height: '100%',
+          backgroundColor: '#0d1322',
+          padding: '2.5rem',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          boxSizing: 'border-box',
+          position: 'relative',
+          overflowY: 'auto'
+        }}
+      >
+        <LoginCard />
       </div>
     </div>
   );

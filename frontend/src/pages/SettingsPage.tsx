@@ -198,34 +198,30 @@ export default function SettingsPage() {
           <CardBody>
             <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
               {/* Logo Section */}
-              <div className="p-4 rounded-xl border border-color bg-slate-50 dark:bg-slate-800/40 mb-4">
-                <label className="form-label font-bold text-sm mb-2 block">Logo de la Empresa (Para menú y boletas)</label>
-                <div className="flex items-center gap-4">
+              <div style={{ padding: '16px', borderRadius: '14px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-app)', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <label style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-primary)' }}>Logo de la Empresa (Para menú y boletas)</label>
+
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+                  {/* Logo Preview Thumbnail */}
                   {companyInfo.logo_path ? (
-                    <div style={{ width: '64px', height: '64px', minWidth: '64px', minHeight: '64px', flexShrink: 0, borderRadius: '12px', border: '1px solid var(--border-color)', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', overflow: 'hidden' }}>
+                    <div style={{ width: '80px', height: '80px', minWidth: '80px', minHeight: '80px', borderRadius: '12px', border: '1px solid var(--border-color)', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                       <img src={companyInfo.logo_path} alt="Logo Empresa" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                     </div>
                   ) : (
-                    <div style={{ width: '64px', height: '64px', minWidth: '64px', minHeight: '64px', flexShrink: 0, borderRadius: '12px', border: '2px dashed var(--border-color)', background: 'var(--bg-app)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: 600, textAlign: 'center', padding: '4px' }}>
+                    <div style={{ width: '80px', height: '80px', minWidth: '80px', minHeight: '80px', borderRadius: '12px', border: '2px dashed var(--border-color)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: 600, textAlign: 'center', padding: '4px' }}>
                       Sin Logo
                     </div>
                   )}
 
-                  <div className="flex-1 space-y-2">
-                    <input
-                      type="text"
-                      className="form-control text-xs"
-                      placeholder="https://... URL pública de la imagen del logo"
-                      value={companyInfo.logo_path}
-                      onChange={(e) => setCompanyInfo({ ...companyInfo, logo_path: e.target.value })}
-                    />
-                    <div className="flex items-center gap-2">
-                      <label className="btn btn-secondary text-xs cursor-pointer py-1.5 px-3 inline-flex items-center gap-1.5 rounded-lg border font-semibold">
+                  {/* Controls */}
+                  <div style={{ flex: 1, minWidth: '240px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                      <label style={{ padding: '8px 14px', borderRadius: '8px', backgroundColor: 'var(--primary-600)', color: '#ffffff', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                         📁 Subir Imagen de Logo...
                         <input
                           type="file"
                           accept="image/*"
-                          className="hidden"
+                          style={{ display: 'none' }}
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) {
@@ -240,20 +236,49 @@ export default function SettingsPage() {
                           }}
                         />
                       </label>
+
+                      <button
+                        type="button"
+                        style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--primary-500)', backgroundColor: 'transparent', color: 'var(--primary-600)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                        onClick={() => setCompanyInfo({ ...companyInfo, logo_path: '/logo-bv-brand.png' })}
+                      >
+                        ⚡ Usar Logo Oficial B&V
+                      </button>
+
                       {companyInfo.logo_path && (
                         <button
                           type="button"
-                          className="text-xs text-red-500 hover:text-red-700 font-semibold px-2 py-1"
+                          style={{ padding: '8px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
                           onClick={() => setCompanyInfo({ ...companyInfo, logo_path: '' })}
                         >
                           Quitar Logo
                         </button>
                       )}
                     </div>
+
+                    <input
+                      type="text"
+                      placeholder="https://... URL pública de la imagen del logo"
+                      value={companyInfo.logo_path}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, logo_path: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: 'var(--bg-surface)',
+                        color: 'var(--text-primary)',
+                        fontSize: '12px',
+                        outline: 'none',
+                        boxSizing: 'border-box',
+                        textOverflow: 'ellipsis'
+                      }}
+                    />
                   </div>
                 </div>
-                <p className="text-xs text-secondary mt-2">
-                  El logo se mostrará en la parte superior del menú lateral (Imagen 2) y en la boleta/factura física e impresa.
+
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0, paddingTop: '4px' }}>
+                  El logo se mostrará en la parte superior del menú lateral y en los comprobantes de venta físicos e impresos.
                 </p>
               </div>
 

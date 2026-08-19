@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Search, ChevronLeft, ChevronRight, AlertCircle, Loader2, Filter, FileText, Receipt } from 'lucide-react';
+export { BVLogo } from './BVLogo';
 
 
 // Buttons

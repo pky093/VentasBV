@@ -15,9 +15,14 @@ import {
   FileText,
   X,
   Loader2,
+  ArrowRightLeft,
+  Store,
+  Package,
 } from 'lucide-react';
 import { Button, Modal, Badge } from '../components/ui';
 import { productsService, customersService, catalogService, salesService, settingsService, Product as DBProduct } from '../lib/db-services';
+import { useBranch } from '../context/BranchContext';
+import { TransferModal } from '../components/inventory/TransferModal';
 import { DEFAULT_BRANCH_ID } from '../lib/supabase';
 import { numberToSpanishWords } from '../lib/numberToWords';
 
@@ -30,6 +35,7 @@ interface Product {
   stock: number;
   icon: string;
   imagePath?: string;
+  dbProduct?: DBProduct;
 }
 
 interface CartItem extends Product {
@@ -37,7 +43,9 @@ interface CartItem extends Product {
 }
 
 export default function POSPage() {
+  const { activeBranchId, activeBranch, branches: contextBranches } = useBranch();
   const [products, setProducts] = useState<Product[]>([]);
+  const [dbProductList, setDbProductList] = useState<DBProduct[]>([]);
   const [categories, setCategories] = useState<string[]>(['Todas']);
   const [customers, setCustomers] = useState<{ id: string; name: string; doc: string }[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -47,6 +55,10 @@ export default function POSPage() {
   const [paymentMethod, setPaymentMethod] = useState<'EFECTIVO' | 'TARJETA' | 'YAPE'>('EFECTIVO');
   const [docType, setDocType] = useState<'BOLETA' | 'FACTURA'>('BOLETA');
   const [isLoading, setIsLoading] = useState(true);
+
+  // Transfer Modal State in POS
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferTargetProduct, setTransferTargetProduct] = useState<DBProduct | null>(null);
 
   // Checkout Modal State
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -81,12 +93,13 @@ export default function POSPage() {
     setIsLoading(true);
     try {
       const [dbProds, dbCats, dbCusts] = await Promise.all([
-        productsService.getProducts(),
+        productsService.getProducts(activeBranchId),
         catalogService.getCategories(),
         customersService.getCustomers(),
       ]);
 
-      // Set Products from Mantenedor (active products)
+      setDbProductList(dbProds);
+
       setProducts(
         dbProds
           .filter((p) => p.status === 'ACTIVE')
@@ -99,14 +112,13 @@ export default function POSPage() {
             stock: p.stock,
             icon: '📦',
             imagePath: p.imagePath,
+            dbProduct: p,
           }))
       );
 
-      // Set Categories dynamically
       const catList = ['Todas', ...dbCats.map((c) => c.name)];
       setCategories(Array.from(new Set(catList)));
 
-      // Set Customers dynamically
       const defaultCust = { id: 'default', name: 'Público General', doc: '00000000' };
       const mappedCusts = (dbCusts || []).map((c) => ({
         id: c.id,
@@ -125,7 +137,7 @@ export default function POSPage() {
 
   useEffect(() => {
     loadPOSData();
-  }, []);
+  }, [activeBranchId]);
 
   // Filter products
   const filteredProducts = products.filter((p) => {
@@ -213,13 +225,16 @@ export default function POSPage() {
         subtotal: item.price * item.qty,
       }));
 
+      const saleBranchId = activeBranchId !== 'ALL' ? activeBranchId : (activeBranch?.id || DEFAULT_BRANCH_ID);
+      const saleBranchName = activeBranch?.name || 'Sede Principal';
+
       const createdSaleId = await salesService.createSale({
         customerId: selectedCustomer && selectedCustomer.id !== 'default' ? selectedCustomer.id : undefined,
         customerName: selectedCustomer?.name || 'Público General',
         customerDoc: selectedCustomer?.doc || '00000000',
         sellerName: 'Admin Principal',
-        branchId: DEFAULT_BRANCH_ID,
-        branchName: 'Sede Principal',
+        branchId: saleBranchId,
+        branchName: saleBranchName,
         total: total,
         subtotal: subtotal,
         tax: igv,
@@ -244,7 +259,7 @@ export default function POSPage() {
         companyRuc: tenant.ruc || '20601234567',
         companyAddress: tenant.address || 'Av. Principal 123, Lima',
         companyPhone: tenant.phone || '+51 987654321',
-        logoPath: tenant.logo_path || '',
+        logoPath: tenant.logo_path || '/logo-bv-brand.png',
         docTitle: docType === 'BOLETA' ? 'BOLETA DE VENTA ELECTRÓNICA' : 'FACTURA ELECTRÓNICA',
         series: seriesStr,
         number: `${seriesStr}-${numStr}`,
@@ -384,7 +399,7 @@ export default function POSPage() {
                         style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center' }}
                       />
                     ) : (
-                      <span className="text-3xl">{prod.icon}</span>
+                      <Package size={28} className="text-secondary opacity-60" />
                     )}
                   </div>
                   <div className="flex-grow flex flex-col justify-between">
@@ -980,6 +995,22 @@ export default function POSPage() {
           </div>
         )}
       </Modal>
+
+      {/* Inter-Branch Transfer Modal for POS */}
+      <TransferModal
+        isOpen={isTransferModalOpen}
+        onClose={() => {
+          setIsTransferModalOpen(false);
+          setTransferTargetProduct(null);
+        }}
+        products={dbProductList}
+        branches={contextBranches}
+        preselectedProduct={transferTargetProduct}
+        targetBranchId={activeBranchId}
+        onSuccess={() => {
+          loadPOSData();
+        }}
+      />
     </div>
   );
 }

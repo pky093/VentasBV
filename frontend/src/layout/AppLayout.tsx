@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { loadSavedTheme } from '../lib/tenant-theme';
+import { BVLogo } from '../components/ui/BVLogo';
+import { UserProfileMenu } from '../components/ui/UserProfileMenu';
 import { 
   LayoutDashboard, Store, Users, Shield, BookOpen, Package, 
   Archive, Truck, ShoppingCart, Users2, DollarSign, MonitorSmartphone, 
   CreditCard, FileText, BarChart3, Activity, Bell, Settings,
-  Sun, Moon, Search, ChevronDown, ArrowRight, Receipt, Menu
+  Sun, Moon, Search, ChevronDown, ArrowRight, Receipt, Menu, LogOut, User
 } from 'lucide-react';
 
 const MENU_ITEMS = [
@@ -48,7 +50,10 @@ import { settingsService } from '../lib/db-services';
 
 import { applyCustomTheme } from '../lib/tenant-theme';
 
+import { useBranch } from '../context/BranchContext';
+
 export default function AppLayout() {
+  const { branches, activeBranchId, activeBranch, setActiveBranchId, isSuperAdmin } = useBranch();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -105,17 +110,32 @@ export default function AppLayout() {
   const [globalSearch, setGlobalSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
 
+  // User dropdown menu state
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  const authUser = localStorage.getItem('auth_user') || 'Admin Principal';
+  const tenantRuc = localStorage.getItem('tenant_ruc') || '20998877665';
+
+  const handleLogout = () => {
+    localStorage.removeItem('is_logged_in');
+    localStorage.removeItem('auth_user');
+    localStorage.removeItem('tenant_ruc');
+    localStorage.removeItem('is_platform_superadmin');
+    navigate('/login');
+  };
 
   const allModules = MENU_ITEMS.flatMap(group => group.items);
   const filteredModules = globalSearch.trim()
     ? allModules.filter(m => m.label.toLowerCase().includes(globalSearch.toLowerCase()))
     : [];
 
-  // Click outside listener for sidebar and global search
+  // Click outside listener for sidebar, global search, and user menu
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
@@ -124,6 +144,9 @@ export default function AppLayout() {
       }
       if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
         setSearchOpen(false);
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setUserMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -180,7 +203,7 @@ export default function AppLayout() {
         className={`app-sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}
       >
         <div 
-          className="sidebar-header flex items-center gap-3 cursor-pointer select-none"
+          className="sidebar-header flex items-center justify-between gap-2 px-4 cursor-pointer select-none py-3 border-b border-slate-800/80"
           onClick={handleBrandClick}
           title="Haz clic para desplegar / ocultar menú"
         >
@@ -201,17 +224,15 @@ export default function AppLayout() {
               }}
             />
           ) : (
-            <div className="sidebar-logo">
-              {tenantInfo.name ? tenantInfo.name.charAt(0).toUpperCase() : 'V'}
-            </div>
+            <BVLogo variant={collapsed ? 'icon' : 'compact'} height={collapsed ? 28 : 34} />
           )}
           {!collapsed && (
-            <div className="sidebar-title-container min-w-0 flex-1">
-              <div className="sidebar-title flex items-center truncate">
-                <span>{tenantInfo.name || 'Ventas B&V'}</span>
-                <ChevronDown size={14} className="opacity-70 ml-1 shrink-0" />
+            <div className="sidebar-title-container min-w-0 flex-1 ml-2">
+              <div className="sidebar-title flex items-center justify-between text-sm font-extrabold text-white truncate">
+                <span className="truncate">{tenantInfo.name || 'Ventas B&V'}</span>
+                <ChevronDown size={14} className="opacity-70 ml-1 shrink-0 text-slate-400" />
               </div>
-              <div className="sidebar-subtitle text-xs text-emerald-400 font-semibold truncate">
+              <div className="sidebar-subtitle text-[10px] text-cyan-400 font-bold uppercase tracking-wider truncate">
                 {tenantInfo.trade_name || 'ENTERPRISE POS'}
               </div>
             </div>
@@ -279,12 +300,37 @@ export default function AppLayout() {
               <Menu size={20} />
             </button>
             <div className="header-title-section">
-              <div className="header-title">Sistema de Gestión Comercial</div>
-              <div className="header-subtitle">Ventas B&V • Sede Principal</div>
+              <div className="header-title truncate">Sistema de Gestión Comercial</div>
+              <div className="header-subtitle truncate text-xs">
+                {tenantInfo.name || 'Ventas B&V'} • <span className="font-bold text-primary-500">{activeBranchId === 'ALL' ? 'Todas las Sedes' : activeBranch?.name || 'Sede Principal'}</span>
+              </div>
             </div>
           </div>
 
           <div className="header-actions">
+            {/* Branch Selector Dropdown */}
+            <div className="flex items-center gap-2 bg-surface/80 border border-color rounded-xl px-3 py-1.5 shadow-sm text-xs">
+              <Store size={15} className="text-primary-600 dark:text-primary-400 shrink-0" />
+              <div className="flex flex-col">
+                <span className="text-[10px] text-secondary font-semibold uppercase tracking-wider">Sucursal Activa</span>
+                <select
+                  value={activeBranchId}
+                  onChange={(e) => setActiveBranchId(e.target.value)}
+                  className="bg-transparent font-bold text-primary border-none p-0 pr-2 focus:ring-0 cursor-pointer outline-none text-xs"
+                >
+                  {isSuperAdmin && (
+                    <option value="ALL" className="bg-surface text-primary">
+                      Todas las Sedes (Super Admin)
+                    </option>
+                  )}
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id} className="bg-surface text-primary">
+                      {b.name} {b.isMain ? '(Principal)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             {/* Functional Header Search Bar */}
             <div className="header-search" ref={searchContainerRef}>
               <Search size={16} />
@@ -337,12 +383,29 @@ export default function AppLayout() {
               <span className="icon-btn-badge" />
             </Link>
 
-            <div className="user-profile-pill">
-              <div className="user-avatar">A</div>
-              <div className="user-profile-info hidden sm:flex">
-                <span className="user-profile-name">Admin Principal</span>
-                <span className="user-profile-role">Super Admin</span>
+            {/* User Profile Pill with Dropdown */}
+            <div className="relative" ref={userMenuRef}>
+              <div 
+                className="user-profile-pill cursor-pointer select-none hover:opacity-90 transition-opacity flex items-center"
+                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                title="Opciones de Cuenta y Cerrar Sesión"
+              >
+                <div className="user-avatar">{authUser.charAt(0).toUpperCase()}</div>
+                <div className="user-profile-info hidden sm:flex">
+                  <span className="user-profile-name">{authUser}</span>
+                  <span className="user-profile-role">Super Admin</span>
+                </div>
+                <ChevronDown size={14} className="text-secondary ml-1.5 opacity-70 shrink-0" />
               </div>
+
+              {userMenuOpen && (
+                <UserProfileMenu
+                  authUser={authUser}
+                  tenantRuc={tenantRuc}
+                  onClose={() => setUserMenuOpen(false)}
+                  onLogout={handleLogout}
+                />
+              )}
             </div>
           </div>
         </header>
