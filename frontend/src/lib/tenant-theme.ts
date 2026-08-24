@@ -93,6 +93,7 @@ export const applyCustomTheme = (theme: ThemeColors) => {
   root.style.setProperty('--accent-500', theme.secondaryColor);
   root.style.setProperty('--accent-600', theme.secondaryColor);
   root.style.setProperty('--accent-700', theme.secondaryColor);
+  root.style.setProperty('--secondary-color', theme.secondaryColor);
 
   root.style.setProperty('--bg-app', theme.pageBg);
   root.style.setProperty('--bg-sidebar', theme.sidebarBg);

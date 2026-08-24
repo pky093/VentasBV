@@ -232,7 +232,10 @@ export default function AppLayout() {
                 <span className="truncate">{tenantInfo.name || 'Ventas B&V'}</span>
                 <ChevronDown size={14} className="opacity-70 ml-1 shrink-0 text-slate-400" />
               </div>
-              <div className="sidebar-subtitle text-[10px] text-cyan-400 font-bold uppercase tracking-wider truncate">
+              <div 
+                className="sidebar-subtitle text-[10px] font-bold uppercase tracking-wider truncate"
+                style={{ color: 'var(--accent-500, #10b981)' }}
+              >
                 {tenantInfo.trade_name || 'ENTERPRISE POS'}
               </div>
             </div>
@@ -290,7 +293,7 @@ export default function AppLayout() {
         <header className="app-header">
           <div className="header-left">
             <button
-              className="icon-btn mobile-menu-btn"
+              className="icon-btn mobile-menu-btn shrink-0"
               onClick={() => {
                 setMobileOpen(prev => !prev);
                 setCollapsed(false);
@@ -299,24 +302,44 @@ export default function AppLayout() {
             >
               <Menu size={20} />
             </button>
-            <div className="header-title-section">
+            <div className="header-title-section hidden md:flex">
               <div className="header-title truncate">Sistema de Gestión Comercial</div>
               <div className="header-subtitle truncate text-xs">
                 {tenantInfo.name || 'Ventas B&V'} • <span className="font-bold text-primary-500">{activeBranchId === 'ALL' ? 'Todas las Sedes' : activeBranch?.name || 'Sede Principal'}</span>
               </div>
             </div>
+            {/* Branch Selector on Mobile/Tablet */}
+            <div className="flex md:hidden items-center gap-1.5 px-1 py-1 text-xs">
+              <Store size={14} className="text-secondary shrink-0" />
+              <select
+                value={activeBranchId}
+                onChange={(e) => setActiveBranchId(e.target.value)}
+                className="bg-transparent font-bold text-primary border-0 p-0 pr-3 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors max-w-[120px] truncate"
+              >
+                {isSuperAdmin && (
+                  <option value="ALL" className="bg-surface text-primary">
+                    Todas las Sedes
+                  </option>
+                )}
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id} className="bg-surface text-primary">
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="header-actions">
-            {/* Branch Selector Dropdown */}
-            <div className="flex items-center gap-2 bg-surface/80 border border-color rounded-xl px-3 py-1.5 shadow-sm text-xs">
-              <Store size={15} className="text-primary-600 dark:text-primary-400 shrink-0" />
+            {/* Branch Selector Dropdown for Desktop */}
+            <div className="hidden md:flex items-center gap-1.5 px-2 py-1 text-xs">
+              <Store size={15} className="text-secondary shrink-0" />
               <div className="flex flex-col">
                 <span className="text-[10px] text-secondary font-semibold uppercase tracking-wider">Sucursal Activa</span>
                 <select
                   value={activeBranchId}
                   onChange={(e) => setActiveBranchId(e.target.value)}
-                  className="bg-transparent font-bold text-primary border-none p-0 pr-2 focus:ring-0 cursor-pointer outline-none text-xs"
+                  className="bg-transparent font-bold text-primary border-0 p-0 pr-4 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors"
                 >
                   {isSuperAdmin && (
                     <option value="ALL" className="bg-surface text-primary">
@@ -325,7 +348,7 @@ export default function AppLayout() {
                   )}
                   {branches.map((b) => (
                     <option key={b.id} value={b.id} className="bg-surface text-primary">
-                      {b.name} {b.isMain ? '(Principal)' : ''}
+                      {b.name}
                     </option>
                   ))}
                 </select>

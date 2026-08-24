@@ -1,13 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Download, TrendingUp, DollarSign, Package, ShoppingCart } from 'lucide-react';
+import { Download, TrendingUp, DollarSign, Package, ShoppingCart } from 'lucide-react';
 import ExcelJS from 'exceljs';
-import { PageHeader, Button, Tabs, Card, CardHeader, CardBody, StatCard } from '../components/ui';
-import { reportsService, ReportSummary } from '../lib/db-services';
+import { PageHeader, Button, Card, CardHeader, CardBody, StatCard, Badge } from '../components/ui';
+import { reportsService, ReportSummary, settingsService } from '../lib/db-services';
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState('sales');
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [companyInfo, setCompanyInfo] = useState({
+    name: 'Grupo K contreras S.A.C',
+    tradeName: 'Chilia',
+    ruc: '22213639030',
+    address: 'Retamas PRUEBA 1, Santiago de Surco - Lima',
+    phone: '+51 993 275 893',
+    logo_path: '',
+  });
 
   const loadData = () => {
     setIsLoading(true);
@@ -19,13 +26,19 @@ export default function ReportsPage() {
 
   useEffect(() => {
     loadData();
+    settingsService.getTenantInfo().then((info) => {
+      if (info && Object.keys(info).length > 0) {
+        setCompanyInfo({
+          name: info.legal_name || info.name || 'Grupo K contreras S.A.C',
+          tradeName: info.trade_name || info.name || 'Chilia',
+          ruc: info.ruc || '22213639030',
+          address: info.address || 'Retamas PRUEBA 1',
+          phone: info.phone || '+51 993 275 893',
+          logo_path: info.logo_path || '',
+        });
+      }
+    });
   }, []);
-
-  const tabs = [
-    { id: 'sales', label: 'Reporte de Ventas', icon: <BarChart3 size={16} /> },
-    { id: 'inventory', label: 'Valorización de Stock', icon: <Package size={16} /> },
-    { id: 'profit', label: 'Ganancia & Margen', icon: <TrendingUp size={16} /> },
-  ];
 
   const formatMoney = (amount: number) => {
     return `S/ ${amount.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -42,7 +55,7 @@ export default function ReportsPage() {
     });
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Ventas B&V';
+    workbook.creator = companyInfo.name;
     workbook.created = new Date();
 
     const thinBorder: Partial<ExcelJS.Borders> = {
@@ -66,7 +79,7 @@ export default function ReportsPage() {
 
     ws1.mergeCells('A1:B1');
     const titleCell1 = ws1.getCell('A1');
-    titleCell1.value = 'REPORTING EJECUTIVO Y AUDITORÍA FINANCIERA - VENTAS B&V';
+    titleCell1.value = `REPORTING EJECUTIVO Y AUDITORÍA FINANCIERA - ${companyInfo.name.toUpperCase()}`;
     titleCell1.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: 'FFFFFF' } };
     titleCell1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E1B4B' } };
     titleCell1.alignment = { vertical: 'middle', horizontal: 'left' };
@@ -74,7 +87,7 @@ export default function ReportsPage() {
 
     ws1.mergeCells('A2:B2');
     const subCell1 = ws1.getCell('A2');
-    subCell1.value = `Generado el: ${dateStr}  |  Sede Principal  |  Moneda: Nuevos Soles (S/)`;
+    subCell1.value = `Generado el: ${dateStr}  |  RUC: ${companyInfo.ruc}  |  Sede Principal  |  Moneda: Nuevos Soles (S/)`;
     subCell1.font = { name: 'Segoe UI', size: 10, italic: true, color: { argb: 'C7D2FE' } };
     subCell1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '312E81' } };
     subCell1.alignment = { vertical: 'middle', horizontal: 'left' };
@@ -557,12 +570,16 @@ export default function ReportsPage() {
       </head>
       <body>
         <div class="header">
-          <div>
-            <div class="header-logo">VENTAS B&V</div>
-            <div style="font-size: 11px; color: #64748b;">Enterprise POS & Business Intelligence</div>
+          <div style="display: flex; align-items: center; gap: 14px;">
+            ${companyInfo.logo_path ? `<img src="${companyInfo.logo_path}" style="max-height: 48px; max-width: 140px; object-fit: contain; border-radius: 4px;" />` : ''}
+            <div>
+              <div class="header-logo">${companyInfo.name}</div>
+              <div style="font-size: 11px; color: #475569; font-weight: 600;">${companyInfo.tradeName ? `${companyInfo.tradeName} • ` : ''}R.U.C. N° ${companyInfo.ruc}</div>
+              <div style="font-size: 10px; color: #64748b;">${companyInfo.address} ${companyInfo.phone ? `• Tel: ${companyInfo.phone}` : ''}</div>
+            </div>
           </div>
           <div class="header-meta">
-            <div>Sede Principal</div>
+            <div style="font-weight: 700; color: #0f172a;">Sede Principal</div>
             <div>Fecha: ${dateStr}</div>
           </div>
         </div>
@@ -732,8 +749,8 @@ export default function ReportsPage() {
         </table>
 
         <div class="footer">
-          <p>Este reporte contiene información comercial y de auditoría interna de la empresa Ventas B&V.</p>
-          <p>© 2026 Ventas B&V Enterprise POS. Todos los derechos reservados.</p>
+          <p>Este reporte contiene información comercial y de auditoría interna de la empresa ${companyInfo.name}.</p>
+          <p>© 2026 ${companyInfo.name}. Todos los derechos reservados.</p>
         </div>
 
         <script>
@@ -768,8 +785,6 @@ export default function ReportsPage() {
           </div>
         }
       />
-
-      <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
       {isLoading || !summary ? (
         <div className="p-12 text-center text-secondary text-sm">
@@ -823,48 +838,82 @@ export default function ReportsPage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Card 1: Top 5 Productos Más Vendidos */}
             <Card>
-              <CardHeader title="Top 5 Productos Más Vendidos" />
+              <CardHeader title="Top 5 Productos Más Vendidos" subtitle="Ranking de artículos con mayor volumen y facturación" />
               <CardBody>
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {summary.topProducts.length === 0 ? (
-                    <div className="text-center py-6 text-xs text-secondary">
+                    <div className="text-center py-8 text-xs text-secondary">
                       No se registraron ventas en este periodo
                     </div>
                   ) : (
-                    summary.topProducts.map((item, i) => (
-                      <div key={i} className="flex justify-between items-center border-b pb-2 last:border-0">
-                        <div>
-                          <div className="font-semibold text-sm text-primary-900">{item.name}</div>
-                          <div className="text-xs text-secondary">{item.sales} unidades vendidas</div>
+                    summary.topProducts.map((item, i) => {
+                      const maxTotal = Math.max(...summary.topProducts.map(p => p.total), 1);
+                      const barPct = Math.round((item.total / maxTotal) * 100);
+                      return (
+                        <div key={i} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800/60 transition-all hover:border-slate-300">
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <div className="flex items-center gap-2.5">
+                              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                i === 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' :
+                                i === 1 ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200' :
+                                i === 2 ? 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300' :
+                                'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                              }`}>
+                                #{i + 1}
+                              </span>
+                              <div>
+                                <span className="font-bold text-sm text-primary block leading-tight">{item.name}</span>
+                                <span className="text-xs text-secondary">{item.sales} unidades vendidas</span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-bold text-sm text-primary block">{formatMoney(item.total)}</span>
+                              <span className="text-[10px] text-secondary">Facturación</span>
+                            </div>
+                          </div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-primary-600 h-full rounded-full transition-all" style={{ width: `${barPct}%` }} />
+                          </div>
                         </div>
-                        <div className="font-bold text-primary-800 text-sm">
-                          {formatMoney(item.total)}
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </CardBody>
             </Card>
 
+            {/* Card 2: Ventas por Medio de Pago */}
             <Card>
-              <CardHeader title="Ventas por Medio de Pago" />
+              <CardHeader title="Ventas por Medio de Pago" subtitle="Distribución porcentual por canal de cobro" />
               <CardBody>
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {summary.salesByPayment.length === 0 ? (
-                    <div className="text-center py-6 text-xs text-secondary">
+                    <div className="text-center py-8 text-xs text-secondary">
                       Sin datos de pago este periodo
                     </div>
                   ) : (
                     summary.salesByPayment.map((item, i) => (
-                      <div key={i} className="space-y-1">
-                        <div className="flex justify-between text-xs font-semibold">
-                          <span>{item.method}</span>
-                          <span className="text-primary-800">{formatMoney(item.amount)} ({item.pct}%)</span>
+                      <div key={i} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800/60 space-y-2">
+                        <div className="flex justify-between items-center text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: 'var(--accent-500, #10b981)' }}></span>
+                            <span className="font-bold text-sm text-primary">{item.method}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-primary">{formatMoney(item.amount)}</span>
+                            <Badge variant="secondary">{item.pct}%</Badge>
+                          </div>
                         </div>
-                        <div className="w-full bg-neutral-100 rounded-full h-2 overflow-hidden">
-                          <div className="bg-primary-600 h-full rounded-full" style={{ width: `${item.pct}%` }}></div>
+                        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{
+                              width: `${item.pct}%`,
+                              backgroundColor: 'var(--accent-500, #10b981)'
+                            }}
+                          />
                         </div>
                       </div>
                     ))

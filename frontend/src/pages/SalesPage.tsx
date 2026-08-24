@@ -59,7 +59,7 @@ export default function SalesPage() {
     {
       key: 'paymentMethod',
       header: 'Pago',
-      render: (r: Sale) => <Badge variant="info">{r.paymentMethod}</Badge>,
+      render: (r: Sale) => <Badge variant="secondary">{r.paymentMethod}</Badge>,
     },
     {
       key: 'total',

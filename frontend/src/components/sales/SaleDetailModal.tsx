@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import {
   FileText,
   Printer,
@@ -25,10 +26,11 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
   const [activeTab, setActiveTab] = useState<'details' | 'ticket'>('details');
   const [items, setItems] = useState<{ productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [tenantInfo, setTenantInfo] = useState<{ name: string; tradeName: string; ruc: string; address: string; phone: string; logo_path?: string }>({
-    name: 'Venta Vehiculos',
+    name: 'VENTAS B&V S.A.C.',
     tradeName: 'Motors S.A.C',
-    ruc: '20601234567',
+    ruc: '20998877665',
     address: 'Av. Principal 123, Lima',
     phone: '+51 987654321',
     logo_path: '',
@@ -40,9 +42,9 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
       settingsService.getTenantInfo().then((info) => {
         if (info) {
           setTenantInfo({
-            name: info.name || 'Venta Vehiculos',
-            tradeName: info.trade_name || 'Motors S.A.C',
-            ruc: info.ruc || '20601234567',
+            name: info.legal_name || info.name || 'VENTAS B&V S.A.C.',
+            tradeName: info.trade_name || info.name || 'Motors S.A.C',
+            ruc: info.ruc || '20998877665',
             address: info.address || 'Av. Principal 123, Lima',
             phone: info.phone || '+51 987654321',
             logo_path: info.logo_path || '',
@@ -68,8 +70,31 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
         }
         setLoadingItems(false);
       });
+
+      const docTypeCode = isFactura ? '01' : '03';
+      const seqParts = (sale.saleNumber || 'B001-0001').split('-');
+      const series = seqParts[0] || 'B001';
+      const seqStr = String(seqParts[1] || '00000001').padStart(8, '0');
+      const opGravada = (sale.total / 1.18).toFixed(2);
+      const igv = (sale.total - sale.total / 1.18).toFixed(2);
+      const totalStr = sale.total.toFixed(2);
+      const dateStr = sale.date ? sale.date.split(',')[0].trim() : '2026-08-23';
+      const custDocType = sale.customerDoc && sale.customerDoc.length === 11 ? '6' : '1';
+      const custDocNum = sale.customerDoc || '00000000';
+      const hash = '8a9F+zX2qK9/LmQ0wE7YnRtP1uI=';
+
+      const currentRuc = tenantInfo.ruc || '20998877665';
+      const sunatQrPayload = `${currentRuc}|${docTypeCode}|${series}|${seqStr}|${igv}|${totalStr}|${dateStr}|${custDocType}|${custDocNum}|${hash}|`;
+
+      QRCode.toDataURL(sunatQrPayload, {
+        width: 120,
+        margin: 1,
+        color: { dark: '#000000', light: '#ffffff' },
+      })
+        .then((url) => setQrDataUrl(url))
+        .catch((err) => console.error('Error generating QR:', err));
     }
-  }, [sale, isOpen]);
+  }, [sale?.id, isOpen]);
 
   if (!sale || !isOpen) return null;
 
@@ -540,15 +565,23 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
                 {/* Dashed Line */}
                 <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
 
-                {/* SUNAT Footer & Simulated QR Code */}
+                {/* SUNAT Footer & Real QR Code */}
                 <div style={{ textAlign: 'center', marginTop: '10px' }}>
                   <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '6px' }}>
-                    <div style={{ border: '1px solid #000', padding: '4px', background: '#fff', borderRadius: '4px' }}>
-                      <QrCode size={64} style={{ color: '#000' }} />
-                    </div>
+                    {qrDataUrl ? (
+                      <img
+                        src={qrDataUrl}
+                        alt="Código QR SUNAT"
+                        style={{ width: '100px', height: '100px', border: '1px solid #000', padding: '2px', background: '#fff' }}
+                      />
+                    ) : (
+                      <div style={{ border: '1px solid #000', padding: '4px', background: '#fff', borderRadius: '4px' }}>
+                        <QrCode size={64} style={{ color: '#000' }} />
+                      </div>
+                    )}
                   </div>
                   <div style={{ fontSize: '10px', fontWeight: 700 }}>
-                    Representación Impresa de la Boleta de Venta Electrónica
+                    Representación Impresa de la {docTitle}
                   </div>
                   <div style={{ fontSize: '9px', color: '#334155', marginTop: '2px' }}>
                     Autorizado mediante Resolución de Superintendencia N° 034-005-0005315/SUNAT

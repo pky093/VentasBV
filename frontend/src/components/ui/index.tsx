@@ -76,18 +76,30 @@ export const Badge: React.FC<{
 
 // Page Header Component
 export const PageHeader: React.FC<{
+  eyebrow?: string;
   title: string;
   subtitle?: string;
+  description?: string;
   action?: React.ReactNode;
-}> = ({ title, subtitle, action }) => (
-  <div className="page-header flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
-    <div>
-      <h1 className="page-title">{title}</h1>
-      {subtitle && <p className="page-subtitle">{subtitle}</p>}
+  actions?: React.ReactNode;
+}> = ({ eyebrow, title, subtitle, description, action, actions }) => {
+  const subText = subtitle || description;
+  const actionContent = action || actions;
+  return (
+    <div className="page-header flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
+      <div>
+        {eyebrow && <p className="eyebrow text-xs mb-1">{eyebrow}</p>}
+        <h1 className="page-title">{title}</h1>
+        {subText && <p className="page-subtitle text-xs text-secondary mt-0.5">{subText}</p>}
+      </div>
+      {actionContent && (
+        <div className="flex gap-2 flex-wrap items-center w-full sm:w-auto justify-start sm:justify-end">
+          {actionContent}
+        </div>
+      )}
     </div>
-    {action && <div className="flex gap-2 flex-wrap items-center w-full sm:w-auto justify-start sm:justify-end">{action}</div>}
-  </div>
-);
+  );
+};
 
 // Stat Card Widget
 export const StatCard: React.FC<{
@@ -253,15 +265,15 @@ export function DataTable<T extends Record<string, any>>({
         </table>
       </div>
 
-      {/* Mobile Compact View (<768px) - Structured matching Image 2 reference */}
-      <div className="data-table-mobile-view bg-surface rounded-2xl border border-color shadow-sm divide-y divide-color overflow-hidden my-3 mx-2 sm:mx-4">
+      {/* Mobile Card View (<768px) - Premium Independent Cards */}
+      <div className="data-table-mobile-view space-y-3.5 my-3">
         {loading ? (
-          <div className="text-center py-8">
+          <div className="text-center py-8 bg-surface rounded-2xl border border-color p-6 shadow-sm">
             <Loader2 className="animate-spin mx-auto text-primary mb-2" size={28} />
             <span className="text-sm text-secondary">Cargando información...</span>
           </div>
         ) : paginatedData.length === 0 ? (
-          <div className="text-center py-8">
+          <div className="text-center py-8 bg-surface rounded-2xl border border-color p-6 shadow-sm">
             <AlertCircle className="mx-auto text-muted mb-2" size={32} />
             <span className="text-sm font-medium text-secondary">{emptyMessage}</span>
           </div>
@@ -269,7 +281,7 @@ export function DataTable<T extends Record<string, any>>({
           paginatedData.map((row, i) => {
             const mainCol = columns[0];
             const secondCol =
-              columns.find((c) => c.key === 'customer' || c.key === 'client' || c.key === 'name') ||
+              columns.find((c) => c.key === 'customer' || c.key === 'client' || c.key === 'name' || c.key === 'full_name') ||
               columns[1];
             const statusCol = columns.find((c) => c.key === 'status' || c.key === 'state');
             const amountCol = columns.find(
@@ -285,66 +297,68 @@ export function DataTable<T extends Record<string, any>>({
             // Document type inference (e.g., Boleta or Factura for sales)
             const docCode = String(row[mainCol?.key] || '');
             const docTypeLabel = docCode.startsWith('F')
-              ? 'Factura'
+              ? 'FACTURA'
               : docCode.startsWith('B')
-              ? 'Boleta'
+              ? 'BOLETA'
               : '';
 
             return (
               <div
                 key={row.id || i}
-                className="px-5 sm:px-6 py-4.5 sm:py-5 hover:bg-surface-hover/60 transition-all flex flex-col gap-2"
+                className="bg-surface rounded-2xl border border-color shadow-sm p-4 sm:p-5 flex flex-col gap-2.5 transition-all hover:border-slate-300 dark:hover:border-slate-700"
               >
-                {/* Line 1: Document Type Label (if applicable) */}
-                {docTypeLabel && (
-                  <span className="text-[11px] font-semibold text-secondary uppercase tracking-wider">
-                    {docTypeLabel}
-                  </span>
-                )}
-
-                {/* Line 2: Main Code (Left) + Total Amount (Right) */}
-                <div className="flex justify-between items-baseline gap-3">
-                  <span className="font-extrabold text-primary text-base tracking-tight">
-                    {mainCol?.render ? mainCol.render(row) : (row[mainCol?.key] ?? '-')}
-                  </span>
-                  {amountCol && (
-                    <span className="font-extrabold text-primary text-base shrink-0">
-                      {amountCol.render ? amountCol.render(row) : row[amountCol.key]}
+                {/* Line 1 & 2: Document Type Label + Code (Left) & Total Amount (Right) */}
+                <div className="flex justify-between items-start gap-2">
+                  <div>
+                    {docTypeLabel && (
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-secondary block mb-0.5">
+                        {docTypeLabel}
+                      </span>
+                    )}
+                    <span className="font-extrabold text-primary text-base tracking-tight">
+                      {mainCol?.render ? mainCol.render(row) : (row[mainCol?.key] ?? '-')}
                     </span>
+                  </div>
+                  {amountCol && (
+                    <div className="text-right shrink-0">
+                      <span className="font-extrabold text-base text-primary block">
+                        {amountCol.render ? amountCol.render(row) : row[amountCol.key]}
+                      </span>
+                    </div>
                   )}
                 </div>
 
-                {/* Line 3: Status Badge right under Code */}
+                {/* Line 3: Status Badge */}
                 {statusCol && (
-                  <div className="flex items-center mt-0.5">
+                  <div className="flex items-center">
                     {statusCol.render ? statusCol.render(row) : (row[statusCol.key] ?? '-')}
                   </div>
                 )}
 
                 {/* Line 4: Primary Sub-item (Customer Name / Item Description) */}
                 {secondCol && secondCol !== mainCol && (
-                  <div className="font-bold text-sm text-primary mt-1">
+                  <div className="font-semibold text-sm text-primary">
                     {secondCol.render ? secondCol.render(row) : (row[secondCol.key] ?? '-')}
                   </div>
                 )}
 
-                {/* Line 5: Payment Method / Category / Extra details */}
-                {extraCol && (
-                  <div className="text-xs text-secondary font-medium">
-                    {extraCol.render ? extraCol.render(row) : (row[extraCol.key] ?? '-')}
-                  </div>
-                )}
+                {/* Line 5: Branch / Payment / Category & Date */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-secondary">
+                  {extraCol && (
+                    <span className="font-medium">
+                      {extraCol.render ? extraCol.render(row) : (row[extraCol.key] ?? '-')}
+                    </span>
+                  )}
+                  {dateCol && (
+                    <span>
+                      {dateCol.render ? dateCol.render(row) : row[dateCol.key]}
+                    </span>
+                  )}
+                </div>
 
-                {/* Line 6: Date & Time */}
-                {dateCol && (
-                  <div className="text-xs text-secondary mt-0.5">
-                    {dateCol.render ? dateCol.render(row) : row[dateCol.key]}
-                  </div>
-                )}
-
-                {/* Line 7: Action Buttons (Centered / Aligned cleanly with top border) */}
+                {/* Line 6: Action Buttons */}
                 {actions && (
-                  <div className="flex flex-wrap items-center justify-end gap-2.5 mt-3 pt-2.5 border-t border-color/40">
+                  <div className="flex flex-wrap items-center justify-end gap-2 mt-1 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
                     {actions(row)}
                   </div>
                 )}
@@ -420,3 +434,29 @@ export const Tabs: React.FC<TabsProps> = ({
     </div>
   );
 };
+
+// Field Component
+export function Field({
+  label,
+  error,
+  required,
+  className = '',
+  children,
+}: {
+  label: string;
+  error?: string | undefined;
+  required?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`form-field ${className}`}>
+      <label className="form-field__label">
+        <span>{label}</span>
+        {required && <span className="text-amber-500 ml-0.5">*</span>}
+      </label>
+      <div className="form-field__control">{children}</div>
+      {error && <p className="form-field__error">{error}</p>}
+    </div>
+  );
+}

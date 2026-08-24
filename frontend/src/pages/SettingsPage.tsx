@@ -438,21 +438,21 @@ export default function SettingsPage() {
             <CardBody>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Primary Color */}
-                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                <div className="color-picker-card">
                   <div>
-                    <div className="font-semibold text-sm">Color Primario</div>
+                    <div className="font-bold text-sm text-primary">Color Primario</div>
                     <div className="text-xs text-secondary">Botones principales, íconos y acentos primarios</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      className="color-picker-box"
                       value={customColors.primaryColor}
                       onChange={(e) => handleColorChange('primaryColor', e.target.value)}
                     />
                     <input
                       type="text"
-                      className="form-control text-xs uppercase font-mono w-24"
+                      className="form-control text-xs uppercase font-mono w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5"
                       value={customColors.primaryColor}
                       onChange={(e) => handleColorChange('primaryColor', e.target.value)}
                     />
@@ -460,21 +460,21 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Secondary Color */}
-                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                <div className="color-picker-card">
                   <div>
-                    <div className="font-semibold text-sm">Color Secundario / Destacado</div>
+                    <div className="font-bold text-sm text-primary">Color Secundario / Destacado</div>
                     <div className="text-xs text-secondary">Badges, enlaces activos y acentos secundarios</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      className="color-picker-box"
                       value={customColors.secondaryColor}
                       onChange={(e) => handleColorChange('secondaryColor', e.target.value)}
                     />
                     <input
                       type="text"
-                      className="form-control text-xs uppercase font-mono w-24"
+                      className="form-control text-xs uppercase font-mono w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5"
                       value={customColors.secondaryColor}
                       onChange={(e) => handleColorChange('secondaryColor', e.target.value)}
                     />
@@ -482,21 +482,21 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Page Background */}
-                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                <div className="color-picker-card">
                   <div>
-                    <div className="font-semibold text-sm">Fondo de la Página</div>
+                    <div className="font-bold text-sm text-primary">Fondo de la Página</div>
                     <div className="text-xs text-secondary">Color general del fondo de la aplicación</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      className="color-picker-box"
                       value={customColors.pageBg}
                       onChange={(e) => handleColorChange('pageBg', e.target.value)}
                     />
                     <input
                       type="text"
-                      className="form-control text-xs uppercase font-mono w-24"
+                      className="form-control text-xs uppercase font-mono w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5"
                       value={customColors.pageBg}
                       onChange={(e) => handleColorChange('pageBg', e.target.value)}
                     />
@@ -504,21 +504,21 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Sidebar Background */}
-                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                <div className="color-picker-card">
                   <div>
-                    <div className="font-semibold text-sm">Fondo del Menú Lateral</div>
+                    <div className="font-bold text-sm text-primary">Fondo del Menú Lateral</div>
                     <div className="text-xs text-secondary">Color de fondo del panel de navegación lateral</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      className="color-picker-box"
                       value={customColors.sidebarBg}
                       onChange={(e) => handleColorChange('sidebarBg', e.target.value)}
                     />
                     <input
                       type="text"
-                      className="form-control text-xs uppercase font-mono w-24"
+                      className="form-control text-xs uppercase font-mono w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5"
                       value={customColors.sidebarBg}
                       onChange={(e) => handleColorChange('sidebarBg', e.target.value)}
                     />
@@ -526,21 +526,21 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Sidebar Text Color */}
-                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                <div className="color-picker-card">
                   <div>
-                    <div className="font-semibold text-sm">Color Texto del Menú</div>
+                    <div className="font-bold text-sm text-primary">Color Texto del Menú</div>
                     <div className="text-xs text-secondary">Color de los enlaces y etiquetas del menú lateral</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      className="color-picker-box"
                       value={customColors.sidebarText}
                       onChange={(e) => handleColorChange('sidebarText', e.target.value)}
                     />
                     <input
                       type="text"
-                      className="form-control text-xs uppercase font-mono w-24"
+                      className="form-control text-xs uppercase font-mono w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5"
                       value={customColors.sidebarText}
                       onChange={(e) => handleColorChange('sidebarText', e.target.value)}
                     />
@@ -548,21 +548,21 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Surface Background */}
-                <div className="p-3.5 rounded-xl border border-color flex items-center justify-between bg-surface">
+                <div className="color-picker-card">
                   <div>
-                    <div className="font-semibold text-sm">Fondo de Tarjetas (Surface)</div>
+                    <div className="font-bold text-sm text-primary">Fondo de Tarjetas (Surface)</div>
                     <div className="text-xs text-secondary">Color de fondo de las tarjetas y contenedores</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-color p-0.5 bg-white"
+                      className="color-picker-box"
                       value={customColors.surfaceBg}
                       onChange={(e) => handleColorChange('surfaceBg', e.target.value)}
                     />
                     <input
                       type="text"
-                      className="form-control text-xs uppercase font-mono w-24"
+                      className="form-control text-xs uppercase font-mono w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5"
                       value={customColors.surfaceBg}
                       onChange={(e) => handleColorChange('surfaceBg', e.target.value)}
                     />

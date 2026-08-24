@@ -89,11 +89,11 @@ export default function UsersPage() {
       header: 'Usuario',
       render: (row: UserRecord) => (
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-950 flex items-center justify-center text-primary-700 font-bold">
-            {row.full_name.charAt(0)}
+          <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-sm shrink-0">
+            {row.full_name.charAt(0).toUpperCase()}
           </div>
           <div>
-            <div className="font-semibold text-primary">{row.full_name}</div>
+            <div className="font-bold text-sm text-primary">{row.full_name}</div>
             <div className="text-xs text-secondary">
               @{row.username} • {row.email}
             </div>
@@ -104,21 +104,33 @@ export default function UsersPage() {
     {
       key: 'role',
       header: 'Rol de Sistema',
-      render: (row: UserRecord) => (
-        <Badge variant={row.role.includes('Admin') ? 'primary' : 'info'}>
-          <Shield size={12} className="inline mr-1" /> {row.role}
-        </Badge>
-      ),
+      render: (row: UserRecord) => {
+        const isSuper = row.role.toLowerCase().includes('super');
+        const isAdmin = row.role.toLowerCase().includes('admin');
+        return (
+          <span
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+              isSuper
+                ? 'bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                : isAdmin
+                ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+            }`}
+          >
+            <Shield size={12} /> {row.role}
+          </span>
+        );
+      },
     },
     {
       key: 'branches',
       header: 'Sucursales Asignadas',
       render: (row: UserRecord) => (
-        <div className="flex gap-1 flex-wrap">
+        <div className="flex gap-1.5 flex-wrap">
           {row.branches.map((b, i) => (
             <span
               key={i}
-              className="text-xs px-2 py-0.5 rounded bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700"
+              className="text-xs px-2.5 py-1 rounded-lg font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
             >
               {b}
             </span>
@@ -130,7 +142,7 @@ export default function UsersPage() {
       key: 'status',
       header: 'Estado',
       render: (row: UserRecord) => (
-        <Badge variant={row.status === 'ACTIVE' ? 'success' : 'secondary'}>
+        <Badge variant={row.status === 'ACTIVE' ? 'success' : 'neutral'}>
           {row.status === 'ACTIVE' ? 'Activo' : 'Deshabilitado'}
         </Badge>
       ),
@@ -157,16 +169,16 @@ export default function UsersPage() {
           data={users}
           searchPlaceholder="Buscar por nombre, usuario o email..."
           actions={(row) => (
-            <div className="flex gap-2 justify-end">
+            <div className="flex items-center gap-1.5 justify-end">
               <button
-                className="icon-btn icon-btn-sm btn-action-edit border-none"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors border-0 bg-transparent cursor-pointer"
                 title="Editar"
                 onClick={() => { setSelectedUser(row); setIsModalOpen(true); }}
               >
-                <Edit2 size={14} />
+                <Edit2 size={16} />
               </button>
               <button
-                className="icon-btn icon-btn-sm btn-action-danger border-none"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors border-0 bg-transparent cursor-pointer"
                 title="Eliminar"
                 onClick={() => {
                   Swal.fire({
@@ -203,7 +215,7 @@ export default function UsersPage() {
                   });
                 }}
               >
-                <Trash2 size={14} />
+                <Trash2 size={16} />
               </button>
             </div>
           )}
