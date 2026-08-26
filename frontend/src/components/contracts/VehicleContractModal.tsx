@@ -27,11 +27,11 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
   const [brands, setBrands] = useState<Brand[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [companyInfo, setCompanyInfo] = useState({
-    name: 'VENTAS B&V S.A.C.',
-    tradeName: 'GRUPO K CONTRERAS S.A.C',
-    ruc: '20613639030',
-    address: 'Av. Los Próceres 1240, Surco, Lima',
-    phone: '993275893',
+    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'GRUPO K CONTRERAS S.A.C') : 'GRUPO K CONTRERAS S.A.C',
+    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'GRUPO K CONTRERAS S.A.C') : 'GRUPO K CONTRERAS S.A.C',
+    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '20613639030') : '20613639030',
+    address: 'Retamas',
+    phone: '+51 993 275 893',
     logo_path: '',
     signature_path: '',
   });
@@ -80,8 +80,8 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
             name: info.legal_name || info.name || 'GRUPO K CONTRERAS S.A.C',
             tradeName: info.trade_name || info.name || 'GRUPO K CONTRERAS S.A.C',
             ruc: info.ruc || '20613639030',
-            address: info.address || 'Av. Los Próceres 1240, Surco, Lima',
-            phone: info.phone || '993275893',
+            address: info.address || 'Retamas',
+            phone: info.phone || '+51 993 275 893',
             logo_path: info.logo_path || '',
             signature_path: info.signature_path || '',
           });

@@ -18,6 +18,9 @@ import {
   ArrowRightLeft,
   Store,
   Package,
+  User,
+  UserPlus,
+  Users,
 } from 'lucide-react';
 import { Button, Modal, Badge } from '../components/ui';
 import { productsService, customersService, catalogService, salesService, settingsService, Product as DBProduct } from '../lib/db-services';
@@ -54,6 +57,10 @@ export default function POSPage() {
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<{ id: string; name: string; doc: string } | null>(null);
+  const [isManualCustomer, setIsManualCustomer] = useState(false);
+  const [manualCustomerName, setManualCustomerName] = useState('');
+  const [manualCustomerDocType, setManualCustomerDocType] = useState<'DNI' | 'RUC' | 'CE' | 'SIN_DOC'>('DNI');
+  const [manualCustomerDoc, setManualCustomerDoc] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'EFECTIVO' | 'TARJETA' | 'YAPE'>('EFECTIVO');
   const [docType, setDocType] = useState<'BOLETA' | 'FACTURA'>('BOLETA');
   const [isLoading, setIsLoading] = useState(true);
@@ -82,6 +89,8 @@ export default function POSPage() {
     number: string;
     date: string;
     time: string;
+    emitterName: string;
+    branchName: string;
     customerName: string;
     customerDoc: string;
     items: { name: string; qty: number; unitPrice: number; total: number }[];
@@ -264,11 +273,27 @@ export default function POSPage() {
       const saleBranchId = activeBranchId !== 'ALL' ? activeBranchId : (activeBranch?.id || DEFAULT_BRANCH_ID);
       const saleBranchName = activeBranch?.name || 'Sede Principal';
 
+      const currentEmitterName = typeof window !== 'undefined'
+        ? (localStorage.getItem('auth_user') || localStorage.getItem('auth_username') || 'Niver Contreras')
+        : 'Niver Contreras';
+
+      const effectiveCustomerName = isManualCustomer
+        ? (manualCustomerName.trim() || 'Público General')
+        : (selectedCustomer?.name || 'Público General');
+
+      const effectiveCustomerDoc = isManualCustomer
+        ? (manualCustomerDocType === 'SIN_DOC' ? '00000000' : (manualCustomerDoc.trim() || '00000000'))
+        : (selectedCustomer?.doc || '00000000');
+
+      const effectiveCustomerId = isManualCustomer || selectedCustomer?.id === 'default' || selectedCustomer?.id === '__manual__'
+        ? undefined
+        : selectedCustomer?.id;
+
       const createdSaleId = await salesService.createSale({
-        customerId: selectedCustomer && selectedCustomer.id !== 'default' ? selectedCustomer.id : undefined,
-        customerName: selectedCustomer?.name || 'Público General',
-        customerDoc: selectedCustomer?.doc || '00000000',
-        sellerName: 'Admin Principal',
+        customerId: effectiveCustomerId,
+        customerName: effectiveCustomerName,
+        customerDoc: effectiveCustomerDoc,
+        sellerName: currentEmitterName,
         branchId: saleBranchId,
         branchName: saleBranchName,
         total: total,
@@ -290,19 +315,21 @@ export default function POSPage() {
       // 5. Build boleta preview data
       const now = new Date();
       setBoletaData({
-        companyName: tenant.name || 'Venta Vehiculos',
+        companyName: tenant.name || 'Grupo K contreras S.A.C',
         companyTradeName: tenant.trade_name || '',
-        companyRuc: tenant.ruc || '20601234567',
-        companyAddress: tenant.address || 'Av. Principal 123, Lima',
-        companyPhone: tenant.phone || '+51 987654321',
-        logoPath: tenant.logo_path || '/logo-bv-brand.png',
+        companyRuc: tenant.ruc || '20613639030',
+        companyAddress: saleBranchName ? `${saleBranchName} - Retamas` : (tenant.address || 'Retamas'),
+        companyPhone: tenant.phone || '+51 993 275 893',
+        logoPath: tenant.logo_path || '',
         docTitle: docType === 'BOLETA' ? 'BOLETA DE VENTA ELECTRÓNICA' : 'FACTURA ELECTRÓNICA',
         series: seriesStr,
         number: `${seriesStr}-${numStr}`,
         date: now.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' }),
         time: now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        customerName: selectedCustomer?.name || 'Público General',
-        customerDoc: selectedCustomer?.doc || '00000000',
+        emitterName: currentEmitterName,
+        branchName: saleBranchName,
+        customerName: effectiveCustomerName,
+        customerDoc: effectiveCustomerDoc,
         items: cart.map((item) => ({
           name: item.name,
           qty: item.qty,
@@ -501,21 +528,130 @@ export default function POSPage() {
 
         {/* Customer Selector */}
         <div className="px-4 py-3 border-b border-color bg-app">
-          <label className="text-xs font-bold text-secondary uppercase mb-1 block">Cliente</label>
-          <select
-            className="form-control text-xs font-semibold"
-            value={selectedCustomer?.id || ''}
-            onChange={(e) => {
-              const found = customers.find((c) => c.id === e.target.value);
-              if (found) setSelectedCustomer(found);
-            }}
-          >
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.doc})
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-bold text-secondary uppercase flex items-center gap-1.5">
+              <User size={13} className="text-primary-600" />
+              Cliente Receptor
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isManualCustomer;
+                setIsManualCustomer(next);
+                if (next) {
+                  setManualCustomerName(selectedCustomer?.name === 'Público General' ? '' : (selectedCustomer?.name || ''));
+                  setManualCustomerDoc(selectedCustomer?.doc === '00000000' ? '' : (selectedCustomer?.doc || ''));
+                }
+              }}
+              className="text-[11px] font-bold text-primary-600 hover:text-primary-700 bg-primary-50 dark:bg-primary-950/40 px-2 py-0.5 rounded-full border border-primary-200 dark:border-primary-800 transition-colors flex items-center gap-1"
+            >
+              {isManualCustomer ? (
+                <>
+                  <Users size={11} /> Seleccionar Registrado
+                </>
+              ) : (
+                <>
+                  <UserPlus size={11} /> + No Registrado / Manual
+                </>
+              )}
+            </button>
+          </div>
+
+          {!isManualCustomer ? (
+            <div>
+              <select
+                className="form-control text-xs font-semibold w-full"
+                value={selectedCustomer?.id || 'default'}
+                onChange={(e) => {
+                  if (e.target.value === '__manual__') {
+                    setIsManualCustomer(true);
+                    setManualCustomerName('');
+                    setManualCustomerDoc('');
+                    return;
+                  }
+                  const found = customers.find((c) => c.id === e.target.value);
+                  if (found) setSelectedCustomer(found);
+                }}
+              >
+                <option value="default">Público General (Sin DNI / 00000000)</option>
+                <option value="__manual__">➕ Escribir cliente manual (No registrado)...</option>
+                <optgroup label="Clientes Registrados">
+                  {customers
+                    .filter((c) => c.id !== 'default')
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.doc})
+                      </option>
+                    ))}
+                </optgroup>
+              </select>
+            </div>
+          ) : (
+            <div className="space-y-2 p-2.5 rounded-lg border border-primary-200 dark:border-primary-800/60 bg-surface">
+              <div>
+                <label className="text-[10.5px] font-semibold text-secondary block mb-1">
+                  Nombre Completo / Razón Social:
+                </label>
+                <input
+                  type="text"
+                  className="form-control text-xs py-1 px-2 font-semibold"
+                  placeholder="Ej. Carlos Mendoza o Público General"
+                  value={manualCustomerName}
+                  onChange={(e) => setManualCustomerName(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-12 gap-1.5">
+                <div className="col-span-5">
+                  <label className="text-[10.5px] font-semibold text-secondary block mb-1">
+                    Tipo Doc:
+                  </label>
+                  <select
+                    className="form-control text-xs py-1 px-1 font-semibold"
+                    value={manualCustomerDocType}
+                    onChange={(e: any) => {
+                      setManualCustomerDocType(e.target.value);
+                      if (e.target.value === 'SIN_DOC') {
+                        setManualCustomerDoc('');
+                      }
+                    }}
+                  >
+                    <option value="DNI">DNI</option>
+                    <option value="RUC">RUC</option>
+                    <option value="CE">C.E.</option>
+                    <option value="SIN_DOC">Sin DNI</option>
+                  </select>
+                </div>
+
+                <div className="col-span-7">
+                  <label className="text-[10.5px] font-semibold text-secondary block mb-1">
+                    N° Doc. (Opcional):
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control text-xs py-1 px-2 font-mono"
+                    placeholder={manualCustomerDocType === 'SIN_DOC' ? 'No requerido' : manualCustomerDocType === 'RUC' ? '11 dígitos' : '8 dígitos (opcional)'}
+                    disabled={manualCustomerDocType === 'SIN_DOC'}
+                    value={manualCustomerDoc}
+                    onChange={(e) => setManualCustomerDoc(e.target.value.replace(/\D/g, ''))}
+                    maxLength={manualCustomerDocType === 'RUC' ? 11 : 12}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1 border-t border-color text-[10.5px] text-muted">
+                <span>{manualCustomerDocType === 'SIN_DOC' || !manualCustomerDoc ? 'Emitir sin documento' : `Doc: ${manualCustomerDoc}`}</span>
+                <button
+                  type="button"
+                  className="text-primary-600 hover:underline font-bold"
+                  onClick={() => setIsManualCustomer(false)}
+                >
+                  Volver a lista
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Cart Item List */}
@@ -680,23 +816,54 @@ export default function POSPage() {
             background: 'var(--bg-app)',
             borderRadius: '10px',
             border: '1px solid var(--border-color)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
           }}>
-            <div>
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' as const }}>Cliente</div>
-              <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>{selectedCustomer?.name}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' as const, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <User size={12} className="text-primary-600" />
+                Datos del Receptor en Comprobante
+              </div>
+              <span style={{
+                padding: '2px 8px',
+                background: 'var(--primary-100, #dbeafe)',
+                color: 'var(--primary-700)',
+                borderRadius: '12px',
+                fontSize: '10.5px',
+                fontWeight: 700,
+              }}>
+                {isManualCustomer ? (manualCustomerDocType === 'SIN_DOC' || !manualCustomerDoc ? 'Sin DNI' : `Doc: ${manualCustomerDoc}`) : `Doc: ${selectedCustomer?.doc || '00000000'}`}
+              </span>
             </div>
-            <div style={{
-              padding: '4px 12px',
-              background: 'var(--primary-100, #dbeafe)',
-              color: 'var(--primary-700)',
-              borderRadius: '20px',
-              fontSize: '11px',
-              fontWeight: 700,
-            }}>
-              Doc: {selectedCustomer?.doc}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-semibold text-secondary block mb-0.5">Nombre / Razón Social:</label>
+                <input
+                  type="text"
+                  className="form-control text-xs py-1 px-2 font-semibold"
+                  placeholder="Público General"
+                  value={isManualCustomer ? manualCustomerName : (selectedCustomer?.name || 'Público General')}
+                  onChange={(e) => {
+                    setIsManualCustomer(true);
+                    setManualCustomerName(e.target.value);
+                  }}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-secondary block mb-0.5">
+                  N° Documento ({docType === 'FACTURA' ? 'RUC' : 'DNI / Opcional'}):
+                </label>
+                <input
+                  type="text"
+                  className="form-control text-xs py-1 px-2 font-mono"
+                  placeholder={docType === 'FACTURA' ? 'RUC 11 dígitos' : 'DNI 8 dígitos o vacío'}
+                  value={isManualCustomer ? manualCustomerDoc : (selectedCustomer?.doc === '00000000' ? '' : (selectedCustomer?.doc || ''))}
+                  onChange={(e) => {
+                    setIsManualCustomer(true);
+                    setManualCustomerDoc(e.target.value.replace(/\D/g, ''));
+                  }}
+                  maxLength={docType === 'FACTURA' ? 11 : 12}
+                />
+              </div>
             </div>
           </div>
 
@@ -925,19 +1092,27 @@ export default function POSPage() {
               <div style={{ fontSize: '11px', margin: '8px 0' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
                   <span>Fecha de emisión:</span>
-                  <span>{boletaData.date}</span>
+                  <span style={{ fontWeight: 600 }}>{boletaData.date}</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
                   <span>Hora de emisión:</span>
                   <span>{boletaData.time}</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Sede / Sucursal:</span>
+                  <span style={{ fontWeight: 600 }}>{boletaData.branchName || 'Sede Principal'}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
+                  <span>Emitido por:</span>
+                  <span style={{ fontWeight: 700, textTransform: 'uppercase' }}>{boletaData.emitterName}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
                   <span>Moneda:</span>
-                  <span>Soles</span>
+                  <span>SOLES (PEN)</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
                   <span>Cliente:</span>
-                  <span>{boletaData.customerName === 'Público General' ? 'Consumidor final' : boletaData.customerName}</span>
+                  <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>{boletaData.customerName === 'Público General' ? 'Consumidor final' : boletaData.customerName}</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
                   <span>Documento:</span>

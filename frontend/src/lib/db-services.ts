@@ -2084,7 +2084,7 @@ export const salesService = {
         .from('sales')
         .select(`
           id, sale_number, total, subtotal, tax, payment_method, document_type, seller_name, status, created_at,
-          branch_id, customer_id,
+          branch_id, customer_id, customer_name, customer_document,
           customers ( full_name, business_name, document_number ),
           branches ( name )
         `)
@@ -2096,6 +2096,7 @@ export const salesService = {
       }
 
       const dbSalesMap = new Map<string, Sale>();
+      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Niver Contreras') : 'Niver Contreras';
 
       if (data && data.length > 0) {
         data.forEach((s: any) => {
@@ -2106,13 +2107,16 @@ export const salesService = {
           const finalSunatStatus = rememberedStatus || (isCancelled ? 'NOTA_CREDITO' : (s.sunat_status || 'PENDIENTE'));
           const finalStatus = (rememberedStatus === 'ACEPTADO') ? 'COMPLETED' : (isCancelled ? 'CANCELLED' : s.status);
 
+          const custName = s.customer_name || (s.customers ? (s.customers.business_name || s.customers.full_name) : 'Público General') || 'Público General';
+          const custDoc = s.customer_document || s.customers?.document_number || '00000000';
+
           dbSalesMap.set(s.id, {
             id: s.id,
             saleNumber: s.sale_number,
-            customer: s.customers ? (s.customers.business_name || s.customers.full_name || 'Público General') : 'Público General',
-            customerDoc: s.customers?.document_number || '00000000',
+            customer: custName,
+            customerDoc: custDoc,
             customerId: s.customer_id,
-            sellerName: s.seller_name || 'Admin Principal',
+            sellerName: s.seller_name || currentUserName,
             branch: s.branches?.name || 'Sede Principal',
             branchId: s.branch_id,
             date: new Date(s.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
@@ -2176,6 +2180,20 @@ export const salesService = {
 
       const isValidUuid = (id?: string) => Boolean(id && id.length === 36 && id.includes('-'));
 
+      let customerName = sale.customerName?.trim() || 'Público General';
+      let customerDoc = sale.customerDoc?.trim() || '00000000';
+      if (isValidUuid(sale.customerId)) {
+        const { data: custData } = await supabase
+          .from('customers')
+          .select('full_name, business_name, document_number')
+          .eq('id', sale.customerId!)
+          .maybeSingle();
+        if (custData) {
+          customerName = custData.business_name || custData.full_name || customerName;
+          customerDoc = custData.document_number || customerDoc;
+        }
+      }
+
       let saleId: string;
       let finalSaleNumber = saleNumber;
 
@@ -2185,6 +2203,8 @@ export const salesService = {
           tenant_id: DEFAULT_TENANT_ID,
           branch_id: isValidUuid(sale.branchId) ? sale.branchId : DEFAULT_BRANCH_ID,
           customer_id: isValidUuid(sale.customerId) ? sale.customerId : null,
+          customer_name: customerName,
+          customer_document: customerDoc,
           sale_number: saleNumber,
           status: 'COMPLETED',
           subtotal: sale.subtotal,
@@ -2192,7 +2212,7 @@ export const salesService = {
           total: sale.total,
           payment_method: sale.paymentMethod,
           document_type: sale.documentType || 'BOLETA',
-          seller_name: sale.sellerName || 'Admin Principal',
+          seller_name: sale.sellerName || 'Niver Contreras',
         })
         .select()
         .single();
@@ -2217,20 +2237,6 @@ export const salesService = {
       const { error: itemsError } = await supabase.from('sale_items').insert(itemsToInsert);
       if (itemsError) {
         console.error('Error inserting sale items:', itemsError);
-      }
-
-      let customerName = sale.customerName || 'Público General';
-      let customerDoc = sale.customerDoc || '00000000';
-      if (isValidUuid(sale.customerId)) {
-        const { data: custData } = await supabase
-          .from('customers')
-          .select('full_name, business_name, document_number')
-          .eq('id', sale.customerId!)
-          .maybeSingle();
-        if (custData) {
-          customerName = custData.business_name || custData.full_name || customerName;
-          customerDoc = custData.document_number || customerDoc;
-        }
       }
 
       for (const item of sale.items) {
@@ -2471,12 +2477,18 @@ export interface BillingInvoice {
   status: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED' | 'NOTA_CREDITO' | 'CANCELLED';
   creditNoteNumber?: string;
   date: string;
+  rawDate?: string;
+  sellerName?: string;
+  branchName?: string;
+  paymentMethod?: string;
 }
 
 export const billingService = {
   async getInvoices(): Promise<BillingInvoice[]> {
     try {
       const sales = await salesService.getSales();
+      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Niver Contreras') : 'Niver Contreras';
+
       return sales.map((s) => {
         const parts = (s.saleNumber || '').split('-');
         const series = parts.length > 1 ? parts[0] : (s.documentType === 'FACTURA' ? 'F001' : 'B001');
@@ -2505,6 +2517,10 @@ export const billingService = {
           status: mappedStatus,
           creditNoteNumber: s.creditNoteNumber,
           date: s.date,
+          rawDate: s.rawDate,
+          sellerName: s.sellerName || currentUserName,
+          branchName: s.branch || 'Sede Principal',
+          paymentMethod: s.paymentMethod || 'Contado',
         };
       });
     } catch (err) {
@@ -2968,13 +2984,31 @@ export const expensesService = {
 export const settingsService = {
   async getTenantInfo(): Promise<Record<string, any>> {
     try {
+      const tenantId = getActiveTenantId();
       const { data, error } = await supabase
         .from('tenants')
         .select('*')
+        .eq('id', tenantId)
+        .maybeSingle();
+
+      if (data && Object.keys(data).length > 0) return data;
+
+      // Fallback query to default tenant or first tenant
+      const { data: defaultData } = await supabase
+        .from('tenants')
+        .select('*')
         .eq('id', DEFAULT_TENANT_ID)
-        .single();
-      if (error || !data) return {};
-      return data;
+        .maybeSingle();
+
+      if (defaultData) return defaultData;
+
+      const { data: firstTenant } = await supabase
+        .from('tenants')
+        .select('*')
+        .limit(1)
+        .maybeSingle();
+
+      return firstTenant || {};
     } catch (err) {
       console.error('Error fetching tenant info:', err);
       return {};

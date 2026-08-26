@@ -10,7 +10,7 @@ import {
   Receipt,
   X,
 } from 'lucide-react';
-import { Modal, Badge, Button } from '../ui';
+import { Modal, Badge, Button, Tabs } from '../ui';
 import type { BillingInvoice } from '../../lib/db-services';
 import { settingsService } from '../../lib/db-services';
 import { numberToSpanishWords } from '../../lib/numberToWords';
@@ -37,15 +37,15 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
   const [printFormat, setPrintFormat] = useState<'TICKET' | 'A4'>('TICKET');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [companyInfo, setCompanyInfo] = useState({
-    name: 'VENTAS B&V S.A.C.',
-    tradeName: 'B&V Ventas',
-    ruc: '20998877665',
-    address: 'Av. Los Próceres 1240, Surco, Lima',
-    phone: '01 445 6789',
+    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
+    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
+    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '20613639030') : '20613639030',
+    address: 'Retamas',
+    phone: '+51 993 275 893',
     establishmentCode: '0000',
-    department: 'LIMA',
-    province: 'LIMA',
-    district: 'SANTIAGO DE SURCO',
+    department: 'LA LIBERTAD',
+    province: 'PATAZ',
+    district: 'PARCOY',
     logo_path: '',
   });
 
@@ -54,15 +54,15 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
       settingsService.getTenantInfo().then((info) => {
         if (info && Object.keys(info).length > 0) {
           setCompanyInfo({
-            name: info.legal_name || info.name || 'VENTAS B&V S.A.C.',
-            tradeName: info.trade_name || info.name || 'B&V Ventas',
-            ruc: info.ruc || '20998877665',
-            address: info.address || 'Av. Los Próceres 1240, Surco, Lima',
-            phone: info.phone || '01 445 6789',
+            name: info.legal_name || info.name || 'Grupo K contreras S.A.C',
+            tradeName: info.trade_name || info.name || 'Grupo K contreras S.A.C',
+            ruc: info.ruc || '20613639030',
+            address: info.address || 'Retamas',
+            phone: info.phone || '+51 993 275 893',
             establishmentCode: info.establishment_code || '0000',
-            department: info.department || 'LIMA',
-            province: info.province || 'LIMA',
-            district: info.district || 'SANTIAGO DE SURCO',
+            department: info.department || 'LA LIBERTAD',
+            province: info.province || 'PATAZ',
+            district: info.district || 'PARCOY',
             logo_path: info.logo_path || '',
           });
         }
@@ -84,7 +84,7 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
 
       // SUNAT standard QR string format:
       // RUC|TIPO_DOC|SERIE|NUMERO|IGV|TOTAL|FECHA|TIPO_DOC_CLIENTE|NUM_DOC_CLIENTE|HASH|
-      const ruc = companyInfo.ruc || '20998877665';
+      const ruc = companyInfo.ruc || '20613639030';
       const sunatQrPayload = `${ruc}|${docTypeCode}|${invoice.series}|${seqStr}|${igv}|${totalStr}|${dateStr}|${custDocType}|${custDocNum}|${hash}|`;
 
       QRCode.toDataURL(sunatQrPayload, {
@@ -114,6 +114,37 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
   const opGravada = invoice.total / 1.18;
   const igv = invoice.total - opGravada;
   const totalInWords = numberToSpanishWords(invoice.total);
+
+  const emitterName =
+    invoice.sellerName ||
+    (typeof window !== 'undefined'
+      ? localStorage.getItem('auth_user') || localStorage.getItem('auth_username')
+      : '') ||
+    'Niver Contreras';
+
+  const branchName =
+    invoice.branchName ||
+    (typeof window !== 'undefined' ? localStorage.getItem('active_branch_name') : '') ||
+    'Sede Principal';
+
+  const paymentMethod = invoice.paymentMethod
+    ? invoice.paymentMethod === 'CASH'
+      ? 'Contado (Efectivo)'
+      : invoice.paymentMethod === 'TRANSFER'
+      ? 'Transferencia Bancaria'
+      : invoice.paymentMethod === 'CARD'
+      ? 'Tarjeta de Débito/Crédito'
+      : invoice.paymentMethod === 'YAPE'
+      ? 'Yape'
+      : invoice.paymentMethod === 'PLIN'
+      ? 'Plin'
+      : invoice.paymentMethod
+    : 'Contado (Efectivo)';
+
+  const formatTabs = [
+    { id: 'TICKET', label: 'Ticket POS 80mm', icon: <Receipt size={14} /> },
+    { id: 'A4', label: 'Hoja Formato A4', icon: <FileText size={14} /> },
+  ];
 
   const handlePrint = () => {
     const printElement = document.getElementById(
@@ -188,35 +219,17 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title=""
+      title="Vista Previa de Facturación SUNAT"
       size="lg"
       footer={
         <div className="flex flex-wrap items-center justify-between gap-3 w-full">
-          {/* Format Switcher (80mm vs A4) */}
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            <button
-              type="button"
-              onClick={() => setPrintFormat('TICKET')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                printFormat === 'TICKET'
-                  ? 'bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
-              }`}
-            >
-              <Receipt size={14} /> Ticket POS 80mm
-            </button>
-            <button
-              type="button"
-              onClick={() => setPrintFormat('A4')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                printFormat === 'A4'
-                  ? 'bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
-              }`}
-            >
-              <FileText size={14} /> Hoja Formato A4
-            </button>
-          </div>
+          {/* Format Switcher (Reusing Standard Tabs Component) */}
+          <Tabs
+            tabs={formatTabs}
+            activeTab={printFormat}
+            onChange={(id) => setPrintFormat(id as 'TICKET' | 'A4')}
+            variant="pills"
+          />
 
           {/* Action Buttons */}
           <div className="flex flex-wrap gap-2 justify-end">
@@ -300,359 +313,369 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
           </Badge>
         </div>
 
-        {/* Scrollable Receipt Preview Container - Clean Soft Canvas */}
-        <div className="bg-slate-50 dark:bg-slate-900/30 p-4 sm:p-6 rounded-2xl max-h-[62vh] overflow-y-auto flex justify-center">
-          {/* 1. TICKET POS 80MM VIEW */}
-          {printFormat === 'TICKET' && (
-            <div
-              id="receipt-ticket-content"
-              style={{
-                width: '100%',
-                maxWidth: '340px',
-                background: '#ffffff',
-                color: '#000000',
-                padding: '22px 18px',
-                borderRadius: '8px',
-                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.06)',
-                fontFamily: "'IBM Plex Mono', 'Courier New', monospace",
-                fontSize: '11px',
-                lineHeight: '1.4',
-                border: '1px solid #e2e8f0',
-              }}
-            >
-              {/* Header: Company Logo & Info */}
-              <div style={{ textAlign: 'center', marginBottom: '8px' }}>
-                {companyInfo.logo_path && (
-                  <div style={{ marginBottom: '8px' }}>
-                    <img
-                      src={companyInfo.logo_path}
-                      alt="Logo Empresa"
-                      className="logo"
-                      style={{ maxHeight: '46px', maxWidth: '140px', margin: '0 auto', display: 'block', objectFit: 'contain', borderRadius: '4px' }}
-                    />
-                  </div>
-                )}
-                <div style={{ fontWeight: 800, fontSize: '15px', color: '#000000', letterSpacing: '-0.01em' }}>
-                  {companyInfo.name}
-                </div>
-                {companyInfo.tradeName && (
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#334155' }}>
-                    {companyInfo.tradeName}
-                  </div>
-                )}
-                <div style={{ fontSize: '11px', fontWeight: 600, marginTop: '2px' }}>
-                  R.U.C. N° {companyInfo.ruc}
-                </div>
-                <div style={{ fontSize: '10px', color: '#475569' }}>
-                  {companyInfo.address}
-                </div>
-                <div style={{ fontSize: '10px', color: '#475569' }}>
-                  {companyInfo.district} - {companyInfo.province} - {companyInfo.department}
-                </div>
-                {companyInfo.phone && (
-                  <div style={{ fontSize: '10px', color: '#475569' }}>
-                    Tel. {companyInfo.phone}
-                  </div>
-                )}
-                <div style={{ fontSize: '10px', fontWeight: 700, color: '#334155' }}>
-                  Cód. Establecimiento SUNAT: {companyInfo.establishmentCode}
-                </div>
-              </div>
-
-              {/* Dashed Line */}
-              <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
-
-              {/* Document Title & Number */}
-              <div style={{ textAlign: 'center', margin: '6px 0' }}>
-                <div style={{ fontSize: '12px', fontWeight: 800, letterSpacing: '0.02em' }}>{docTitle}</div>
-                <div style={{ fontSize: '13px', fontWeight: 800, letterSpacing: '0.05em', marginTop: '2px' }}>{fullCorrelative}</div>
-              </div>
-
-              {/* Dashed Line */}
-              <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
-
-              {/* Emission Details */}
-              <div style={{ fontSize: '11px', lineHeight: '1.4' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Fecha Emisión:</span>
-                  <span style={{ fontWeight: 700 }}>{invoice.date}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Moneda:</span>
-                  <span style={{ fontWeight: 700 }}>SOLES (PEN)</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Forma de Pago:</span>
-                  <span style={{ fontWeight: 700 }}>Contado</span>
-                </div>
-                <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #f1f5f9' }}>
-                  <div>Cliente: <strong style={{ textTransform: 'uppercase' }}>{invoice.customerName || 'PÚBLICO GENERAL'}</strong></div>
-                  <div>
-                    {invoice.customerDoc?.length === 11 ? 'RUC: ' : 'DNI/Doc: '}
-                    <strong>{invoice.customerDoc || '00000000'}</strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Dashed Line */}
-              <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
-
-              {/* Items Table */}
-              <div style={{ margin: '6px 0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: '10px', textTransform: 'uppercase', borderBottom: '1px solid #000', paddingBottom: '3px', marginBottom: '4px' }}>
-                  <span style={{ width: '48%' }}>DESCRIPCIÓN</span>
-                  <span style={{ width: '14%', textAlign: 'center' }}>CANT</span>
-                  <span style={{ width: '18%', textAlign: 'right' }}>P.U</span>
-                  <span style={{ width: '20%', textAlign: 'right' }}>TOTAL</span>
-                </div>
-
-                {loadingItems ? (
-                  <div style={{ padding: '8px 0', textAlign: 'center', fontSize: '11px', color: '#64748b' }}>Cargando productos...</div>
-                ) : (
-                  <div>
-                    {items.map((item, idx) => (
-                      <div key={idx} style={{ marginBottom: '4px' }}>
-                        <div style={{ fontWeight: 600 }}>{item.productName}</div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '2px' }}>
-                          <span style={{ width: '48%' }}></span>
-                          <span style={{ width: '14%', textAlign: 'center' }}>{item.quantity} und.</span>
-                          <span style={{ width: '18%', textAlign: 'right' }}>{item.unitPrice.toFixed(2)}</span>
-                          <span style={{ width: '20%', textAlign: 'right', fontWeight: 700 }}>{item.subtotal.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Dashed Line */}
-              <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
-
-              {/* Totals Breakdown */}
-              <div style={{ fontSize: '11px', lineHeight: '1.4' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>OP. GRAVADA:</span>
-                  <span>S/ {opGravada.toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>OP. EXONERADA:</span>
-                  <span>S/ 0.00</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>OP. INAFECTA:</span>
-                  <span>S/ 0.00</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>I.G.V. 18.00%:</span>
-                  <span>S/ {igv.toFixed(2)}</span>
-                </div>
-                <div className="solid-line" style={{ borderTop: '1px solid #000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 800 }}>
-                  <span>TOTAL A PAGAR:</span>
-                  <span>S/ {invoice.total.toFixed(2)}</span>
-                </div>
-              </div>
-
-              {/* Amount in Spanish Words */}
-              <div style={{ fontSize: '9.5px', textTransform: 'uppercase', fontWeight: 700, margin: '8px 0', textAlign: 'center' }}>
-                SON: {totalInWords}
-              </div>
-
-              {/* Dashed Line */}
-              <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
-
-              {/* QR and SUNAT Footer */}
-              <div style={{ textAlign: 'center', marginTop: '8px' }}>
-                {qrDataUrl && (
-                  <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '6px' }}>
-                    <img
-                      src={qrDataUrl}
-                      alt="Código QR SUNAT"
-                      className="qr-img"
-                      style={{ width: '120px', height: '120px', margin: '0 auto', border: '1px solid #e2e8f0', padding: '2px', background: '#ffffff' }}
-                    />
-                  </div>
-                )}
-
-                <div style={{ fontSize: '9px', color: '#334155', lineHeight: '1.3' }}>
-                  <div style={{ fontWeight: 700 }}>Hash: 8a9F+zX2qK9/LmQ0wE7YnRtP1uI=</div>
-                  <div>Representación Impresa de la {docTitle}</div>
-                  <div>Autorizado mediante Res. SUNAT N° 034-005</div>
-                  <div>Consulte su validez en: https://e-consulta.sunat.gob.pe</div>
-                </div>
-
-                <div style={{ fontSize: '10px', fontWeight: 800, marginTop: '8px' }}>
-                  ¡Gracias por su compra!
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 2. HOJA FORMATO A4 VIEW */}
-          {printFormat === 'A4' && (
-            <div
-              id="receipt-a4-content"
-              style={{
-                width: '100%',
-                maxWidth: '720px',
-                background: '#ffffff',
-                color: '#000000',
-                padding: '32px',
-                borderRadius: '8px',
-                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.06)',
-                border: '1px solid #e2e8f0',
-                fontSize: '12px',
-                lineHeight: '1.4',
-              }}
-            >
-              {/* Top Header: Company on Left, Box RUC on Right */}
-              <div style={{ display: 'grid', gridTemplateColumns: '7fr 5fr', gap: '20px', alignItems: 'start', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {/* Scrollable Receipt Preview Canvas (Ensures full document is wrapped in white sheet) */}
+        <div className="bg-slate-200/80 dark:bg-slate-950/80 p-3 sm:p-6 rounded-2xl max-h-[66vh] overflow-y-auto w-full border border-slate-200/60 dark:border-slate-800">
+          <div className="w-full flex justify-center items-start min-h-full">
+            {/* 1. TICKET POS 80MM VIEW */}
+            {printFormat === 'TICKET' && (
+              <div
+                id="receipt-ticket-content"
+                className="w-full max-w-[340px] bg-white text-slate-900 rounded-xl shadow-lg border border-slate-200 p-5 shrink-0"
+                style={{
+                  fontFamily: "'IBM Plex Mono', 'Courier New', monospace",
+                  fontSize: '11px',
+                  lineHeight: '1.4',
+                  color: '#000000',
+                  backgroundColor: '#ffffff',
+                  boxSizing: 'border-box',
+                }}
+              >
+                {/* Header: Company Logo & Info */}
+                <div style={{ textAlign: 'center', marginBottom: '8px' }}>
                   {companyInfo.logo_path && (
-                    <div style={{ marginBottom: '6px' }}>
+                    <div style={{ marginBottom: '8px' }}>
                       <img
                         src={companyInfo.logo_path}
                         alt="Logo Empresa"
                         className="logo"
-                        style={{ maxHeight: '50px', maxWidth: '160px', objectFit: 'contain' }}
+                        style={{ maxHeight: '46px', maxWidth: '140px', margin: '0 auto', display: 'block', objectFit: 'contain', borderRadius: '4px' }}
                       />
                     </div>
                   )}
-                  <h1 style={{ fontSize: '16px', fontWeight: 800, margin: 0, color: '#0f172a' }}>{companyInfo.name}</h1>
+                  <div style={{ fontWeight: 800, fontSize: '15px', color: '#000000', letterSpacing: '-0.01em' }}>
+                    {companyInfo.name}
+                  </div>
                   {companyInfo.tradeName && (
-                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#3b82f6' }}>{companyInfo.tradeName}</div>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#334155' }}>
+                      {companyInfo.tradeName}
+                    </div>
                   )}
-                  <div style={{ fontSize: '11px', color: '#475569' }}>{companyInfo.address}</div>
-                  <div style={{ fontSize: '11px', color: '#475569' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, marginTop: '2px' }}>
+                    R.U.C. N° {companyInfo.ruc}
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#475569' }}>
+                    {companyInfo.address}
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#475569' }}>
                     {companyInfo.district} - {companyInfo.province} - {companyInfo.department}
                   </div>
                   {companyInfo.phone && (
-                    <div style={{ fontSize: '11px', color: '#475569' }}>Teléfono: {companyInfo.phone}</div>
+                    <div style={{ fontSize: '10px', color: '#475569' }}>
+                      Tel. {companyInfo.phone}
+                    </div>
                   )}
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#334155' }}>
-                    Establecimiento Anexo: {companyInfo.establishmentCode}
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#334155' }}>
+                    Cód. Establecimiento SUNAT: {companyInfo.establishmentCode}
                   </div>
                 </div>
 
-                <div style={{ border: '2px solid #000000', borderRadius: '8px', padding: '14px', textAlign: 'center', background: '#f8fafc' }}>
-                  <div style={{ fontWeight: 800, fontSize: '13px', letterSpacing: '0.05em' }}>R.U.C. N° {companyInfo.ruc}</div>
-                  <div style={{ fontWeight: 800, fontSize: '14px', margin: '6px 0', padding: '6px 0', borderTop: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}>
-                    {docTitle}
-                  </div>
-                  <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '16px', letterSpacing: '0.1em' }}>
-                    {fullCorrelative}
-                  </div>
-                </div>
-              </div>
+                {/* Dashed Line */}
+                <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
 
-              {/* Client & Operation Data Box */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', padding: '12px 16px', margin: '16px 0', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '11.5px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div>
-                    <span style={{ color: '#64748b' }}>Señor(es):</span>{' '}
-                    <strong style={{ textTransform: 'uppercase' }}>{invoice.customerName || 'PÚBLICO GENERAL'}</strong>
-                  </div>
-                  <div>
-                    <span style={{ color: '#64748b' }}>
-                      {invoice.customerDoc?.length === 11 ? 'RUC:' : 'DNI/Doc:'}
-                    </span>{' '}
-                    <strong style={{ fontFamily: 'monospace' }}>{invoice.customerDoc || '00000000'}</strong>
-                  </div>
-                  <div>
-                    <span style={{ color: '#64748b' }}>Dirección:</span>{' '}
-                    <span>{companyInfo.address}</span>
-                  </div>
+                {/* Document Title & Number */}
+                <div style={{ textAlign: 'center', margin: '6px 0' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 800, letterSpacing: '0.02em' }}>{docTitle}</div>
+                  <div style={{ fontSize: '13px', fontWeight: 800, letterSpacing: '0.05em', marginTop: '2px' }}>{fullCorrelative}</div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div>
-                    <span style={{ color: '#64748b' }}>Fecha de Emisión:</span>{' '}
-                    <strong>{invoice.date}</strong>
-                  </div>
-                  <div>
-                    <span style={{ color: '#64748b' }}>Moneda:</span> <strong>SOLES (PEN)</strong>
-                  </div>
-                  <div>
-                    <span style={{ color: '#64748b' }}>Forma de Pago:</span>{' '}
-                    <strong>Contado (Efectivo / POS)</strong>
-                  </div>
-                </div>
-              </div>
+                {/* Dashed Line */}
+                <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
 
-              {/* Items Table */}
-              <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #cbd5e1', fontSize: '11.5px', margin: '16px 0' }}>
-                <thead>
-                  <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #cbd5e1', fontWeight: 800 }}>
-                    <th style={{ padding: '8px', textAlign: 'center', width: '50px' }}>Cant.</th>
-                    <th style={{ padding: '8px', textAlign: 'center', width: '50px' }}>Und.</th>
-                    <th style={{ padding: '8px', textAlign: 'left' }}>Descripción</th>
-                    <th style={{ padding: '8px', textAlign: 'right', width: '90px' }}>Valor Unit.</th>
-                    <th style={{ padding: '8px', textAlign: 'right', width: '90px' }}>P. Unit.</th>
-                    <th style={{ padding: '8px', textAlign: 'right', width: '100px' }}>Importe</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, idx) => {
-                    const unitVal = item.unitPrice / 1.18;
-                    return (
-                      <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                        <td style={{ padding: '8px', textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
-                        <td style={{ padding: '8px', textAlign: 'center', color: '#64748b' }}>NIU</td>
-                        <td style={{ padding: '8px', fontWeight: 600 }}>{item.productName}</td>
-                        <td style={{ padding: '8px', textAlign: 'right', color: '#475569' }}>S/ {unitVal.toFixed(2)}</td>
-                        <td style={{ padding: '8px', textAlign: 'right', color: '#475569' }}>S/ {item.unitPrice.toFixed(2)}</td>
-                        <td style={{ padding: '8px', textAlign: 'right', fontWeight: 700 }}>S/ {item.subtotal.toFixed(2)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-
-              {/* Bottom: Left QR + In Words / Right Totals */}
-              <div style={{ display: 'grid', gridTemplateColumns: '7fr 5fr', gap: '20px', alignItems: 'start', paddingTop: '8px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '10.5px', textTransform: 'uppercase', fontWeight: 700 }}>
-                    SON: {totalInWords}
+                {/* Emission Details */}
+                <div style={{ fontSize: '11px', lineHeight: '1.4' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Fecha Emisión:</span>
+                    <span style={{ fontWeight: 700 }}>{invoice.date}</span>
                   </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingTop: '6px' }}>
-                    {qrDataUrl && (
-                      <img src={qrDataUrl} alt="QR SUNAT" className="qr-img" style={{ width: '95px', height: '95px', border: '1px solid #cbd5e1', padding: '2px', background: '#ffffff', flexShrink: 0 }} />
-                    )}
-                    <div style={{ fontSize: '10px', color: '#475569', lineHeight: '1.35' }}>
-                      <div style={{ fontWeight: 700, color: '#0f172a' }}>Hash: 8a9F+zX2qK9/LmQ0wE7YnRtP1uI=</div>
-                      <div>Representación Impresa de la {docTitle}</div>
-                      <div>Autorizado mediante Res. SUNAT N° 034-005</div>
-                      <div>Consulte validez en https://e-consulta.sunat.gob.pe</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Moneda:</span>
+                    <span style={{ fontWeight: 700 }}>SOLES (PEN)</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Forma de Pago:</span>
+                    <span style={{ fontWeight: 700 }}>{paymentMethod}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Sede / Sucursal:</span>
+                    <span style={{ fontWeight: 700 }}>{branchName}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Emitido por:</span>
+                    <span style={{ fontWeight: 700, textTransform: 'uppercase' }}>{emitterName}</span>
+                  </div>
+                  <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #e2e8f0' }}>
+                    <div>Cliente: <strong style={{ textTransform: 'uppercase' }}>{invoice.customerName || 'PÚBLICO GENERAL'}</strong></div>
+                    <div>
+                      {invoice.customerDoc?.length === 11 ? 'RUC: ' : 'DNI/Doc: '}
+                      <strong>{invoice.customerDoc || '00000000'}</strong>
                     </div>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11.5px', background: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                    <span>Op. Gravada:</span>
-                    <span style={{ fontWeight: 600, color: '#0f172a' }}>S/ {opGravada.toFixed(2)}</span>
+                {/* Dashed Line */}
+                <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
+
+                {/* Items Table */}
+                <div style={{ margin: '6px 0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: '10px', textTransform: 'uppercase', borderBottom: '1px solid #000', paddingBottom: '3px', marginBottom: '4px' }}>
+                    <span style={{ width: '48%' }}>DESCRIPCIÓN</span>
+                    <span style={{ width: '14%', textAlign: 'center' }}>CANT</span>
+                    <span style={{ width: '18%', textAlign: 'right' }}>P.U</span>
+                    <span style={{ width: '20%', textAlign: 'right' }}>TOTAL</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                    <span>Op. Exonerada:</span>
+
+                  {loadingItems ? (
+                    <div style={{ padding: '8px 0', textAlign: 'center', fontSize: '11px', color: '#64748b' }}>Cargando productos...</div>
+                  ) : (
+                    <div>
+                      {items.map((item, idx) => (
+                        <div key={idx} style={{ marginBottom: '4px' }}>
+                          <div style={{ fontWeight: 600 }}>{item.productName}</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '2px' }}>
+                            <span style={{ width: '48%' }}></span>
+                            <span style={{ width: '14%', textAlign: 'center' }}>{item.quantity} und.</span>
+                            <span style={{ width: '18%', textAlign: 'right' }}>{item.unitPrice.toFixed(2)}</span>
+                            <span style={{ width: '20%', textAlign: 'right', fontWeight: 700 }}>{item.subtotal.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Dashed Line */}
+                <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
+
+                {/* Totals Breakdown */}
+                <div style={{ fontSize: '11px', lineHeight: '1.4' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>OP. GRAVADA:</span>
+                    <span>S/ {opGravada.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>OP. EXONERADA:</span>
                     <span>S/ 0.00</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                    <span>Op. Inafecta:</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>OP. INAFECTA:</span>
                     <span>S/ 0.00</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
-                    <span>I.G.V. (18.00%):</span>
-                    <span style={{ fontWeight: 600, color: '#0f172a' }}>S/ {igv.toFixed(2)}</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>I.G.V. 18.00%:</span>
+                    <span>S/ {igv.toFixed(2)}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 800, paddingTop: '8px', borderTop: '1px solid #cbd5e1', color: '#0f172a' }}>
-                    <span>IMPORTE TOTAL:</span>
-                    <span style={{ color: '#059669' }}>S/ {invoice.total.toFixed(2)}</span>
+                  <div className="solid-line" style={{ borderTop: '1px solid #000', margin: '4px 0' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 800 }}>
+                    <span>TOTAL A PAGAR:</span>
+                    <span>S/ {invoice.total.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Amount in Spanish Words */}
+                <div style={{ fontSize: '9.5px', textTransform: 'uppercase', fontWeight: 700, margin: '8px 0', textAlign: 'center' }}>
+                  SON: {totalInWords}
+                </div>
+
+                {/* Dashed Line */}
+                <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
+
+                {/* QR and SUNAT Footer */}
+                <div style={{ textAlign: 'center', marginTop: '8px' }}>
+                  {qrDataUrl && (
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '6px' }}>
+                      <img
+                        src={qrDataUrl}
+                        alt="Código QR SUNAT"
+                        className="qr-img"
+                        style={{ width: '120px', height: '120px', margin: '0 auto', border: '1px solid #e2e8f0', padding: '2px', background: '#ffffff' }}
+                      />
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: '9px', color: '#334155', lineHeight: '1.3' }}>
+                    <div style={{ fontWeight: 700 }}>Hash: 8a9F+zX2qK9/LmQ0wE7YnRtP1uI=</div>
+                    <div>Representación Impresa de la {docTitle}</div>
+                    <div>Autorizado mediante Res. SUNAT N° 034-005</div>
+                    <div>Consulte su validez en: https://e-consulta.sunat.gob.pe</div>
+                  </div>
+
+                  <div style={{ fontSize: '10px', fontWeight: 800, marginTop: '8px' }}>
+                    ¡Gracias por su compra!
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* 2. HOJA FORMATO A4 VIEW */}
+            {printFormat === 'A4' && (
+              <div
+                id="receipt-a4-content"
+                className="w-full max-w-[740px] bg-white text-slate-900 rounded-xl shadow-lg border border-slate-200 p-6 sm:p-8 shrink-0 mb-4"
+                style={{
+                  fontSize: '12px',
+                  lineHeight: '1.4',
+                  color: '#000000',
+                  backgroundColor: '#ffffff',
+                  boxSizing: 'border-box',
+                }}
+              >
+                {/* Top Header: Company on Left, Box RUC on Right */}
+                <div style={{ display: 'grid', gridTemplateColumns: '7fr 5fr', gap: '20px', alignItems: 'start', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {companyInfo.logo_path && (
+                      <div style={{ marginBottom: '6px' }}>
+                        <img
+                          src={companyInfo.logo_path}
+                          alt="Logo Empresa"
+                          className="logo"
+                          style={{ maxHeight: '50px', maxWidth: '160px', objectFit: 'contain' }}
+                        />
+                      </div>
+                    )}
+                    <h1 style={{ fontSize: '16px', fontWeight: 800, margin: 0, color: '#0f172a' }}>{companyInfo.name}</h1>
+                    {companyInfo.tradeName && (
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#3b82f6' }}>{companyInfo.tradeName}</div>
+                    )}
+                    <div style={{ fontSize: '11px', color: '#475569' }}>{companyInfo.address}</div>
+                    <div style={{ fontSize: '11px', color: '#475569' }}>
+                      {companyInfo.district} - {companyInfo.province} - {companyInfo.department}
+                    </div>
+                    {companyInfo.phone && (
+                      <div style={{ fontSize: '11px', color: '#475569' }}>Teléfono: {companyInfo.phone}</div>
+                    )}
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#334155' }}>
+                      Establecimiento Anexo: {companyInfo.establishmentCode}
+                    </div>
+                  </div>
+
+                  <div style={{ border: '2px solid #000000', borderRadius: '8px', padding: '14px', textAlign: 'center', background: '#f8fafc' }}>
+                    <div style={{ fontWeight: 800, fontSize: '13px', letterSpacing: '0.05em' }}>R.U.C. N° {companyInfo.ruc}</div>
+                    <div style={{ fontWeight: 800, fontSize: '14px', margin: '6px 0', padding: '6px 0', borderTop: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}>
+                      {docTitle}
+                    </div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '16px', letterSpacing: '0.1em' }}>
+                      {fullCorrelative}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Client & Operation Data Box */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', padding: '12px 16px', margin: '16px 0', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '11.5px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div>
+                      <span style={{ color: '#64748b' }}>Señor(es):</span>{' '}
+                      <strong style={{ textTransform: 'uppercase' }}>{invoice.customerName || 'PÚBLICO GENERAL'}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b' }}>
+                        {invoice.customerDoc?.length === 11 ? 'RUC:' : 'DNI/Doc:'}
+                      </span>{' '}
+                      <strong style={{ fontFamily: 'monospace' }}>{invoice.customerDoc || '00000000'}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b' }}>Dirección:</span>{' '}
+                      <span>{companyInfo.address}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b' }}>Sede / Sucursal:</span>{' '}
+                      <strong>{branchName}</strong>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div>
+                      <span style={{ color: '#64748b' }}>Fecha de Emisión:</span>{' '}
+                      <strong>{invoice.date}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b' }}>Moneda:</span> <strong>SOLES (PEN)</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b' }}>Forma de Pago:</span>{' '}
+                      <strong>{paymentMethod}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b' }}>Emitido por:</span>{' '}
+                      <strong style={{ textTransform: 'uppercase' }}>{emitterName}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Items Table */}
+                <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #cbd5e1', fontSize: '11.5px', margin: '16px 0' }}>
+                  <thead>
+                    <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #cbd5e1', fontWeight: 800 }}>
+                      <th style={{ padding: '8px', textAlign: 'center', width: '50px' }}>Cant.</th>
+                      <th style={{ padding: '8px', textAlign: 'center', width: '50px' }}>Und.</th>
+                      <th style={{ padding: '8px', textAlign: 'left' }}>Descripción</th>
+                      <th style={{ padding: '8px', textAlign: 'right', width: '90px' }}>Valor Unit.</th>
+                      <th style={{ padding: '8px', textAlign: 'right', width: '90px' }}>P. Unit.</th>
+                      <th style={{ padding: '8px', textAlign: 'right', width: '100px' }}>Importe</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item, idx) => {
+                      const unitVal = item.unitPrice / 1.18;
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
+                          <td style={{ padding: '8px', textAlign: 'center', color: '#64748b' }}>NIU</td>
+                          <td style={{ padding: '8px', fontWeight: 600 }}>{item.productName}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#475569' }}>S/ {unitVal.toFixed(2)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#475569' }}>S/ {item.unitPrice.toFixed(2)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', fontWeight: 700 }}>S/ {item.subtotal.toFixed(2)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Bottom: Left QR + In Words / Right Totals */}
+                <div style={{ display: 'grid', gridTemplateColumns: '7fr 5fr', gap: '20px', alignItems: 'start', paddingTop: '8px', paddingBottom: '8px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '10.5px', textTransform: 'uppercase', fontWeight: 700 }}>
+                      SON: {totalInWords}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingTop: '6px' }}>
+                      {qrDataUrl && (
+                        <img src={qrDataUrl} alt="QR SUNAT" className="qr-img" style={{ width: '95px', height: '95px', border: '1px solid #cbd5e1', padding: '2px', background: '#ffffff', flexShrink: 0 }} />
+                      )}
+                      <div style={{ fontSize: '10px', color: '#475569', lineHeight: '1.35' }}>
+                        <div style={{ fontWeight: 700, color: '#0f172a' }}>Hash: 8a9F+zX2qK9/LmQ0wE7YnRtP1uI=</div>
+                        <div>Representación Impresa de la {docTitle}</div>
+                        <div>Autorizado mediante Res. SUNAT N° 034-005</div>
+                        <div>Consulte validez en https://e-consulta.sunat.gob.pe</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11.5px', background: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                      <span>Op. Gravada:</span>
+                      <span style={{ fontWeight: 600, color: '#0f172a' }}>S/ {opGravada.toFixed(2)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                      <span>Op. Exonerada:</span>
+                      <span>S/ 0.00</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                      <span>Op. Inafecta:</span>
+                      <span>S/ 0.00</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                      <span>I.G.V. (18.00%):</span>
+                      <span style={{ fontWeight: 600, color: '#0f172a' }}>S/ {igv.toFixed(2)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 800, paddingTop: '8px', borderTop: '1px solid #cbd5e1', color: '#0f172a' }}>
+                      <span>IMPORTE TOTAL:</span>
+                      <span style={{ color: '#059669' }}>S/ {invoice.total.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </Modal>

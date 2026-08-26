@@ -28,11 +28,11 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
   const [loadingItems, setLoadingItems] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [tenantInfo, setTenantInfo] = useState<{ name: string; tradeName: string; ruc: string; address: string; phone: string; logo_path?: string }>({
-    name: 'VENTAS B&V S.A.C.',
-    tradeName: 'Motors S.A.C',
-    ruc: '20998877665',
-    address: 'Av. Principal 123, Lima',
-    phone: '+51 987654321',
+    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
+    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
+    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '20613639030') : '20613639030',
+    address: 'Retamas',
+    phone: '+51 993 275 893',
     logo_path: '',
   });
 
@@ -40,13 +40,13 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
     if (sale && isOpen) {
       setLoadingItems(true);
       settingsService.getTenantInfo().then((info) => {
-        if (info) {
+        if (info && Object.keys(info).length > 0) {
           setTenantInfo({
-            name: info.legal_name || info.name || 'VENTAS B&V S.A.C.',
-            tradeName: info.trade_name || info.name || 'Motors S.A.C',
-            ruc: info.ruc || '20998877665',
-            address: info.address || 'Av. Principal 123, Lima',
-            phone: info.phone || '+51 987654321',
+            name: info.legal_name || info.name || 'Grupo K contreras S.A.C',
+            tradeName: info.trade_name || info.name || 'Grupo K contreras S.A.C',
+            ruc: info.ruc || '20613639030',
+            address: info.address || 'Retamas',
+            phone: info.phone || '+51 993 275 893',
             logo_path: info.logo_path || '',
           });
         }
@@ -83,7 +83,7 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
       const custDocNum = sale.customerDoc || '00000000';
       const hash = '8a9F+zX2qK9/LmQ0wE7YnRtP1uI=';
 
-      const currentRuc = tenantInfo.ruc || '20998877665';
+      const currentRuc = tenantInfo.ruc || '20613639030';
       const sunatQrPayload = `${currentRuc}|${docTypeCode}|${series}|${seqStr}|${igv}|${totalStr}|${dateStr}|${custDocType}|${custDocNum}|${hash}|`;
 
       QRCode.toDataURL(sunatQrPayload, {
@@ -104,11 +104,11 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
 
   // Split date and time for emission
   let emissionDate = sale.date;
-  let emissionTime = '8:34:24 p.m.';
+  let emissionTime = '';
   if (sale.rawDate) {
     const d = new Date(sale.rawDate);
-    emissionDate = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
-    emissionTime = d.toLocaleTimeString('es-PE', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+    emissionDate = d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    emissionTime = d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
   }
 
   const handlePrint = () => {
@@ -443,7 +443,7 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
             </div>
           ) : (
             /* Ticket Thermal View - Exact Match to SUNAT Ticket Design */
-            <div className="flex justify-center">
+            <div className="w-full flex justify-center items-start">
               <div
                 id="sale-ticket-preview"
                 style={{
@@ -454,9 +454,10 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
                   fontFamily: "'Courier New', Courier, monospace",
                   fontSize: '11px',
                   lineHeight: 1.35,
-                  borderRadius: '4px',
+                  borderRadius: '8px',
                   border: '1px solid #cbd5e1',
                   boxShadow: '0 8px 30px rgba(0,0,0,0.08)',
+                  boxSizing: 'border-box',
                 }}
               >
                 {/* 1. Header: Company Logo (if configured) & Info */}
@@ -504,12 +505,13 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
                 {/* Emission Details */}
                 <div style={{ marginBottom: '8px' }}>
                   <div>Fecha Emisión: {emissionDate}</div>
-                  <div>Hora Emisión: {emissionTime}</div>
-                  <div>Cliente: {sale.customer}</div>
-                  <div>Doc. Cliente: {sale.customerDoc || '00000000'}</div>
-                  <div>Vendedor: {sale.sellerName || 'Admin Principal'}</div>
-                  <div>Forma de Pago: {sale.paymentMethod || 'Efectivo'}</div>
-                  <div>Moneda: SOLES</div>
+                  {emissionTime && <div>Hora Emisión: {emissionTime}</div>}
+                  <div>Sede / Sucursal: {sale.branch || 'Sede Principal'}</div>
+                  <div>Emitido por: <strong style={{ textTransform: 'uppercase' }}>{sale.sellerName || (typeof window !== 'undefined' ? localStorage.getItem('auth_user') : '') || 'Niver Contreras'}</strong></div>
+                  <div>Cliente: <strong style={{ textTransform: 'uppercase' }}>{sale.customer || 'PÚBLICO GENERAL'}</strong></div>
+                  <div>Doc. Cliente: <strong>{sale.customerDoc || '00000000'}</strong></div>
+                  <div>Forma de Pago: {sale.paymentMethod ? (sale.paymentMethod === 'CASH' ? 'Contado (Efectivo)' : sale.paymentMethod === 'TRANSFER' ? 'Transferencia' : sale.paymentMethod === 'CARD' ? 'Tarjeta' : sale.paymentMethod) : 'Contado'}</div>
+                  <div>Moneda: SOLES (PEN)</div>
                 </div>
 
                 {/* Dashed Line */}
