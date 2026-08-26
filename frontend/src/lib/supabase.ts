@@ -7,3 +7,18 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export const DEFAULT_TENANT_ID = '11111111-1111-4111-a111-111111111111';
 export const DEFAULT_BRANCH_ID = '22222222-2222-4222-a222-222222222222';
+
+export const getActiveTenantId = (): string => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('tenant_id') || DEFAULT_TENANT_ID;
+  }
+  return DEFAULT_TENANT_ID;
+};
+
+export const getActiveBranchId = (): string => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('active_branch_id') || DEFAULT_BRANCH_ID;
+  }
+  return DEFAULT_BRANCH_ID;
+};
+

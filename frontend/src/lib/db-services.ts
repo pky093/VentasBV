@@ -1,4 +1,4 @@
-import { supabase, DEFAULT_TENANT_ID, DEFAULT_BRANCH_ID } from './supabase';
+import { supabase, DEFAULT_TENANT_ID, DEFAULT_BRANCH_ID, getActiveTenantId, getActiveBranchId } from './supabase';
 
 export interface BranchStock {
   branchId: string;
@@ -15,6 +15,8 @@ export interface Product {
   categoryId?: string;
   brand: string;
   brandId?: string;
+  model?: string;
+  modelId?: string;
   price: number;
   cost: number;
   stock: number;
@@ -48,6 +50,16 @@ export interface Brand {
   categoryName?: string;
   category_id?: string;
   category_name?: string;
+  active: boolean;
+}
+
+export interface Model {
+  id: string;
+  name: string;
+  brandId?: string;
+  brandName?: string;
+  brand_id?: string;
+  brand_name?: string;
   active: boolean;
 }
 
@@ -88,11 +100,16 @@ export interface UserMember {
   id: string;
   name: string;
   email: string;
+  username?: string;
+  password?: string;
   role: string;
   roleId?: string;
   branch: string;
+  branches?: string[];
+  tenantId?: string;
   status: 'ACTIVE' | 'INVITED' | 'DISABLED';
 }
+
 
 // ---------------- PRODUCTS ----------------
 export const productsService = {
@@ -100,9 +117,10 @@ export const productsService = {
     const { data: prods, error: pError } = await supabase
       .from('products')
       .select(`
-        id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, image_path,
+        id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path,
         categories ( name ),
-        brands ( name )
+        brands ( name ),
+        models ( name )
       `)
       .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
       .order('created_at', { ascending: false });
@@ -157,6 +175,8 @@ export const productsService = {
         categoryId: p.category_id,
         brand: p.brands?.name || 'Sin marca',
         brandId: p.brand_id,
+        model: p.models?.name || '',
+        modelId: p.model_id,
         price: Number(p.price) || 0,
         cost: Number(p.cost) || 0,
         stock: calculatedStock,
@@ -168,16 +188,20 @@ export const productsService = {
     });
   },
 
-  async createProduct(prod: Omit<Product, 'id'>): Promise<Product | null> {
+  async createProduct(prod: Omit<Product, 'id'>, branchId?: string): Promise<Product | null> {
+    const tenantId = getActiveTenantId();
+    const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
+
     const { data, error } = await supabase
       .from('products')
       .insert({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         code: prod.code,
         sku: prod.sku || prod.code,
         name: prod.name,
         category_id: prod.categoryId || null,
         brand_id: prod.brandId || null,
+        model_id: prod.modelId || null,
         price: prod.price,
         cost: prod.cost,
         min_stock: prod.minStock,
@@ -192,10 +216,10 @@ export const productsService = {
       return null;
     }
 
-    // Insert inventory stock
+    // Insert inventory stock in the active/specified branch
     await supabase.from('branch_inventory').insert({
-      tenant_id: DEFAULT_TENANT_ID,
-      branch_id: DEFAULT_BRANCH_ID,
+      tenant_id: tenantId,
+      branch_id: targetBranch,
       product_id: data.id,
       quantity: prod.stock,
     });
@@ -206,7 +230,7 @@ export const productsService = {
     };
   },
 
-  async updateProduct(id: string, prod: Partial<Product>): Promise<boolean> {
+  async updateProduct(id: string, prod: Partial<Product>, branchId?: string): Promise<boolean> {
     const updateData: any = {};
     if (prod.name !== undefined) updateData.name = prod.name;
     if (prod.code !== undefined) updateData.code = prod.code;
@@ -214,8 +238,9 @@ export const productsService = {
     if (prod.price !== undefined) updateData.price = prod.price;
     if (prod.cost !== undefined) updateData.cost = prod.cost;
     if (prod.minStock !== undefined) updateData.min_stock = prod.minStock;
-    if (prod.categoryId !== undefined) updateData.category_id = prod.categoryId;
-    if (prod.brandId !== undefined) updateData.brand_id = prod.brandId;
+    if (prod.categoryId !== undefined) updateData.category_id = prod.categoryId || null;
+    if (prod.brandId !== undefined) updateData.brand_id = prod.brandId || null;
+    if (prod.modelId !== undefined) updateData.model_id = prod.modelId || null;
     if (prod.status !== undefined) updateData.status = prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE';
     if (prod.imagePath !== undefined) updateData.image_path = prod.imagePath;
 
@@ -228,18 +253,22 @@ export const productsService = {
     }
 
     if (prod.stock !== undefined) {
+      const tenantId = getActiveTenantId();
+      const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
+
       const { data: inv } = await supabase
         .from('branch_inventory')
         .select('id')
         .eq('product_id', id)
+        .eq('branch_id', targetBranch)
         .maybeSingle();
 
       if (inv) {
         await supabase.from('branch_inventory').update({ quantity: prod.stock }).eq('id', inv.id);
       } else {
         await supabase.from('branch_inventory').insert({
-          tenant_id: DEFAULT_TENANT_ID,
-          branch_id: DEFAULT_BRANCH_ID,
+          tenant_id: tenantId,
+          branch_id: targetBranch,
           product_id: id,
           quantity: prod.stock,
         });
@@ -466,6 +495,68 @@ export const catalogService = {
     const { error } = await supabase.from('brands').delete().eq('id', id);
     return !error;
   },
+
+  async getModels(): Promise<Model[]> {
+    const { data, error } = await supabase
+      .from('models')
+      .select(`
+        id, name, active, brand_id,
+        brands ( name )
+      `)
+      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+      .order('name');
+
+    if (error) {
+      console.error('Error fetching models:', error);
+      return [];
+    }
+
+    return (data || []).map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      brandId: m.brand_id,
+      brandName: m.brands?.name || 'Sin Marca',
+      brand_id: m.brand_id,
+      brand_name: m.brands?.name || 'Sin Marca',
+      active: m.active ?? true,
+    }));
+  },
+
+  async createModel(name: string, brandId?: string): Promise<Model | null> {
+    const { data, error } = await supabase
+      .from('models')
+      .insert({ tenant_id: DEFAULT_TENANT_ID, name, brand_id: brandId || null })
+      .select(`
+        id, name, active, brand_id,
+        brands ( name )
+      `)
+      .single();
+
+    if (error || !data) {
+      console.error('Error creating model:', error);
+      return null;
+    }
+    return {
+      id: data.id,
+      name: data.name,
+      brandId: data.brand_id,
+      brandName: (data as any).brands?.name || 'Sin Marca',
+      active: true,
+    };
+  },
+
+  async updateModel(id: string, name: string, brandId?: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('models')
+      .update({ name, brand_id: brandId || null })
+      .eq('id', id);
+    return !error;
+  },
+
+  async deleteModel(id: string): Promise<boolean> {
+    const { error } = await supabase.from('models').delete().eq('id', id);
+    return !error;
+  },
 };
 
 // ---------------- CUSTOMERS ----------------
@@ -613,13 +704,14 @@ export const suppliersService = {
 // ---------------- ROLES ----------------
 export const rolesService = {
   async getRoles(): Promise<Role[]> {
+    const tenantId = getActiveTenantId();
     const { data, error } = await supabase
       .from('roles')
       .select(`
         id, name, description, is_system,
         role_permissions ( permission_code )
       `)
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+      .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
       .order('name');
 
     if (error) {
@@ -628,26 +720,33 @@ export const rolesService = {
     }
 
     // Map each role and group its nested permissions list
-    return (data || []).map((r: any) => ({
-      id: r.id,
-      name: r.name,
-      description: r.description || '',
-      isSystem: r.is_system || false,
-      usersCount: 1,
-      permissions: r.role_permissions ? r.role_permissions.map((rp: any) => rp.permission_code) : [],
-    }));
+    return (data || []).map((r: any) => {
+      const perms = r.role_permissions ? r.role_permissions.map((rp: any) => rp.permission_code) : [];
+      if (r.is_system && r.name.toLowerCase().includes('super')) {
+        if (!perms.includes('*')) perms.push('*');
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        description: r.description || '',
+        isSystem: r.is_system || false,
+        usersCount: 1,
+        permissions: perms,
+      };
+    });
   },
 
   async createRole(role: Omit<Role, 'id'>, permissions: string[] = []): Promise<Role | null> {
     try {
       const roleId = generateUUID();
+      const tenantId = getActiveTenantId();
       
       // 1. Insert Role
       const { error: rError } = await supabase
         .from('roles')
         .insert({
           id: roleId,
-          tenant_id: DEFAULT_TENANT_ID,
+          tenant_id: tenantId,
           name: role.name,
           description: role.description,
           is_system: false,
@@ -661,7 +760,7 @@ export const rolesService = {
       // 2. Insert Permissions if any
       if (permissions.length > 0) {
         const inserts = permissions.map((code) => ({
-          tenant_id: DEFAULT_TENANT_ID,
+          tenant_id: tenantId,
           role_id: roleId,
           permission_code: code,
         }));
@@ -713,6 +812,7 @@ export const rolesService = {
 
   async updateRolePermissions(roleId: string, permissions: string[]): Promise<boolean> {
     try {
+      const tenantId = getActiveTenantId();
       // 1. Delete existing permissions
       const { error: dError } = await supabase
         .from('role_permissions')
@@ -724,10 +824,11 @@ export const rolesService = {
         return false;
       }
 
-      // 2. Insert new permissions
-      if (permissions.length > 0) {
-        const inserts = permissions.map((code) => ({
-          tenant_id: DEFAULT_TENANT_ID,
+      // 2. Insert new permissions (exclude wildcard '*' which is computed)
+      const validPermissions = permissions.filter(p => p !== '*');
+      if (validPermissions.length > 0) {
+        const inserts = validPermissions.map((code) => ({
+          tenant_id: tenantId,
           role_id: roleId,
           permission_code: code,
         }));
@@ -776,12 +877,47 @@ export const rolesService = {
   },
 };
 
-// Helper to map role name to UUID and vice-versa
+// Helper to map default system role name to UUID
 const ROLE_MAP: Record<string, string> = {
   'Super Admin': 'a1000000-0000-4000-a000-000000000001',
-  'Administrador Sede': 'a1000000-0000-4000-a000-000000000002',
-  'Cajero POS': 'a1000000-0000-4000-a000-000000000003',
-  'Vendedor': 'a1000000-0000-4000-a000-000000000004',
+};
+
+const isValidUuid = (val: string): boolean => {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+};
+
+const resolveBranchUuids = async (branches: string[] | undefined, branch: string | undefined): Promise<string[]> => {
+  const inputs = (branches && branches.length > 0) ? branches : (branch ? [branch] : []);
+  if (inputs.length === 0) return [DEFAULT_BRANCH_ID];
+
+  // If all inputs are valid UUIDs, return them directly
+  if (inputs.every(isValidUuid)) return inputs;
+
+  try {
+    const branchList = await branchesService.getBranches();
+    const branchMap = new Map<string, string>();
+    branchList.forEach(b => {
+      branchMap.set(b.name.toLowerCase().trim(), b.id);
+      branchMap.set(b.id, b.id);
+    });
+
+    const resolved: string[] = [];
+    inputs.forEach(inp => {
+      if (isValidUuid(inp)) {
+        resolved.push(inp);
+      } else {
+        const matchId = branchMap.get(inp.toLowerCase().trim());
+        if (matchId) resolved.push(matchId);
+      }
+    });
+
+    if (resolved.length === 0) {
+      return branchList.length > 0 ? [branchList[0].id] : [DEFAULT_BRANCH_ID];
+    }
+    return resolved;
+  } catch {
+    return [DEFAULT_BRANCH_ID];
+  }
 };
 
 const generateUUID = (): string => {
@@ -797,36 +933,250 @@ const generateUUID = (): string => {
 
 // ---------------- USERS / MEMBERS ----------------
 export const usersService = {
-  async getUsers(): Promise<UserMember[]> {
-    const { data, error } = await supabase
-      .from('tenant_memberships')
-      .select(`
-        id, status, username,
-        profiles ( full_name, email ),
-        roles ( name )
-      `)
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`);
+  async authenticatePersonal(usernameOrEmail: string, password?: string, taxId?: string): Promise<{
+    success: boolean;
+    tenant?: {
+      id: string;
+      name: string;
+      tradeName?: string;
+      ruc: string;
+      logoPath?: string;
+      primaryColor?: string;
+    };
+    user?: {
+      id: string;
+      userId: string;
+      tenantId: string;
+      username: string;
+      name: string;
+      email: string;
+      role: string;
+      roleId?: string;
+      status: string;
+      branchId: string;
+      branchName: string;
+      branches: string[];
+      branchIds?: string[];
+    };
+    error?: string;
+  }> {
+    try {
+      const term = usernameOrEmail.trim().toLowerCase();
+      const ruc = (taxId || '').trim();
 
-    if (error || !data || data.length === 0) {
+      // 1. Validate Company / Tenant by RUC
+      let tenantQuery = supabase.from('tenants').select('*');
+      if (ruc) {
+        tenantQuery = tenantQuery.eq('ruc', ruc);
+      } else {
+        tenantQuery = tenantQuery.eq('id', DEFAULT_TENANT_ID);
+      }
+
+      const { data: tenantData, error: tError } = await tenantQuery.maybeSingle();
+
+      if (tError || !tenantData) {
+        return {
+          success: false,
+          error: ruc 
+            ? `No existe ninguna empresa registrada con el RUC ${ruc}.` 
+            : 'No se encontró la información de la empresa.',
+        };
+      }
+
+      if (tenantData.active === false) {
+        return {
+          success: false,
+          error: `La empresa "${tenantData.name || tenantData.trade_name || ruc}" se encuentra inactiva o suspendida en la plataforma.`,
+        };
+      }
+
+      const tenantId = tenantData.id;
+
+      // 2. Validate User Membership specifically in this company
+      const { data: members, error: mError } = await supabase
+        .from('tenant_memberships')
+        .select(`
+          id,
+          user_id,
+          tenant_id,
+          role_id,
+          branch_ids,
+          username,
+          password,
+          status,
+          profiles ( id, full_name, email ),
+          roles ( id, name, is_system )
+        `)
+        .eq('tenant_id', tenantId);
+
+      if (mError) {
+        console.error('Error querying tenant_memberships during login:', mError);
+        return { success: false, error: 'Error al conectar con la base de datos de usuarios.' };
+      }
+
+      const match = (members as any[] || []).find((m: any) => {
+        const uName = (m.username || '').trim().toLowerCase();
+        const pObj = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+        const pEmail = (pObj?.email || '').trim().toLowerCase();
+        return uName === term || pEmail === term;
+      });
+
+      if (!match) {
+        return {
+          success: false,
+          error: `El usuario "${usernameOrEmail}" no pertenece a la empresa "${tenantData.name || ruc}". Verifique el RUC y usuario.`,
+        };
+      }
+
+      if (match.status === 'DISABLED') {
+        return {
+          success: false,
+          error: `El usuario "${usernameOrEmail}" se encuentra deshabilitado en esta empresa.`,
+        };
+      }
+
+      // 3. Validate Password if user has a password registered
+      if (match.password && password && match.password !== password) {
+        return {
+          success: false,
+          error: 'La contraseña ingresada es incorrecta.',
+        };
+      }
+
+      // 4. Validate Branch & Status
+      const { data: branchesData } = await supabase
+        .from('branches')
+        .select('id, name, status')
+        .eq('tenant_id', tenantId);
+
+      const allBranches = branchesData || [];
+      const activeBranches = allBranches.filter((b) => b.status === 'ACTIVE');
+
+      if (allBranches.length > 0 && activeBranches.length === 0) {
+        return {
+          success: false,
+          error: `Todas las sucursales de la empresa "${tenantData.name}" se encuentran inactivas.`,
+        };
+      }
+
+      // Determine user's active branch
+      let targetBranch = activeBranches[0];
+      if (match.branch_ids && match.branch_ids.length > 0) {
+        const assignedBranchNameOrId = match.branch_ids[0];
+        const found = allBranches.find(
+          (b) => b.id === assignedBranchNameOrId || b.name.toLowerCase() === assignedBranchNameOrId.toLowerCase()
+        );
+        if (found) {
+          if (found.status === 'DISABLED') {
+            return {
+              success: false,
+              error: `La sucursal asignada "${found.name}" se encuentra inactiva. Contacte al administrador.`,
+            };
+          }
+          targetBranch = found;
+        }
+      }
+
+      const roleObj = Array.isArray(match.roles) ? match.roles[0] : match.roles;
+      const profileObj = Array.isArray(match.profiles) ? match.profiles[0] : match.profiles;
+      const roleName = roleObj?.name || 'Vendedor';
+      const fullName = profileObj?.full_name || match.username || usernameOrEmail;
+      const userEmail = profileObj?.email || '';
+      const isSuper = (roleName.toLowerCase().includes('super') || roleName.toLowerCase().includes('platform'));
+
+      // Filter branches assigned to this specific user
+      let userBranches = activeBranches;
+      if (!isSuper && match.branch_ids && match.branch_ids.length > 0) {
+        userBranches = activeBranches.filter(b => 
+          match.branch_ids.includes(b.id) || match.branch_ids.map((x: string) => x.toLowerCase()).includes(b.name.toLowerCase())
+        );
+        if (userBranches.length === 0 && targetBranch) {
+          userBranches = [targetBranch];
+        }
+      }
+
+      return {
+        success: true,
+        tenant: {
+          id: tenantData.id,
+          name: tenantData.name,
+          tradeName: tenantData.trade_name,
+          ruc: tenantData.ruc,
+          logoPath: tenantData.logo_path,
+          primaryColor: tenantData.primary_color,
+        },
+        user: {
+          id: match.id,
+          userId: match.user_id,
+          tenantId: tenantData.id,
+          username: match.username || usernameOrEmail,
+          name: fullName,
+          email: userEmail,
+          role: roleName,
+          roleId: match.role_id,
+          status: match.status || 'ACTIVE',
+          branchId: targetBranch?.id || DEFAULT_BRANCH_ID,
+          branchName: targetBranch?.name || 'Sede Principal',
+          branches: userBranches.map((b) => b.name),
+          branchIds: userBranches.map((b) => b.id),
+        },
+      };
+    } catch (err: any) {
+      console.error('Exception during authenticatePersonal:', err);
+      return { success: false, error: 'Ocurrió un error inesperado al validar el acceso.' };
+    }
+  },
+
+  async getUsers(): Promise<UserMember[]> {
+    const tenantId = getActiveTenantId();
+    const [membersRes, branchesRes] = await Promise.all([
+      supabase
+        .from('tenant_memberships')
+        .select(`
+          id, status, username, password, branch_ids,
+          profiles ( full_name, email ),
+          roles ( id, name )
+        `)
+        .or(`tenant_id.eq.${tenantId},tenant_id.is.null`),
+      branchesService.getBranches(),
+    ]);
+
+    const branchNameMap = new Map<string, string>();
+    branchesRes.forEach(b => branchNameMap.set(b.id, b.name));
+
+    if (membersRes.error || !membersRes.data || membersRes.data.length === 0) {
       return [
-        { id: 'u1', name: 'Admin Principal', email: 'admin@ventasbv.com', role: 'Super Admin', branch: 'Sede Principal', status: 'ACTIVE' },
-        { id: 'u2', name: 'Carlos Vendedor', email: 'carlos.v@ventasbv.com', role: 'Vendedor', branch: 'Sede Principal', status: 'ACTIVE' },
+        { id: 'u1', name: 'Admin Principal', email: 'admin@ventasbv.com', username: 'admin', role: 'Super Admin', branch: 'Yacuabamba', branches: ['Yacuabamba'], status: 'ACTIVE' },
       ];
     }
 
-    return data.map((m: any) => ({
-      id: m.id,
-      name: m.profiles?.full_name || m.username || 'Usuario',
-      email: m.profiles?.email || '',
-      role: m.roles?.name || 'Vendedor',
-      branch: 'Sede Principal',
-      status: m.status || 'ACTIVE',
-    }));
+    return (membersRes.data || []).map((m: any) => {
+      const pObj = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+      const rObj = Array.isArray(m.roles) ? m.roles[0] : m.roles;
+
+      const branchNames = (m.branch_ids && Array.isArray(m.branch_ids) && m.branch_ids.length > 0)
+        ? m.branch_ids.map((id: string) => branchNameMap.get(id) || id)
+        : (branchesRes.length > 0 ? [branchesRes[0].name] : ['Sede Principal']);
+
+      return {
+        id: m.id,
+        name: pObj?.full_name || m.username || 'Usuario',
+        email: pObj?.email || '',
+        username: m.username || '',
+        password: m.password || '',
+        role: rObj?.name || 'Vendedor',
+        roleId: rObj?.id,
+        branch: branchNames[0] || 'Sede Principal',
+        branches: branchNames,
+        status: m.status || 'ACTIVE',
+      };
+    });
   },
 
   async createUser(user: Omit<UserMember, 'id'>): Promise<UserMember | null> {
     try {
       const profileId = generateUUID();
+      const tenantId = getActiveTenantId();
       
       // 1. Create Profile
       const { error: pError } = await supabase
@@ -842,25 +1192,47 @@ export const usersService = {
         return null;
       }
 
-      // 2. Determine role ID
-      const roleId = ROLE_MAP[user.role] || 'a1000000-0000-4000-a000-000000000004';
+      // 2. Determine role ID dynamically
+      let roleId = (user as any).roleId;
+      if (!roleId && user.role) {
+        if (isValidUuid(user.role)) {
+          roleId = user.role;
+        } else if (ROLE_MAP[user.role]) {
+          roleId = ROLE_MAP[user.role];
+        } else {
+          const { data: roleRow } = await supabase
+            .from('roles')
+            .select('id')
+            .ilike('name', user.role)
+            .limit(1)
+            .maybeSingle();
+          roleId = roleRow?.id || 'a1000000-0000-4000-a000-000000000001';
+        }
+      }
+      if (!roleId) roleId = 'a1000000-0000-4000-a000-000000000001';
 
-      // 3. Create Tenant Membership
+      // 3. Resolve branch UUIDs
+      const branchUuids = await resolveBranchUuids(user.branches, user.branch);
+
+      // 4. Create Tenant Membership
       const membershipId = generateUUID();
+      const rawUsername = user.username || user.email.split('@')[0] || user.name.toLowerCase().replace(/\s+/g, '');
       const { data, error: mError } = await supabase
         .from('tenant_memberships')
         .insert({
           id: membershipId,
-          tenant_id: DEFAULT_TENANT_ID,
+          tenant_id: tenantId,
           user_id: profileId,
           role_id: roleId,
-          username: user.email.split('@')[0] || user.name.toLowerCase().replace(/\s+/g, ''),
+          username: rawUsername,
+          password: user.password || '123',
+          branch_ids: branchUuids,
           status: user.status || 'ACTIVE',
         })
         .select(`
-          id, status, username,
+          id, status, username, password, branch_ids,
           profiles ( full_name, email ),
-          roles ( name )
+          roles ( id, name )
         `)
         .single();
 
@@ -870,12 +1242,19 @@ export const usersService = {
       }
 
       const m = data as any;
+      const pObj = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+      const rObj = Array.isArray(m.roles) ? m.roles[0] : m.roles;
+
       return {
         id: m.id,
-        name: m.profiles?.full_name || m.username || 'Usuario',
-        email: m.profiles?.email || '',
-        role: m.roles?.name || 'Vendedor',
-        branch: 'Sede Principal',
+        name: pObj?.full_name || m.username || 'Usuario',
+        email: pObj?.email || '',
+        username: m.username || rawUsername,
+        password: m.password || user.password,
+        role: rObj?.name || user.role || 'Vendedor',
+        roleId: rObj?.id || roleId,
+        branch: user.branch || (user.branches && user.branches[0]) || 'Sede Principal',
+        branches: user.branches || [user.branch || 'Sede Principal'],
         status: m.status || 'ACTIVE',
       };
     } catch (err) {
@@ -919,14 +1298,40 @@ export const usersService = {
 
       // 3. Update Membership
       const membershipUpdates: any = {};
-      if (user.role) {
-        membershipUpdates.role_id = ROLE_MAP[user.role] || 'a1000000-0000-4000-a000-000000000004';
+      if (user.role || (user as any).roleId) {
+        let roleId = (user as any).roleId;
+        if (!roleId && user.role) {
+          if (isValidUuid(user.role)) {
+            roleId = user.role;
+          } else if (ROLE_MAP[user.role]) {
+            roleId = ROLE_MAP[user.role];
+          } else {
+            const { data: roleRow } = await supabase
+              .from('roles')
+              .select('id')
+              .ilike('name', user.role)
+              .limit(1)
+              .maybeSingle();
+            roleId = roleRow?.id || 'a1000000-0000-4000-a000-000000000001';
+          }
+        }
+        if (roleId) {
+          membershipUpdates.role_id = roleId;
+        }
       }
       if (user.status) {
         membershipUpdates.status = user.status;
       }
-      if (user.email) {
+      if (user.username) {
+        membershipUpdates.username = user.username;
+      } else if (user.email) {
         membershipUpdates.username = user.email.split('@')[0];
+      }
+      if (user.password) {
+        membershipUpdates.password = user.password;
+      }
+      if (user.branches || user.branch) {
+        membershipUpdates.branch_ids = await resolveBranchUuids(user.branches, user.branch);
       }
 
       if (Object.keys(membershipUpdates).length > 0) {
@@ -947,6 +1352,7 @@ export const usersService = {
       return false;
     }
   },
+
 
   async deleteUser(id: string): Promise<boolean> {
     try {
@@ -1092,7 +1498,8 @@ export const inventoryService = {
   }): Promise<boolean> {
     const { productId, productName, branchId, branchName, type, qty, reason } = params;
 
-    const targetBranch = branchId || DEFAULT_BRANCH_ID;
+    const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
+    const tenantId = getActiveTenantId();
     let currentStock = 0;
     const { data: inv } = await supabase
       .from('branch_inventory')
@@ -1123,7 +1530,7 @@ export const inventoryService = {
       await supabase.from('branch_inventory').update({ quantity: resultingStock }).eq('id', inv.id);
     } else {
       await supabase.from('branch_inventory').insert({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         branch_id: targetBranch,
         product_id: productId,
         quantity: resultingStock,
@@ -1131,7 +1538,7 @@ export const inventoryService = {
     }
 
     const { error: movErr } = await supabase.from('inventory_movements').insert({
-      tenant_id: DEFAULT_TENANT_ID,
+      tenant_id: tenantId,
       branch_id: targetBranch,
       product_id: productId,
       movement_type: type,
@@ -1152,7 +1559,7 @@ export const inventoryService = {
       productId,
       product: productName,
       branchId: targetBranch,
-      branchName,
+      branchName: branchName || 'Sucursal',
       type,
       qty: type === 'OUT' ? -Math.abs(qty) : qtyChange,
       prevStock: currentStock,
@@ -1176,6 +1583,7 @@ export const inventoryService = {
     reason: string;
   }): Promise<boolean> {
     const { productId, productName, sourceBranchId, sourceBranchName, targetBranchId, targetBranchName, qty, estimatedDays, reason } = params;
+    const tenantId = getActiveTenantId();
 
     // 1. Decrement Source Branch
     const { data: sourceInv } = await supabase
@@ -1192,7 +1600,7 @@ export const inventoryService = {
       await supabase.from('branch_inventory').update({ quantity: newSourceStock }).eq('id', sourceInv.id);
     } else {
       await supabase.from('branch_inventory').insert({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         branch_id: sourceBranchId,
         product_id: productId,
         quantity: newSourceStock,
@@ -1214,7 +1622,7 @@ export const inventoryService = {
       await supabase.from('branch_inventory').update({ quantity: newTargetStock }).eq('id', targetInv.id);
     } else {
       await supabase.from('branch_inventory').insert({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         branch_id: targetBranchId,
         product_id: productId,
         quantity: newTargetStock,
@@ -1224,7 +1632,7 @@ export const inventoryService = {
     const transferNote = `${reason || 'Traspaso de reabastecimiento entre sedes'}${estimatedDays ? ` • (Tiempo est.: ${estimatedDays} día${estimatedDays > 1 ? 's' : ''})` : ''}`;
 
     await supabase.from('inventory_movements').insert({
-      tenant_id: DEFAULT_TENANT_ID,
+      tenant_id: tenantId,
       branch_id: targetBranchId,
       product_id: productId,
       movement_type: 'TRANSFER',
@@ -1484,6 +1892,17 @@ export const salesService = {
       };
 
       memorySales = [newMemorySale, ...memorySales.filter(s => s.id !== saleId)];
+
+      // Trace in Audit Logs
+      auditService.logAction({
+        action: 'VENTA POS',
+        entityType: 'sales',
+        entityId: saleId,
+        branchId: isValidUuid(sale.branchId) ? sale.branchId : undefined,
+        description: `Venta ${finalSaleNumber} emitida por S/ ${sale.total.toFixed(2)} (${sale.paymentMethod}) a ${customerName}`,
+        details: { doc_number: finalSaleNumber, total: sale.total },
+      });
+
       return saleId;
     } catch (err) {
       console.error('Error creating sale in database:', err);
@@ -2124,3 +2543,511 @@ export const settingsService = {
     }
   },
 };
+
+// ---------------- USER PROFILE ----------------
+export const profileService = {
+  async getProfile(): Promise<{
+    membershipId: string;
+    userId: string;
+    fullName: string;
+    username: string;
+    email: string;
+    role: string;
+  }> {
+    try {
+      const authUserId = typeof window !== 'undefined' ? localStorage.getItem('auth_user_id') : null;
+      const authUsername = typeof window !== 'undefined' ? (localStorage.getItem('auth_username') || localStorage.getItem('auth_user')) : null;
+      const tenantId = (typeof window !== 'undefined' && localStorage.getItem('tenant_id')) || DEFAULT_TENANT_ID;
+
+      let query = supabase
+        .from('tenant_memberships')
+        .select(`
+          id,
+          user_id,
+          username,
+          profiles ( id, full_name, email ),
+          roles ( id, name )
+        `);
+
+      if (authUserId) {
+        query = query.eq('id', authUserId);
+      } else if (authUsername) {
+        query = query.eq('tenant_id', tenantId).ilike('username', authUsername);
+      }
+
+      const { data, error } = await query.maybeSingle();
+
+      if (error || !data) {
+        return {
+          membershipId: authUserId || '',
+          userId: '',
+          fullName: (typeof window !== 'undefined' && localStorage.getItem('auth_user')) || 'Admin Principal',
+          username: (typeof window !== 'undefined' && localStorage.getItem('auth_username')) || 'admin',
+          email: (typeof window !== 'undefined' && localStorage.getItem('auth_email')) || 'admin@ventasbv.pe',
+          role: (typeof window !== 'undefined' && localStorage.getItem('user_role')) || 'Super Admin',
+        };
+      }
+
+      const pObj = Array.isArray(data.profiles) ? data.profiles[0] : data.profiles;
+      const rObj = Array.isArray(data.roles) ? data.roles[0] : data.roles;
+
+      return {
+        membershipId: data.id,
+        userId: data.user_id,
+        fullName: pObj?.full_name || data.username || 'Usuario',
+        username: data.username || '',
+        email: pObj?.email || '',
+        role: rObj?.name || (typeof window !== 'undefined' ? localStorage.getItem('user_role') : '') || 'Super Admin',
+      };
+    } catch (err) {
+      console.error('Error in getProfile:', err);
+      return {
+        membershipId: '',
+        userId: '',
+        fullName: (typeof window !== 'undefined' && localStorage.getItem('auth_user')) || 'Usuario',
+        username: (typeof window !== 'undefined' && localStorage.getItem('auth_username')) || 'usuario',
+        email: (typeof window !== 'undefined' && localStorage.getItem('auth_email')) || '',
+        role: (typeof window !== 'undefined' && localStorage.getItem('user_role')) || 'Vendedor',
+      };
+    }
+  },
+
+  async updateProfile(params: {
+    fullName: string;
+    username: string;
+    email: string;
+    password?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    try {
+      const authUserId = typeof window !== 'undefined' ? localStorage.getItem('auth_user_id') : null;
+      const authUsername = typeof window !== 'undefined' ? (localStorage.getItem('auth_username') || localStorage.getItem('auth_user')) : null;
+      const tenantId = (typeof window !== 'undefined' && localStorage.getItem('tenant_id')) || DEFAULT_TENANT_ID;
+
+      // 1. Find the current user membership
+      let query = supabase.from('tenant_memberships').select('id, user_id, username').eq('tenant_id', tenantId);
+      if (authUserId) {
+        query = query.eq('id', authUserId);
+      } else if (authUsername) {
+        query = query.ilike('username', authUsername);
+      }
+
+      const { data: membership, error: mError } = await query.maybeSingle();
+
+      const memberId = membership?.id || authUserId;
+      const userId = membership?.user_id;
+
+      // 2. Check if new username is already taken by another user in this tenant
+      if (params.username && params.username.trim()) {
+        const cleanUsername = params.username.trim();
+        const { data: existingUser } = await supabase
+          .from('tenant_memberships')
+          .select('id')
+          .eq('tenant_id', tenantId)
+          .ilike('username', cleanUsername)
+          .neq('id', memberId || '')
+          .maybeSingle();
+
+        if (existingUser) {
+          return {
+            success: false,
+            error: `El nombre de usuario "${cleanUsername}" ya está registrado por otro miembro en esta empresa.`,
+          };
+        }
+      }
+
+      // 3. Update Profile table
+      if (userId && (params.fullName || params.email)) {
+        const pUpdates: any = {};
+        if (params.fullName) pUpdates.full_name = params.fullName.trim();
+        if (params.email) pUpdates.email = params.email.trim();
+
+        const { error: pErr } = await supabase.from('profiles').update(pUpdates).eq('id', userId);
+        if (pErr) {
+          console.error('Error updating profile in Supabase:', pErr);
+        }
+      }
+
+      // 4. Update Membership table (username, password)
+      if (memberId) {
+        const mUpdates: any = {};
+        if (params.username) mUpdates.username = params.username.trim();
+        if (params.password && params.password.trim()) {
+          mUpdates.password = params.password.trim();
+        }
+
+        if (Object.keys(mUpdates).length > 0) {
+          const { error: updErr } = await supabase
+            .from('tenant_memberships')
+            .update(mUpdates)
+            .eq('id', memberId);
+
+          if (updErr) {
+            console.error('Error updating membership in Supabase:', updErr);
+            return { success: false, error: 'No se pudo actualizar el usuario en la base de datos.' };
+          }
+        }
+      }
+
+      // 5. Update localStorage
+      if (params.fullName && typeof window !== 'undefined') localStorage.setItem('auth_user', params.fullName.trim());
+      if (params.username && typeof window !== 'undefined') localStorage.setItem('auth_username', params.username.trim());
+      if (params.email && typeof window !== 'undefined') localStorage.setItem('auth_email', params.email.trim());
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('user_profile_updated'));
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Exception in updateProfile:', err);
+      return { success: false, error: 'Ocurrió un error inesperado al guardar los cambios del perfil.' };
+    }
+  },
+};
+
+// ---------------- NOTIFICATIONS ----------------
+export interface AppNotification {
+  id: string;
+  tenant_id: string;
+  user_id?: string;
+  title: string;
+  message: string;
+  type: 'INFO' | 'SUCCESS' | 'WARNING' | 'DANGER';
+  read: boolean;
+  entity_type?: string;
+  entity_id?: string;
+  created_at: string;
+}
+
+export const notificationsService = {
+  async getNotifications(): Promise<AppNotification[]> {
+    try {
+      const tenantId = getActiveTenantId();
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID}`)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching notifications:', error);
+        return [];
+      }
+      return (data || []).map((n: any) => ({
+        id: n.id,
+        tenant_id: n.tenant_id,
+        user_id: n.user_id,
+        title: n.title,
+        message: n.message,
+        type: n.type || 'INFO',
+        read: Boolean(n.read),
+        entity_type: n.entity_type,
+        entity_id: n.entity_id,
+        created_at: n.created_at,
+      }));
+    } catch (err) {
+      console.error('Exception in getNotifications:', err);
+      return [];
+    }
+  },
+
+  async markAsRead(id: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error marking notification as read:', error);
+        return false;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('notifications_updated'));
+      }
+      return true;
+    } catch (err) {
+      console.error('Exception in markAsRead:', err);
+      return false;
+    }
+  },
+
+  async markAllAsRead(): Promise<boolean> {
+    try {
+      const tenantId = getActiveTenantId();
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID}`);
+
+      if (error) {
+        console.error('Error marking all notifications as read:', error);
+        return false;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('notifications_updated'));
+      }
+      return true;
+    } catch (err) {
+      console.error('Exception in markAllAsRead:', err);
+      return false;
+    }
+  },
+
+  async deleteNotification(id: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error deleting notification:', error);
+        return false;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('notifications_updated'));
+      }
+      return true;
+    } catch (err) {
+      console.error('Exception in deleteNotification:', err);
+      return false;
+    }
+  },
+
+  async createNotification(notification: {
+    title: string;
+    message: string;
+    type?: 'INFO' | 'SUCCESS' | 'WARNING' | 'DANGER';
+    entity_type?: string;
+    entity_id?: string;
+  }): Promise<boolean> {
+    try {
+      const tenantId = getActiveTenantId();
+      const { error } = await supabase
+        .from('notifications')
+        .insert({
+          id: generateUUID(),
+          tenant_id: tenantId,
+          title: notification.title,
+          message: notification.message,
+          type: notification.type || 'INFO',
+          read: false,
+          entity_type: notification.entity_type || 'system',
+          entity_id: notification.entity_id || null,
+        });
+
+      if (error) {
+        console.error('Error creating notification:', error);
+        return false;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('notifications_updated'));
+      }
+      return true;
+    } catch (err) {
+      console.error('Exception in createNotification:', err);
+      return false;
+    }
+  },
+};
+
+// ---------------- AUDIT LOGS ----------------
+export interface AuditLogEntry {
+  id: string;
+  time: string;
+  actor: string;
+  username?: string;
+  action: string;
+  branchName: string;
+  branchId?: string;
+  description: string;
+  ip: string;
+  entityType?: string;
+  rawAction?: string;
+}
+
+export const auditService = {
+  async getAuditLogs(): Promise<AuditLogEntry[]> {
+    try {
+      const tenantId = getActiveTenantId();
+
+      // Query audit logs, branches, members, and profiles simultaneously
+      const [logsRes, branchesRes, membersRes, profilesRes] = await Promise.all([
+        supabase
+          .from('audit_logs')
+          .select('*')
+          .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID}`)
+          .order('created_at', { ascending: false })
+          .limit(100),
+        branchesService.getBranches(),
+        usersService.getUsers(),
+        supabase.from('profiles').select('id, full_name, email'),
+      ]);
+
+      const branchMap = new Map<string, string>();
+      branchesRes.forEach((b) => branchMap.set(b.id, b.name));
+
+      const userMap = new Map<string, { name: string; username: string; role?: string }>();
+
+      // 1. Map profiles
+      (profilesRes.data || []).forEach((p: any) => {
+        userMap.set(p.id, {
+          name: p.full_name || 'Usuario',
+          username: p.email ? p.email.split('@')[0] : 'usuario',
+          role: 'Usuario',
+        });
+      });
+
+      // 2. Map tenant members (which have richer role and username data)
+      membersRes.forEach((m: any) => {
+        const info = {
+          name: m.name,
+          username: m.username || m.name,
+          role: m.role || 'Usuario',
+        };
+        userMap.set(m.id, info);
+        if (m.userId) userMap.set(m.userId, info);
+      });
+
+      // 3. Current logged in user from session
+      const currentAuthName = (typeof window !== 'undefined' && localStorage.getItem('auth_user')) || 'Usuario';
+      const currentAuthUsername = (typeof window !== 'undefined' && (localStorage.getItem('auth_username') || localStorage.getItem('auth_user'))) || 'usuario';
+      const currentAuthRole = (typeof window !== 'undefined' && (localStorage.getItem('user_role') || localStorage.getItem('auth_role'))) || '';
+
+      return (logsRes.data || []).map((log: any) => {
+        let branchName = 'Sede Principal';
+        if (log.branch_id && branchMap.has(log.branch_id)) {
+          branchName = branchMap.get(log.branch_id)!;
+        } else if (log.new_values?.branch_name) {
+          branchName = log.new_values.branch_name;
+        } else if (branchesRes.length > 0) {
+          branchName = branchesRes[0].name;
+        }
+
+        let actorName = currentAuthRole ? `${currentAuthName} (${currentAuthRole})` : currentAuthName;
+        let username = currentAuthUsername;
+
+        if (log.actor_user_id && userMap.has(log.actor_user_id)) {
+          const u = userMap.get(log.actor_user_id)!;
+          actorName = u.role ? `${u.name} (${u.role})` : u.name;
+          username = u.username;
+        } else if (log.new_values?.user_name) {
+          actorName = log.new_values.user_name;
+          username = log.new_values.username || log.new_values.user_name;
+        }
+
+        // Map module name to clean friendly Spanish title
+        const MODULE_MAP: Record<string, string> = {
+          customers: 'MODULO CLIENTE',
+          sales: 'MODULO VENTAS',
+          products: 'MODULO PRODUCTO',
+          inventory_movements: 'MODULO INVENTARIO',
+          inventory: 'MODULO INVENTARIO',
+          transfers: 'MODULO TRASPASO',
+          tenant_memberships: 'MODULO USUARIO',
+          users: 'MODULO USUARIO',
+          profiles: 'MODULO USUARIO',
+          roles: 'MODULO ROLES Y PERMISOS',
+          role_permissions: 'MODULO ROLES Y PERMISOS',
+          cash_registers: 'MODULO CAJA CHICA',
+          cash: 'MODULO CAJA CHICA',
+          tenants: 'MODULO CONFIGURACIÓN',
+          settings: 'MODULO CONFIGURACIÓN',
+          contracts: 'MODULO CONTRATOS',
+          auth: 'MODULO SEGURIDAD',
+          notifications: 'MODULO NOTIFICACIONES',
+        };
+
+        const moduleName = MODULE_MAP[log.entity_type] || `MODULO ${(log.entity_type || 'SISTEMA').toUpperCase()}`;
+
+        let detailName = '';
+        const nv = log.new_values || {};
+        if (log.entity_type === 'customers') {
+          detailName = nv.business_name || nv.full_name || nv.name || (nv.document_number ? `Doc: ${nv.document_number}` : 'Cliente / Razón Social');
+        } else if (log.entity_type === 'sales') {
+          detailName = nv.doc_number ? `Comprobante ${nv.doc_number}` : nv.description || 'Venta';
+        } else if (log.entity_type === 'products') {
+          detailName = nv.name || nv.sku || 'Artículo';
+        } else if (log.entity_type === 'inventory_movements' || log.entity_type === 'inventory') {
+          detailName = nv.product_name || nv.reason || nv.description || 'Movimiento Kardex';
+        } else if (log.entity_type === 'tenant_memberships' || log.entity_type === 'users' || log.entity_type === 'profiles') {
+          detailName = nv.full_name || nv.name || nv.username || 'Usuario';
+        } else if (log.entity_type === 'roles' || log.entity_type === 'role_permissions') {
+          detailName = nv.role_name || nv.name || (nv.permission_code ? `Permiso ${nv.permission_code}` : 'Permisos');
+        } else if (log.entity_type === 'cash_registers' || log.entity_type === 'cash') {
+          detailName = nv.description || 'Turno de Caja';
+        } else if (log.entity_type === 'contracts') {
+          detailName = nv.contract_number ? `Contrato N° ${nv.contract_number}` : 'Cotización';
+        } else if (log.entity_type === 'notifications') {
+          detailName = nv.title || 'Alerta';
+        } else if (nv.description) {
+          detailName = nv.description;
+        }
+
+        const formattedDesc = detailName ? `${moduleName}, (${detailName})` : moduleName;
+
+        return {
+          id: log.id,
+          time: log.created_at ? new Date(log.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'medium' }) : new Date().toLocaleString('es-PE'),
+          actor: actorName,
+          username: username,
+          action: log.action || 'INSERT',
+          branchName: branchName,
+          branchId: log.branch_id,
+          description: formattedDesc,
+          ip: log.ip_address || '190.235.12.89',
+          entityType: log.entity_type,
+          rawAction: log.action,
+        };
+      });
+    } catch (err) {
+      console.error('Exception in getAuditLogs:', err);
+      return [];
+    }
+  },
+
+  async logAction(params: {
+    action: string;
+    entityType: string;
+    entityId?: string;
+    branchId?: string;
+    description?: string;
+    details?: any;
+  }): Promise<boolean> {
+    try {
+      const tenantId = getActiveTenantId();
+      const branchId = params.branchId || getActiveBranchId();
+      const currentUserName = typeof window !== 'undefined' ? localStorage.getItem('auth_user') || 'Usuario' : 'Usuario';
+      const currentAuthUsername = typeof window !== 'undefined' ? localStorage.getItem('auth_username') || currentUserName : 'usuario';
+      
+      const { error } = await supabase.from('audit_logs').insert({
+        id: generateUUID(),
+        tenant_id: tenantId,
+        branch_id: branchId && branchId !== 'ALL' ? branchId : null,
+        action: params.action,
+        entity_type: params.entityType,
+        entity_id: params.entityId || null,
+        ip_address: '190.235.12.89',
+        user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : 'Web Browser',
+        new_values: {
+          description: params.description || `${params.action} en ${params.entityType}`,
+          user_name: currentUserName,
+          username: currentAuthUsername,
+          ...params.details,
+        },
+      });
+
+      if (error) {
+        console.error('Error logging audit action:', error);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('Exception in logAction:', err);
+      return false;
+    }
+  },
+};
+
+

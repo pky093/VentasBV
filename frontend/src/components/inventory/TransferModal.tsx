@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRightLeft, Building2, Package, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { Modal, Button } from '../ui';
+import { ArrowRightLeft, Building2, Package, Clock, AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react';
+import { Modal, Button, SuggestionChip } from '../ui';
 import { Product, Branch, inventoryService } from '../../lib/db-services';
 import Swal from 'sweetalert2';
 
@@ -284,6 +284,27 @@ export const TransferModal: React.FC<TransferModalProps> = ({
             onChange={(e) => setReason(e.target.value)}
             placeholder="Ej. Solicitud urgente por venta pendiente en mostrador"
           />
+          {/* Motivo suggestions */}
+          <div className="flex gap-1.5 flex-wrap items-center pt-2">
+            <span className="text-[11px] font-semibold text-secondary flex items-center gap-1">
+              <Sparkles size={13} className="text-primary-600 dark:text-primary-400" />
+              Sugerencias:
+            </span>
+            {[
+              'Reabastecimiento por falta de stock en sede',
+              'Solicitud urgente por venta en mostrador',
+              'Balance y redistribución de inventario',
+              'Exhibición y vitrina',
+            ].map((chip) => (
+              <SuggestionChip
+                key={chip}
+                label={chip}
+                selected={reason === chip}
+                onClick={() => setReason(chip)}
+                size="sm"
+              />
+            ))}
+          </div>
         </div>
 
         {/* ACTION BUTTONS */}

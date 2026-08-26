@@ -20,6 +20,7 @@ import CustomersPage from './pages/CustomersPage';
 import SalesPage from './pages/SalesPage';
 import POSPage from './pages/POSPage';
 import CashRegisterPage from './pages/CashRegisterPage';
+import ContractsPage from './pages/ContractsPage';
 import BillingPage from './pages/BillingPage';
 import ReportsPage from './pages/ReportsPage';
 import ExpensesPage from './pages/ExpensesPage';
@@ -29,6 +30,8 @@ import SettingsPage from './pages/SettingsPage';
 import ProfilePage from './pages/ProfilePage';
 
 import { BranchProvider } from './context/BranchContext';
+import { PermissionProvider } from './context/PermissionContext';
+import { PermissionRoute } from './components/PermissionRoute';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const isLoggedIn = localStorage.getItem('is_logged_in') === 'true';
@@ -41,50 +44,53 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 export default function App() {
   return (
     <BranchProvider>
-      <Routes>
-        <Route path="/" element={<Navigate to="/login" replace />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/set-password" element={<SetPasswordPage />} />
-        <Route
-          path="/platform"
-          element={
-            <ProtectedRoute>
-              <PlatformPage />
-            </ProtectedRoute>
-          }
-        />
-        
-        <Route
-          path="/app"
-          element={
-            <ProtectedRoute>
-              <AppLayout />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<DashboardPage />} />
-          <Route path="branches" element={<BranchesPage />} />
-          <Route path="users" element={<UsersPage />} />
-          <Route path="roles" element={<RolesPage />} />
-          <Route path="catalog" element={<CatalogPage />} />
-          <Route path="products" element={<ProductsPage />} />
-          <Route path="products/:id" element={<ProductDetailPage />} />
-          <Route path="inventory" element={<InventoryPage />} />
-          <Route path="suppliers" element={<SuppliersPage />} />
-          <Route path="purchases" element={<PurchasesPage />} />
-          <Route path="customers" element={<CustomersPage />} />
-          <Route path="sales" element={<SalesPage />} />
-          <Route path="pos" element={<POSPage />} />
-          <Route path="cash" element={<CashRegisterPage />} />
-          <Route path="billing" element={<BillingPage />} />
-          <Route path="reports" element={<ReportsPage />} />
-          <Route path="expenses" element={<ExpensesPage />} />
-          <Route path="audit" element={<AuditPage />} />
-          <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="profile" element={<ProfilePage />} />
-        </Route>
-      </Routes>
+      <PermissionProvider>
+        <Routes>
+          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/set-password" element={<SetPasswordPage />} />
+          <Route
+            path="/platform"
+            element={
+              <ProtectedRoute>
+                <PlatformPage />
+              </ProtectedRoute>
+            }
+          />
+          
+          <Route
+            path="/app"
+            element={
+              <ProtectedRoute>
+                <AppLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<PermissionRoute permission="dashboard.read"><DashboardPage /></PermissionRoute>} />
+            <Route path="branches" element={<PermissionRoute permission="branches.manage"><BranchesPage /></PermissionRoute>} />
+            <Route path="users" element={<PermissionRoute permission="users.read"><UsersPage /></PermissionRoute>} />
+            <Route path="roles" element={<PermissionRoute permission="roles.manage"><RolesPage /></PermissionRoute>} />
+            <Route path="catalog" element={<PermissionRoute permission="catalog.read"><CatalogPage /></PermissionRoute>} />
+            <Route path="products" element={<PermissionRoute permission="products.read"><ProductsPage /></PermissionRoute>} />
+            <Route path="products/:id" element={<PermissionRoute permission="products.read"><ProductDetailPage /></PermissionRoute>} />
+            <Route path="inventory" element={<PermissionRoute permission="inventory.read"><InventoryPage /></PermissionRoute>} />
+            <Route path="suppliers" element={<PermissionRoute permission="suppliers.read"><SuppliersPage /></PermissionRoute>} />
+            <Route path="purchases" element={<PermissionRoute permission="purchases.read"><PurchasesPage /></PermissionRoute>} />
+            <Route path="customers" element={<PermissionRoute permission="customers.read"><CustomersPage /></PermissionRoute>} />
+            <Route path="sales" element={<PermissionRoute permission="sales.read"><SalesPage /></PermissionRoute>} />
+            <Route path="pos" element={<PermissionRoute permission="sales.create"><POSPage /></PermissionRoute>} />
+            <Route path="cash" element={<PermissionRoute permission="cash.read"><CashRegisterPage /></PermissionRoute>} />
+            <Route path="contracts" element={<PermissionRoute permission="contracts.read"><ContractsPage /></PermissionRoute>} />
+            <Route path="billing" element={<PermissionRoute permission="billing.read"><BillingPage /></PermissionRoute>} />
+            <Route path="reports" element={<PermissionRoute permission="reports.read"><ReportsPage /></PermissionRoute>} />
+            <Route path="expenses" element={<PermissionRoute permission="expenses.read"><ExpensesPage /></PermissionRoute>} />
+            <Route path="audit" element={<PermissionRoute permission="audit.read"><AuditPage /></PermissionRoute>} />
+            <Route path="notifications" element={<PermissionRoute permission="notifications.read"><NotificationsPage /></PermissionRoute>} />
+            <Route path="settings" element={<PermissionRoute permission="settings.manage"><SettingsPage /></PermissionRoute>} />
+            <Route path="profile" element={<ProfilePage />} />
+          </Route>
+        </Routes>
+      </PermissionProvider>
     </BranchProvider>
   );
 }

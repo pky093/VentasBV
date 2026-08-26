@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 
 interface UserProfileMenuProps {
   authUser: string;
+  userRole?: string;
   tenantRuc: string;
   onClose: () => void;
   onLogout: () => void;
@@ -11,11 +12,15 @@ interface UserProfileMenuProps {
 
 export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
   authUser,
+  userRole,
   tenantRuc,
   onClose,
   onLogout,
 }) => {
   const navigate = useNavigate();
+  const displayRole = userRole || 'Vendedor';
+  const isSuperOrAdmin = displayRole.toLowerCase().includes('admin') || displayRole.toLowerCase().includes('super');
+
 
   return (
     <div
@@ -75,9 +80,9 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
             >
               {authUser}
             </div>
-            <div style={{ fontSize: '11px', color: '#10b981', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-              <span>Super Admin • En Línea</span>
+            <div style={{ fontSize: '11px', color: isSuperOrAdmin ? '#2563eb' : '#10b981', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: isSuperOrAdmin ? '#2563eb' : '#10b981', display: 'inline-block' }} />
+              <span>{displayRole} • En Línea</span>
             </div>
           </div>
         </div>

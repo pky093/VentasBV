@@ -25,23 +25,69 @@ const BranchContext = createContext<BranchContextType>({
 
 export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [branches, setBranches] = useState<Branch[]>([]);
+  const userRole = typeof window !== 'undefined' ? (localStorage.getItem('user_role') || '') : '';
+  const isSuper = userRole.toLowerCase() === 'super admin' || userRole.toLowerCase() === 'superadmin' || userRole.toLowerCase() === 'platform admin';
+
   const [activeBranchId, setActiveBranchIdState] = useState<string>(() => {
-    return localStorage.getItem('active_branch_id') || 'ALL';
+    const saved = localStorage.getItem('active_branch_id');
+    if (saved && (isSuper || saved !== 'ALL')) {
+      return saved;
+    }
+    return isSuper ? 'ALL' : '';
   });
   const [isLoadingBranches, setIsLoadingBranches] = useState(true);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(true);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(isSuper);
 
   const reloadBranches = async () => {
     setIsLoadingBranches(true);
     try {
+      const currentRole = typeof window !== 'undefined' ? (localStorage.getItem('user_role') || '') : '';
+      const superStatus = currentRole.toLowerCase() === 'super admin' || currentRole.toLowerCase() === 'superadmin' || currentRole.toLowerCase() === 'platform admin';
+      setIsSuperAdmin(superStatus);
+
       const data = await branchesService.getBranches();
       const activeBranches = data.filter((b) => b.status === 'ACTIVE');
-      setBranches(activeBranches);
 
-      if (activeBranchId !== 'ALL' && !activeBranches.some((b) => b.id === activeBranchId)) {
-        const defaultId = activeBranches[0]?.id || 'ALL';
+      let allowedBranches = activeBranches;
+      if (!superStatus) {
+        // Read assigned branches from localStorage
+        const assignedRaw = localStorage.getItem('assigned_branch_ids') || localStorage.getItem('assigned_branches');
+        let assignedList: string[] = [];
+        if (assignedRaw) {
+          try {
+            assignedList = JSON.parse(assignedRaw);
+          } catch {
+            assignedList = [assignedRaw];
+          }
+        }
+        if (assignedList.length === 0) {
+          const singleBranch = localStorage.getItem('active_branch_id') || localStorage.getItem('active_branch_name');
+          if (singleBranch) assignedList = [singleBranch];
+        }
+
+        if (assignedList.length > 0) {
+          allowedBranches = activeBranches.filter((b) =>
+            assignedList.some(
+              (a) =>
+                a.toLowerCase().trim() === b.id.toLowerCase().trim() ||
+                a.toLowerCase().trim() === b.name.toLowerCase().trim()
+            )
+          );
+        }
+      }
+
+      if (allowedBranches.length === 0 && activeBranches.length > 0) {
+        allowedBranches = [activeBranches[0]];
+      }
+
+      setBranches(allowedBranches);
+
+      if ((!superStatus && activeBranchId === 'ALL') || (activeBranchId && !allowedBranches.some((b) => b.id === activeBranchId))) {
+        const defaultId = allowedBranches[0]?.id || (superStatus ? 'ALL' : '');
         setActiveBranchIdState(defaultId);
-        localStorage.setItem('active_branch_id', defaultId);
+        if (defaultId) {
+          localStorage.setItem('active_branch_id', defaultId);
+        }
       }
     } catch (err) {
       console.error('Error loading branches in BranchContext:', err);
@@ -49,6 +95,7 @@ export const BranchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsLoadingBranches(false);
     }
   };
+
 
   useEffect(() => {
     reloadBranches();

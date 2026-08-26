@@ -31,6 +31,8 @@ interface Product {
   sku: string;
   name: string;
   category: string;
+  brand?: string;
+  model?: string;
   price: number;
   stock: number;
   icon: string;
@@ -108,6 +110,8 @@ export default function POSPage() {
             sku: p.code || p.sku,
             name: p.name,
             category: p.category || 'Sin categoría',
+            brand: p.brand || '',
+            model: p.model || '',
             price: p.price,
             stock: p.stock,
             icon: '📦',
@@ -144,7 +148,9 @@ export default function POSPage() {
     const matchesCategory = selectedCategory === 'Todas' || p.category === selectedCategory;
     const matchesSearch =
       p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+      p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (p.brand && p.brand.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (p.model && p.model.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesCategory && matchesSearch;
   });
 
@@ -404,7 +410,14 @@ export default function POSPage() {
                   </div>
                   <div className="flex-grow flex flex-col justify-between">
                     <div>
-                      <div className="text-[10px] font-mono text-secondary tracking-wider font-semibold mb-0.5">{prod.sku}</div>
+                      <div className="flex items-center justify-between gap-1 mb-0.5">
+                        <span className="text-[10px] font-mono text-secondary tracking-wider font-semibold">{prod.sku}</span>
+                        {(prod.brand || prod.model) && (
+                          <span className="text-[10px] text-secondary font-medium truncate max-w-[120px]" title={`${prod.brand || ''} ${prod.model || ''}`}>
+                            {prod.brand}{prod.model && ` • ${prod.model}`}
+                          </span>
+                        )}
+                      </div>
                       <div className="pos-card-title text-sm font-bold text-primary line-clamp-2 leading-tight mb-2 h-10 overflow-hidden" title={prod.name}>
                         {prod.name}
                       </div>

@@ -55,12 +55,15 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
     id: 'sales',
     module: 'Ventas & Punto de Venta (POS)', 
     icon: <ShoppingCart size={18} />,
-    description: 'Atención en caja, procesamiento de cobros y ventas',
+    description: 'Atención en caja, procesamiento de cobros, contratos y ventas',
     permissions: [
       { id: 'sales.read', label: 'Ver Historial de Ventas' },
       { id: 'sales.create', label: 'Emitir Ventas en POS' },
       { id: 'sales.edit', label: 'Editar / Anular Ventas' },
       { id: 'sales.cancel', label: 'Aprobar Notas de Crédito' },
+      { id: 'contracts.read', label: 'Ver Cotizaciones y Contratos' },
+      { id: 'contracts.manage', label: 'Emitir y Editar Contratos A4' },
+      { id: 'customers.read', label: 'Ver Directorio de Clientes' },
       { id: 'cash.read', label: 'Ver Arqueos de Caja Chica' },
       { id: 'cash.manage', label: 'Aperturar y Cerrar Caja' }
     ] 
@@ -73,6 +76,7 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
     permissions: [
       { id: 'inventory.read', label: 'Consultar Kardex de Stock' },
       { id: 'inventory.manage', label: 'Registrar Ajustes de Inventario' },
+      { id: 'expenses.read', label: 'Ver Gastos Operativos' },
       { id: 'suppliers.read', label: 'Ver Directorio de Proveedores' },
       { id: 'purchases.read', label: 'Ver Órdenes de Compra' },
       { id: 'purchases.create', label: 'Generar Órdenes de Compra' }
@@ -86,17 +90,21 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
     permissions: [
       { id: 'billing.read', label: 'Consultar Comprobantes Emitidos' },
       { id: 'billing.manage', label: 'Enviar Comprobantes a SUNAT' },
-      { id: 'billing.void', label: 'Solicitar Anulaciones y Comunicaciones' }
+      { id: 'billing.void', label: 'Solicitar Anulaciones y Comunicaciones' },
+      { id: 'reports.read', label: 'Consultar Reportes & Business Intelligence' }
     ] 
   },
   { 
     id: 'system',
     module: 'Sistema & Seguridad', 
     icon: <Settings size={18} />,
-    description: 'Gestión de usuarios, auditoría de eventos y configuración',
+    description: 'Gestión de usuarios, roles, sucursales, auditoría y configuración',
     permissions: [
       { id: 'users.read', label: 'Ver Lista de Usuarios' },
       { id: 'users.manage', label: 'Crear / Editar Usuarios' },
+      { id: 'roles.manage', label: 'Administrar Roles y Permisos' },
+      { id: 'branches.manage', label: 'Administrar Sucursales' },
+      { id: 'notifications.read', label: 'Ver Notificaciones' },
       { id: 'audit.read', label: 'Ver Registros de Auditoría' },
       { id: 'settings.manage', label: 'Acceso a Configuración de Sistema' }
     ] 
@@ -134,10 +142,15 @@ import { rolesService } from '../lib/db-services';
 
 export default function RolesPage() {
   const [roles, setRoles] = useState<Role[]>([
-    { id: 'a1000000-0000-4000-a000-000000000001', name: 'Super Admin', description: 'Acceso total e ilimitado a todos los módulos del sistema', isSystem: true, userCount: 1, userInitials: ['AP'], permissions: ['*'] },
-    { id: 'a1000000-0000-4000-a000-000000000002', name: 'Administrador Sede', description: 'Gestión operativa y supervisión de sucursal', isSystem: false, userCount: 2, userInitials: ['AP', 'CV'], permissions: ['*'] },
-    { id: 'a1000000-0000-4000-a000-000000000003', name: 'Cajero POS', description: 'Apertura y cierre de caja chica, cobros y emisión de boletas/facturas', isSystem: false, userCount: 3, userInitials: ['MR', 'LC', 'JS'], permissions: ['dashboard.read', 'sales.read', 'cash.read', 'cash.manage', 'billing.read', 'billing.manage'] },
-    { id: 'a1000000-0000-4000-a000-000000000004', name: 'Vendedor', description: 'Atención directa en punto de venta y consulta de catálogo', isSystem: false, userCount: 2, userInitials: ['CV', 'LC'], permissions: ['dashboard.read', 'products.read', 'sales.read', 'sales.create', 'cash.read'] },
+    {
+      id: 'a1000000-0000-4000-a000-000000000001',
+      name: 'Super Admin',
+      description: 'Acceso total sin restricciones a todos los módulos y configuraciones del sistema',
+      isSystem: true,
+      userCount: 1,
+      userInitials: ['SA'],
+      permissions: ['*'],
+    },
   ]);
 
   const [activeRoleId, setActiveRoleId] = useState<string>('a1000000-0000-4000-a000-000000000001');
@@ -150,10 +163,13 @@ export default function RolesPage() {
           name: r.name,
           description: r.description,
           isSystem: r.isSystem,
-          userCount: r.id === 'a1000000-0000-4000-a000-000000000001' ? 1 : r.id === 'a1000000-0000-4000-a000-000000000002' ? 2 : 0,
-          userInitials: r.id === 'a1000000-0000-4000-a000-000000000001' ? ['AP'] : r.id === 'a1000000-0000-4000-a000-000000000002' ? ['AP', 'CV'] : [],
+          userCount: r.usersCount || 1,
+          userInitials: r.isSystem ? ['SA'] : ['U'],
           permissions: r.permissions || [],
         })));
+        if (!dbRoles.some((r) => r.id === activeRoleId)) {
+          setActiveRoleId(dbRoles[0].id);
+        }
       }
     });
   }, []);
@@ -421,7 +437,7 @@ export default function RolesPage() {
                     <div>
                       <h3 className="font-extrabold text-sm text-primary">{role.name}</h3>
                       <div className="text-[11px] text-secondary font-medium mt-0.5">
-                        {hasFullAccess ? 'Acceso Total' : `${role.permissions.length} permisos`}
+                        {hasFullAccess ? 'Acceso Total (45 permisos)' : `${role.permissions.length} permisos`}
                       </div>
                     </div>
                   </div>

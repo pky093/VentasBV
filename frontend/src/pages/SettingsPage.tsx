@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, Palette, DollarSign, FileText, Save, Check, Loader2, RefreshCw, Sliders } from 'lucide-react';
+import { Building2, Palette, DollarSign, FileText, Save, Check, Loader2, RefreshCw, Sliders, Upload, Image as ImageIcon, FileCheck } from 'lucide-react';
 import { PageHeader, Button, Card, CardHeader, CardBody, Tabs } from '../components/ui';
 import { settingsService } from '../lib/db-services';
 import { applyTenantTheme, applyCustomTheme, getPresets, PRESETS, ThemeColors } from '../lib/tenant-theme';
@@ -19,6 +19,7 @@ export default function SettingsPage() {
     email: '',
     address: '',
     logo_path: '',
+    signature_path: '',
     currency_code: 'PEN',
     tax_rate: '18.00',
   });
@@ -52,6 +53,7 @@ export default function SettingsPage() {
           email: tenant.email || '',
           address: tenant.address || '',
           logo_path: tenant.logo_path || '',
+          signature_path: tenant.signature_path || '',
           currency_code: tenant.currency_code || 'PEN',
           tax_rate: tenant.tax_rate?.toString() || '18.00',
         });
@@ -96,6 +98,7 @@ export default function SettingsPage() {
         email: companyInfo.email,
         address: companyInfo.address,
         logo_path: companyInfo.logo_path,
+        signature_path: companyInfo.signature_path,
         currency_code: companyInfo.currency_code,
         tax_rate: parseFloat(companyInfo.tax_rate) || 18.00,
         primary_color: customColors.primaryColor,
@@ -199,7 +202,10 @@ export default function SettingsPage() {
             <form onSubmit={handleSave} className="space-y-4 max-w-2xl">
               {/* Logo Section */}
               <div style={{ padding: '16px', borderRadius: '14px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-app)', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <label style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-primary)' }}>Logo de la Empresa (Para menú y boletas)</label>
+                <label style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <ImageIcon size={16} className="text-primary-600" />
+                  Logo de la Empresa (Para menú y boletas)
+                </label>
 
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
                   {/* Logo Preview Thumbnail */}
@@ -217,7 +223,7 @@ export default function SettingsPage() {
                   <div style={{ flex: 1, minWidth: '240px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
                       <label style={{ padding: '8px 14px', borderRadius: '8px', backgroundColor: 'var(--primary-600)', color: '#ffffff', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        📁 Subir Imagen de Logo...
+                        <Upload size={14} /> Subir Imagen de Logo...
                         <input
                           type="file"
                           accept="image/*"
@@ -242,7 +248,7 @@ export default function SettingsPage() {
                         style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--primary-500)', backgroundColor: 'transparent', color: 'var(--primary-600)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
                         onClick={() => setCompanyInfo({ ...companyInfo, logo_path: '/logo-bv-brand.png' })}
                       >
-                        ⚡ Usar Logo Oficial B&V
+                        Usar Logo Oficial B&V
                       </button>
 
                       {companyInfo.logo_path && (
@@ -279,6 +285,86 @@ export default function SettingsPage() {
 
                 <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0, paddingTop: '4px' }}>
                   El logo se mostrará en la parte superior del menú lateral y en los comprobantes de venta físicos e impresos.
+                </p>
+              </div>
+
+              {/* Firma / Sello Section */}
+              <div style={{ padding: '16px', borderRadius: '14px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-app)', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <label style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FileCheck size={16} className="text-primary-600" />
+                  Firma / Sello Digital de la Empresa (Para Contratos y Cotizaciones)
+                </label>
+
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+                  {/* Signature Preview Thumbnail */}
+                  {companyInfo.signature_path ? (
+                    <div style={{ width: '140px', height: '80px', minWidth: '140px', minHeight: '80px', borderRadius: '12px', border: '1px solid var(--border-color)', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+                      <img src={companyInfo.signature_path} alt="Firma Empresa" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                    </div>
+                  ) : (
+                    <div style={{ width: '140px', height: '80px', minWidth: '140px', minHeight: '80px', borderRadius: '12px', border: '2px dashed var(--border-color)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: 600, textAlign: 'center', padding: '4px' }}>
+                      Sin Firma / Sello
+                    </div>
+                  )}
+
+                  {/* Controls */}
+                  <div style={{ flex: 1, minWidth: '240px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                      <label style={{ padding: '8px 14px', borderRadius: '8px', backgroundColor: 'var(--primary-600)', color: '#ffffff', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        <Upload size={14} /> Subir Imagen de Firma / Sello...
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                if (event.target?.result) {
+                                  setCompanyInfo({ ...companyInfo, signature_path: event.target.result as string });
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+
+                      {companyInfo.signature_path && (
+                        <button
+                          type="button"
+                          style={{ padding: '8px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                          onClick={() => setCompanyInfo({ ...companyInfo, signature_path: '' })}
+                        >
+                          Quitar Firma
+                        </button>
+                      )}
+                    </div>
+
+                    <input
+                      type="text"
+                      placeholder="https://... URL pública de la imagen de la firma o sello"
+                      value={companyInfo.signature_path}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, signature_path: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: 'var(--bg-surface)',
+                        color: 'var(--text-primary)',
+                        fontSize: '12px',
+                        outline: 'none',
+                        boxSizing: 'border-box',
+                        textOverflow: 'ellipsis'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0, paddingTop: '4px' }}>
+                  Esta firma o sello digital aparecerá automáticamente en el bloque de "Concesionario Autorizado" al imprimir Contratos y Cotizaciones.
                 </p>
               </div>
 

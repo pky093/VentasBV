@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, TrendingUp, DollarSign, Package, ShoppingCart } from 'lucide-react';
 import ExcelJS from 'exceljs';
-import { PageHeader, Button, Card, CardHeader, CardBody, StatCard, Badge } from '../components/ui';
+import { PageHeader, Button, Card, CardHeader, CardBody, StatCard, Badge, SuggestionChip } from '../components/ui';
 import { reportsService, ReportSummary, settingsService } from '../lib/db-services';
 
 export default function ReportsPage() {
@@ -852,29 +852,38 @@ export default function ReportsPage() {
                       const maxTotal = Math.max(...summary.topProducts.map(p => p.total), 1);
                       const barPct = Math.round((item.total / maxTotal) * 100);
                       return (
-                        <div key={i} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800/60 transition-all hover:border-slate-300">
-                          <div className="flex items-center justify-between gap-2 mb-1.5">
-                            <div className="flex items-center gap-2.5">
-                              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                                i === 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' :
-                                i === 1 ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200' :
-                                i === 2 ? 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300' :
-                                'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                              }`}>
+                        <div
+                          key={i}
+                          className="p-3.5 rounded-xl bg-surface border border-color transition-all hover:border-primary-300 dark:hover:border-primary-700 shadow-2xs space-y-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <Badge variant={i === 0 ? 'warning' : 'primary'} className="shrink-0 font-extrabold px-2 py-0.5 text-xs">
                                 #{i + 1}
-                              </span>
-                              <div>
-                                <span className="font-bold text-sm text-primary block leading-tight">{item.name}</span>
-                                <span className="text-xs text-secondary">{item.sales} unidades vendidas</span>
+                              </Badge>
+                              <div className="min-w-0">
+                                <span className="font-bold text-sm text-primary block truncate leading-tight">
+                                  {item.name}
+                                </span>
+                                <div className="mt-1 flex items-center gap-1.5">
+                                  <SuggestionChip label={`${item.sales} unid. vendidas`} size="xs" />
+                                </div>
                               </div>
                             </div>
-                            <div className="text-right">
-                              <span className="font-bold text-sm text-primary block">{formatMoney(item.total)}</span>
-                              <span className="text-[10px] text-secondary">Facturación</span>
+                            <div className="text-right shrink-0">
+                              <span className="font-bold text-sm text-primary block font-mono">
+                                {formatMoney(item.total)}
+                              </span>
+                              <span className="text-[11px] text-secondary font-medium block">
+                                Facturación ({barPct}%)
+                              </span>
                             </div>
                           </div>
-                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
-                            <div className="bg-primary-600 h-full rounded-full transition-all" style={{ width: `${barPct}%` }} />
+                          <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                            <div
+                              className="bg-primary-600 h-full rounded-full transition-all duration-300"
+                              style={{ width: `${barPct}%` }}
+                            />
                           </div>
                         </div>
                       );
@@ -895,24 +904,27 @@ export default function ReportsPage() {
                     </div>
                   ) : (
                     summary.salesByPayment.map((item, i) => (
-                      <div key={i} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800/60 space-y-2">
-                        <div className="flex justify-between items-center text-xs">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: 'var(--accent-500, #10b981)' }}></span>
-                            <span className="font-bold text-sm text-primary">{item.method}</span>
+                      <div
+                        key={i}
+                        className="p-3.5 rounded-xl bg-surface border border-color transition-all hover:border-primary-300 dark:hover:border-primary-700 shadow-2xs space-y-2.5"
+                      >
+                        <div className="flex justify-between items-center gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <SuggestionChip label={item.method} size="sm" />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-primary">{formatMoney(item.amount)}</span>
-                            <Badge variant="secondary">{item.pct}%</Badge>
+                          <div className="flex items-center gap-2.5 shrink-0">
+                            <span className="font-bold text-sm text-primary font-mono">
+                              {formatMoney(item.amount)}
+                            </span>
+                            <Badge variant="primary" className="font-bold">
+                              {item.pct}%
+                            </Badge>
                           </div>
                         </div>
-                        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
+                        <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
                           <div
-                            className="h-full rounded-full transition-all"
-                            style={{
-                              width: `${item.pct}%`,
-                              backgroundColor: 'var(--accent-500, #10b981)'
-                            }}
+                            className="bg-primary-600 h-full rounded-full transition-all duration-300"
+                            style={{ width: `${item.pct}%` }}
                           />
                         </div>
                       </div>

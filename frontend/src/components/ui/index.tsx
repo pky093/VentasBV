@@ -154,6 +154,81 @@ export const Modal: React.FC<{
   );
 };
 
+// Search Input Component
+export interface SearchInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
+  value: string;
+  onChangeValue?: (value: string) => void;
+  onClear?: () => void;
+  placeholder?: string;
+  className?: string;
+  containerClassName?: string;
+  size?: 'sm' | 'md' | 'lg';
+}
+
+export const SearchInput: React.FC<SearchInputProps> = ({
+  value,
+  onChangeValue,
+  onClear,
+  onChange,
+  placeholder = 'Buscar...',
+  className = '',
+  containerClassName = '',
+  size = 'md',
+  style,
+  ...props
+}) => {
+  const isSm = size === 'sm';
+  const isLg = size === 'lg';
+
+  const iconSize = isSm ? 14 : isLg ? 18 : 16;
+  const clearIconSize = isSm ? 12 : isLg ? 16 : 14;
+  const pl = isSm ? '2.25rem' : isLg ? '3rem' : '2.75rem';
+  const pr = isSm ? '2rem' : isLg ? '2.75rem' : '2.5rem';
+  const height = isSm ? '34px' : isLg ? '44px' : '40px';
+
+  return (
+    <div className={`group relative flex items-center w-full ${containerClassName}`}>
+      <Search
+        size={iconSize}
+        style={{ left: isSm ? '10px' : '14px' }}
+        className="absolute top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-rose-600 dark:group-focus-within:text-rose-400 transition-colors pointer-events-none z-10"
+      />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => {
+          onChange?.(e);
+          onChangeValue?.(e.target.value);
+        }}
+        placeholder={placeholder}
+        style={{
+          paddingLeft: pl,
+          paddingRight: pr,
+          height: height,
+          backgroundColor: '#ffffff',
+          ...style,
+        }}
+        className={`w-full rounded-xl border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-medium placeholder:text-slate-400 dark:placeholder:text-slate-500 shadow-sm transition-all duration-200 hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 dark:focus:border-rose-400 text-xs sm:text-sm ${className}`}
+        {...props}
+      />
+      {value && (
+        <button
+          type="button"
+          onClick={() => {
+            onClear?.();
+            onChangeValue?.('');
+          }}
+          style={{ right: isSm ? '8px' : '10px' }}
+          className="absolute top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer active:scale-95 z-10"
+          title="Limpiar búsqueda"
+        >
+          <X size={clearIconSize} />
+        </button>
+      )}
+    </div>
+  );
+};
+
 // Data Table Component
 export interface Column<T> {
   key: string;
@@ -201,35 +276,38 @@ export function DataTable<T extends Record<string, any>>({
   const paginatedData = filteredData.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <div className="card overflow-hidden">
+    <div className="card overflow-hidden border border-color bg-surface shadow-sm rounded-xl">
+      {/* Search & Stats Toolbar */}
       {searchable && (
-        <div className="p-3 sm:p-4 border-b border-color bg-surface flex flex-wrap justify-between items-center gap-3">
-          <div className="header-search w-full sm:w-64">
-            <Search size={16} />
-            <input
-              type="text"
+        <div className="p-3.5 sm:p-4 border-b border-color flex flex-wrap justify-between items-center gap-3 bg-surface">
+          <div className="flex-1 min-w-[200px] max-w-sm">
+            <SearchInput
               placeholder={searchPlaceholder}
               value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
+              onChangeValue={(val) => {
+                setSearchTerm(val);
                 setPage(1);
               }}
             />
           </div>
-          <div className="text-xs text-secondary font-medium flex items-center gap-2">
-            <Filter size={14} />
-            <span>Total: <strong>{filteredData.length}</strong> registros</span>
+          <div className="text-xs text-secondary font-medium flex items-center gap-1.5 shrink-0">
+            <Filter size={13} className="text-secondary/70" />
+            <span>
+              Total: <strong className="text-primary font-bold">{filteredData.length}</strong> registros
+            </span>
           </div>
         </div>
       )}
 
-      {/* Desktop Table View (>=768px) */}
+      {/* Desktop & Tablet Table (>= 768px) */}
       <div className="table-container data-table-desktop-view">
-        <table className="table">
+        <table className="table w-full">
           <thead>
             <tr>
               {columns.map((col) => (
-                <th key={col.key} className={col.headerClassName || ''}>{col.header}</th>
+                <th key={col.key} className={col.headerClassName || ''}>
+                  {col.header}
+                </th>
               ))}
               {actions && <th className="text-right">Acciones</th>}
             </tr>
@@ -245,7 +323,7 @@ export function DataTable<T extends Record<string, any>>({
             ) : paginatedData.length === 0 ? (
               <tr>
                 <td colSpan={columns.length + (actions ? 1 : 0)} className="text-center py-12">
-                  <AlertCircle className="mx-auto text-muted mb-2" size={32} />
+                  <AlertCircle className="mx-auto text-secondary/50 mb-2" size={32} />
                   <span className="text-sm font-medium text-secondary">{emptyMessage}</span>
                 </td>
               </tr>
@@ -265,100 +343,98 @@ export function DataTable<T extends Record<string, any>>({
         </table>
       </div>
 
-      {/* Mobile Card View (<768px) - Premium Independent Cards */}
-      <div className="data-table-mobile-view space-y-3.5 my-3">
+      {/* Mobile Responsive List (< 768px) - Clean, Modern, Zero Horizontal Scroll */}
+      <div className="data-table-mobile-view divide-y divide-color">
         {loading ? (
-          <div className="text-center py-8 bg-surface rounded-2xl border border-color p-6 shadow-sm">
+          <div className="text-center py-10 p-6">
             <Loader2 className="animate-spin mx-auto text-primary mb-2" size={28} />
             <span className="text-sm text-secondary">Cargando información...</span>
           </div>
         ) : paginatedData.length === 0 ? (
-          <div className="text-center py-8 bg-surface rounded-2xl border border-color p-6 shadow-sm">
-            <AlertCircle className="mx-auto text-muted mb-2" size={32} />
+          <div className="text-center py-10 p-6">
+            <AlertCircle className="mx-auto text-secondary/50 mb-2" size={32} />
             <span className="text-sm font-medium text-secondary">{emptyMessage}</span>
           </div>
         ) : (
           paginatedData.map((row, i) => {
-            const mainCol = columns[0];
-            const secondCol =
-              columns.find((c) => c.key === 'customer' || c.key === 'client' || c.key === 'name' || c.key === 'full_name') ||
-              columns[1];
-            const statusCol = columns.find((c) => c.key === 'status' || c.key === 'state');
-            const amountCol = columns.find(
-              (c) => c.key === 'total' || c.key === 'monto' || c.key === 'amount' || c.key === 'price'
-            );
-            const dateCol = columns.find(
-              (c) => c.key === 'date' || c.key === 'createdAt' || c.key === 'fecha'
-            );
-            const extraCol = columns.find(
-              (c) => c.key === 'paymentMethod' || c.key === 'branch' || c.key === 'pago' || c.key === 'category'
-            );
+            // Find status column to position at top-right
+            const statusCol = columns.find((c) => {
+              const k = c.key.toLowerCase();
+              return k.includes('status') || k.includes('estado') || k.includes('state');
+            });
 
-            // Document type inference (e.g., Boleta or Factura for sales)
-            const docCode = String(row[mainCol?.key] || '');
-            const docTypeLabel = docCode.startsWith('F')
-              ? 'FACTURA'
-              : docCode.startsWith('B')
-              ? 'BOLETA'
-              : '';
+            // Primary identifier column
+            const primaryCol = columns[0];
+            const hasHeaderRow = primaryCol && columns.length > 1;
+
+            // Remaining columns for the responsive grid
+            const gridCols = columns.filter((c) => {
+              if (hasHeaderRow && c.key === primaryCol.key) return false;
+              if (statusCol && c.key === statusCol.key) return false;
+              return true;
+            });
 
             return (
               <div
                 key={row.id || i}
-                className="bg-surface rounded-2xl border border-color shadow-sm p-4 sm:p-5 flex flex-col gap-2.5 transition-all hover:border-slate-300 dark:hover:border-slate-700"
+                style={{ padding: '1.5rem 1.75rem' }}
+                className="data-table-mobile-item bg-surface hover:bg-surface-hover transition-colors flex flex-col gap-4"
               >
-                {/* Line 1 & 2: Document Type Label + Code (Left) & Total Amount (Right) */}
-                <div className="flex justify-between items-start gap-2">
-                  <div>
-                    {docTypeLabel && (
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-secondary block mb-0.5">
-                        {docTypeLabel}
+                {/* Row Header: Identifier + Status */}
+                {hasHeaderRow && (
+                  <div className="flex items-center justify-between gap-3 pb-3 border-b border-color">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-secondary block">
+                        {primaryCol.header}
                       </span>
-                    )}
-                    <span className="font-extrabold text-primary text-base tracking-tight">
-                      {mainCol?.render ? mainCol.render(row) : (row[mainCol?.key] ?? '-')}
-                    </span>
-                  </div>
-                  {amountCol && (
-                    <div className="text-right shrink-0">
-                      <span className="font-extrabold text-base text-primary block">
-                        {amountCol.render ? amountCol.render(row) : row[amountCol.key]}
-                      </span>
+                      <div className="font-bold text-sm text-primary truncate mt-0.5">
+                        {primaryCol.render ? primaryCol.render(row) : (row[primaryCol.key] ?? '-')}
+                      </div>
                     </div>
-                  )}
-                </div>
-
-                {/* Line 3: Status Badge */}
-                {statusCol && (
-                  <div className="flex items-center">
-                    {statusCol.render ? statusCol.render(row) : (row[statusCol.key] ?? '-')}
+                    {statusCol && (
+                      <div className="shrink-0">
+                        {statusCol.render ? statusCol.render(row) : (row[statusCol.key] ?? '-')}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* Line 4: Primary Sub-item (Customer Name / Item Description) */}
-                {secondCol && secondCol !== mainCol && (
-                  <div className="font-semibold text-sm text-primary">
-                    {secondCol.render ? secondCol.render(row) : (row[secondCol.key] ?? '-')}
-                  </div>
-                )}
+                {/* Columns Grid: All remaining columns shown with headers */}
+                <div className="grid grid-cols-2 gap-x-6 gap-y-4 pt-1">
+                  {gridCols.map((col) => {
+                    const k = col.key.toLowerCase();
+                    const isFullSpan =
+                      k.includes('customer') ||
+                      k.includes('client') ||
+                      k.includes('buyer') ||
+                      k.includes('name') ||
+                      k.includes('vehicle') ||
+                      k.includes('product') ||
+                      k.includes('description') ||
+                      k.includes('detail') ||
+                      k.includes('notes') ||
+                      k.includes('address') ||
+                      k.includes('brand');
 
-                {/* Line 5: Branch / Payment / Category & Date */}
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-secondary">
-                  {extraCol && (
-                    <span className="font-medium">
-                      {extraCol.render ? extraCol.render(row) : (row[extraCol.key] ?? '-')}
-                    </span>
-                  )}
-                  {dateCol && (
-                    <span>
-                      {dateCol.render ? dateCol.render(row) : row[dateCol.key]}
-                    </span>
-                  )}
+                    return (
+                      <div
+                        key={col.key}
+                        className={`flex flex-col min-w-0 ${isFullSpan ? 'col-span-2' : 'col-span-1'} ${col.className || ''}`}
+                      >
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-secondary/80 block mb-0.5">
+                          {col.header}
+                        </span>
+                        <div className="text-xs sm:text-sm text-primary font-medium">
+                          {col.render ? col.render(row) : (row[col.key] ?? '-')}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
-                {/* Line 6: Action Buttons */}
+                {/* Actions Row */}
                 {actions && (
-                  <div className="flex flex-wrap items-center justify-end gap-2 mt-1 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+                  <div className="pt-3 border-t border-color flex items-center justify-end gap-2 flex-wrap">
                     {actions(row)}
                   </div>
                 )}
@@ -368,10 +444,11 @@ export function DataTable<T extends Record<string, any>>({
         )}
       </div>
 
+      {/* Pagination Footer */}
       {totalPages > 1 && (
-        <div className="px-4 sm:px-6 py-3 border-t border-color bg-surface-hover flex flex-col sm:flex-row gap-2 justify-between items-center">
+        <div className="px-4 py-3 border-t border-color bg-surface flex flex-col sm:flex-row gap-2 justify-between items-center">
           <span className="text-xs text-secondary font-medium">
-            Página <strong>{page}</strong> de <strong>{totalPages}</strong>
+            Página <strong>{page}</strong> de <strong>{totalPages}</strong> ({filteredData.length} registros)
           </span>
           <div className="flex gap-2 w-full sm:w-auto justify-between sm:justify-end">
             <button
@@ -460,3 +537,51 @@ export function Field({
     </div>
   );
 }
+
+// Suggestion & Stock Chip Component (Matches Badge Pill Style)
+export interface SuggestionChipProps {
+  label: string;
+  count?: number | string;
+  selected?: boolean;
+  onClick?: () => void;
+  icon?: React.ReactNode;
+  className?: string;
+  size?: 'xs' | 'sm';
+}
+
+export const SuggestionChip: React.FC<SuggestionChipProps> = ({
+  label,
+  count,
+  selected = false,
+  onClick,
+  icon,
+  className = '',
+  size = 'xs',
+}) => {
+  const isClickable = Boolean(onClick);
+
+  return (
+    <span
+      onClick={onClick}
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      className={`badge badge-primary ${
+        isClickable ? 'cursor-pointer hover:opacity-90 active:scale-95 transition-transform' : ''
+      } ${
+        selected ? 'ring-2 ring-primary-500 font-extrabold shadow-xs' : ''
+      } ${className}`}
+      style={{
+        padding: size === 'sm' ? '0.35rem 0.85rem' : '0.25rem 0.75rem',
+        fontSize: size === 'sm' ? '0.8125rem' : '0.75rem',
+      }}
+    >
+      {icon && <span className="inline-flex items-center mr-1">{icon}</span>}
+      <span>{label}</span>
+      {count !== undefined && (
+        <span className="font-mono ml-1 font-bold">
+          {count}
+        </span>
+      )}
+    </span>
+  );
+};

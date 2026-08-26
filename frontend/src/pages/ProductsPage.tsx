@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search, ArrowRightLeft, Building2 } from 'lucide-react';
-import { PageHeader, Button, Badge, Modal, DataTable, Tabs } from '../components/ui';
-import { productsService, catalogService, Product, Category, Brand } from '../lib/db-services';
+import { PageHeader, Button, Badge, Modal, DataTable, Tabs, SuggestionChip } from '../components/ui';
+import { productsService, catalogService, Product, Category, Brand, Model } from '../lib/db-services';
 import { useBranch } from '../context/BranchContext';
 import { TransferModal } from '../components/inventory/TransferModal';
 import Swal from 'sweetalert2';
@@ -11,6 +11,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [models, setModels] = useState<Model[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Partial<Product> | null>(null);
@@ -44,10 +45,16 @@ export default function ProductsPage() {
 
     try {
       const { queryMarketPrices } = await import('../lib/gemini-market');
+      const searchTerms = [
+        selectedProduct.brand,
+        selectedProduct.model,
+        selectedProduct.name,
+      ].filter(Boolean).join(' ');
+
       const result = await queryMarketPrices(
         selectedProduct.category || '',
         selectedProduct.brand || '',
-        selectedProduct.name || ''
+        searchTerms || selectedProduct.name || ''
       );
 
       if (result.error) {
@@ -80,14 +87,16 @@ export default function ProductsPage() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [prods, cats, brs] = await Promise.all([
+      const [prods, cats, brs, mdls] = await Promise.all([
         productsService.getProducts(),
         catalogService.getCategories(),
         catalogService.getBrands(),
+        catalogService.getModels(),
       ]);
       setProducts(prods);
       setCategories(cats);
       setBrands(brs);
+      setModels(mdls);
     } catch (err) {
       console.error('Error loading products from Supabase:', err);
     } finally {
@@ -113,6 +122,8 @@ export default function ProductsPage() {
       categoryId: defaultCatId,
       brand: defaultBrand,
       brandId: defaultBrandId,
+      model: '',
+      modelId: undefined,
       price: 0,
       cost: 0,
       stock: 10,
@@ -214,17 +225,23 @@ export default function ProductsPage() {
     try {
       const matchedCat = categories.find((c) => c.name === selectedProduct.category) || categories[0];
       const matchedBrand = brands.find((b) => b.name === selectedProduct.brand) || brands[0];
+      const matchedModel = models.find((m) => m.name === selectedProduct.model || m.id === selectedProduct.modelId);
 
       const finalImagePath = selectedProduct.imagePath || imageUrlInput || '';
 
       if (selectedProduct.id) {
         // Edit existing
-        const success = await productsService.updateProduct(selectedProduct.id, {
-          ...selectedProduct,
-          categoryId: matchedCat?.id,
-          brandId: matchedBrand?.id,
-          imagePath: finalImagePath,
-        });
+        const success = await productsService.updateProduct(
+          selectedProduct.id,
+          {
+            ...selectedProduct,
+            categoryId: matchedCat?.id,
+            brandId: matchedBrand?.id,
+            modelId: matchedModel?.id || selectedProduct.modelId || undefined,
+            imagePath: finalImagePath,
+          },
+          activeBranchId
+        );
         if (success) {
           await loadData();
           setIsModalOpen(false);
@@ -234,21 +251,26 @@ export default function ProductsPage() {
         }
       } else {
         // Create new
-        const created = await productsService.createProduct({
-          code: selectedProduct.code || `PROD-${Date.now()}`,
-          sku: selectedProduct.sku || selectedProduct.code || `PROD-${Date.now()}`,
-          name: selectedProduct.name,
-          category: matchedCat?.name || selectedProduct.category || '',
-          categoryId: matchedCat?.id,
-          brand: matchedBrand?.name || selectedProduct.brand || '',
-          brandId: matchedBrand?.id,
-          price: Number(selectedProduct.price) || 0,
-          cost: Number(selectedProduct.cost) || 0,
-          stock: Number(selectedProduct.stock) || 0,
-          minStock: Number(selectedProduct.minStock) || 5,
-          status: selectedProduct.status || 'ACTIVE',
-          imagePath: finalImagePath,
-        });
+        const created = await productsService.createProduct(
+          {
+            code: selectedProduct.code || `PROD-${Date.now()}`,
+            sku: selectedProduct.sku || selectedProduct.code || `PROD-${Date.now()}`,
+            name: selectedProduct.name,
+            category: matchedCat?.name || selectedProduct.category || '',
+            categoryId: matchedCat?.id,
+            brand: matchedBrand?.name || selectedProduct.brand || '',
+            brandId: matchedBrand?.id,
+            model: matchedModel?.name || selectedProduct.model || '',
+            modelId: matchedModel?.id || selectedProduct.modelId || undefined,
+            price: Number(selectedProduct.price) || 0,
+            cost: Number(selectedProduct.cost) || 0,
+            stock: Number(selectedProduct.stock) || 0,
+            minStock: Number(selectedProduct.minStock) || 5,
+            status: selectedProduct.status || 'ACTIVE',
+            imagePath: finalImagePath,
+          },
+          activeBranchId
+        );
 
         if (created) {
           await loadData();
@@ -295,8 +317,14 @@ export default function ProductsPage() {
           )}
           <div>
             <div className="font-bold text-primary text-sm">{row.name}</div>
-            <div className="text-xs text-secondary">
-              Marca: <strong>{row.brand}</strong>
+            <div className="text-xs text-secondary flex items-center gap-1.5 mt-0.5">
+              <span>Marca: <strong className="text-primary font-medium">{row.brand || 'Sin marca'}</strong></span>
+              {row.model && (
+                <>
+                  <span>•</span>
+                  <span>Modelo: <strong className="text-primary font-medium">{row.model}</strong></span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -342,18 +370,14 @@ export default function ProductsPage() {
 
             {/* Other branches breakdown preview */}
             {row.branchStocks && row.branchStocks.length > 0 && (
-              <div className="text-[11px] text-secondary flex flex-wrap gap-1 items-center">
+              <div className="flex flex-wrap gap-1.5 items-center pt-1">
                 {row.branchStocks.map((bs) => (
-                  <span
+                  <SuggestionChip
                     key={bs.branchId}
-                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${
-                      bs.branchId === activeBranchId
-                        ? 'bg-primary-500/10 text-primary-600 dark:text-primary-400 font-bold border border-primary-500/20'
-                        : 'bg-surface border border-color opacity-80'
-                    }`}
-                  >
-                    {bs.branchName}: {bs.stock} u.
-                  </span>
+                    label={bs.branchName}
+                    count={`${bs.stock} u.`}
+                    selected={bs.branchId === activeBranchId}
+                  />
                 ))}
               </div>
             )}
@@ -608,6 +632,8 @@ export default function ProductsPage() {
                         categoryId: catObj?.id,
                         brand: newBrandName,
                         brandId: newBrandId,
+                        model: '',
+                        modelId: undefined,
                       });
                     }}
                   >
@@ -631,9 +657,12 @@ export default function ProductsPage() {
                         ...selectedProduct,
                         brand: e.target.value,
                         brandId: bObj?.id,
+                        model: '',
+                        modelId: undefined,
                       });
                     }}
                   >
+                    <option value="">-- Seleccionar Marca --</option>
                     {(() => {
                       const currentCatObj = categories.find(c => c.name === selectedProduct?.category);
                       const filteredBrands = currentCatObj
@@ -645,13 +674,57 @@ export default function ProductsPage() {
                           )
                         : brands;
 
-                      if (filteredBrands.length === 0) {
-                        return <option value="">Sin marcas vinculadas</option>;
-                      }
-
                       return filteredBrands.map((b) => (
                         <option key={b.id} value={b.name}>
                           {b.name}
+                        </option>
+                      ));
+                    })()}
+                  </select>
+                </div>
+
+                {/* MODELO (Filtrado por Marca Seleccionada) */}
+                <div className="form-group">
+                  <label className="form-label font-bold">Modelo</label>
+                  <select
+                    className="form-control"
+                    value={selectedProduct?.model || ''}
+                    onChange={(e) => {
+                      const mObj = models.find(m => m.name === e.target.value);
+                      setSelectedProduct({
+                        ...selectedProduct,
+                        model: e.target.value,
+                        modelId: mObj?.id,
+                      });
+                    }}
+                    disabled={!selectedProduct?.brand}
+                  >
+                    <option value="">{!selectedProduct?.brand ? 'Elija primero una marca' : '-- Sin modelo / Opcional --'}</option>
+                    {(() => {
+                      const currentBrandObj = brands.find(b => b.name === selectedProduct?.brand);
+                      const filteredModels = currentBrandObj
+                        ? models.filter(m => 
+                            (m.brandId && m.brandId === currentBrandObj.id) || 
+                            (m.brand_id && m.brand_id === currentBrandObj.id) || 
+                            (m.brandName && m.brandName.toUpperCase() === currentBrandObj.name.toUpperCase()) || 
+                            (m.brand_name && m.brand_name.toUpperCase() === currentBrandObj.name.toUpperCase())
+                          )
+                        : models;
+
+                      if (selectedProduct?.model && !filteredModels.some(m => m.name === selectedProduct.model)) {
+                        return (
+                          <>
+                            <option value={selectedProduct.model}>{selectedProduct.model}</option>
+                            {filteredModels.map(m => (
+                              <option key={m.id} value={m.name}>{m.name}</option>
+                            ))}
+                          </>
+                        );
+                      }
+
+                      return filteredModels.map((m) => (
+                        <option key={m.id} value={m.name}>
+                          {m.name}
                         </option>
                       ));
                     })()}

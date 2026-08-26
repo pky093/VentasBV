@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Shield, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Shield, Edit2, Trash2, Store, Check, AlertCircle } from 'lucide-react';
 import { PageHeader, Button, Badge, Modal, DataTable } from '../components/ui';
-import { usersService, UserMember } from '../lib/db-services';
+import { usersService, UserMember, rolesService, branchesService, Branch } from '../lib/db-services';
 import Swal from 'sweetalert2';
 
 interface UserRecord {
@@ -10,6 +10,7 @@ interface UserRecord {
   full_name: string;
   email: string;
   role: string;
+  role_id?: string;
   branches: string[];
   status: 'ACTIVE' | 'DISABLED';
   password?: string;
@@ -17,67 +18,134 @@ interface UserRecord {
 
 export default function UsersPage() {
   const [users, setUsers] = useState<UserRecord[]>([]);
+  const [availableRoles, setAvailableRoles] = useState<{ id: string; name: string }[]>([]);
+  const [availableBranches, setAvailableBranches] = useState<Branch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<Partial<UserRecord> | null>(null);
 
-  const loadUsers = async () => {
+  const loadData = async () => {
     setIsLoading(true);
     try {
-      const data: UserMember[] = await usersService.getUsers();
+      const [membersData, rolesData, branchesData] = await Promise.all([
+        usersService.getUsers(),
+        rolesService.getRoles(),
+        branchesService.getBranches(),
+      ]);
+
+      setAvailableRoles(rolesData.map((r: any) => ({ id: r.id, name: r.name })));
+      setAvailableBranches(branchesData);
+
       setUsers(
-        data.map((u) => ({
+        membersData.map((u: any) => ({
           id: u.id,
-          username: u.email.split('@')[0] || u.name.toLowerCase().replace(/\s+/g, ''),
+          username: u.username || (u.email ? u.email.split('@')[0] : u.name.toLowerCase().replace(/\s+/g, '')),
           full_name: u.name,
           email: u.email || 'usuario@ventasbv.com',
           role: u.role || 'Vendedor',
-          branches: [u.branch || 'Sede Principal'],
+          role_id: u.roleId,
+          password: u.password || '',
+          branches: u.branches && u.branches.length > 0 ? u.branches : [u.branch || 'Sede Principal'],
           status: u.status === 'DISABLED' ? 'DISABLED' : 'ACTIVE',
         }))
       );
     } catch (err) {
-      console.error('Error loading users:', err);
+      console.error('Error loading users, roles, or branches:', err);
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadUsers();
+    loadData();
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedUser?.full_name) return;
+    if (!selectedUser?.full_name) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Campo requerido',
+        text: 'Por favor, ingresa el nombre completo del usuario.',
+      });
+      return;
+    }
 
     setIsLoading(true);
     try {
+      const roleName = selectedUser.role || (availableRoles[0]?.name ?? 'Vendedor');
+      const selectedRoleObj = availableRoles.find((r) => r.name === roleName);
+
       if (selectedUser.id) {
         const success = await usersService.updateUser(selectedUser.id, {
           name: selectedUser.full_name,
+          username: selectedUser.username,
           email: selectedUser.email,
-          role: selectedUser.role,
-        });
+          role: roleName,
+          roleId: selectedRoleObj?.id,
+          password: selectedUser.password || undefined,
+          status: selectedUser.status || 'ACTIVE',
+          branch: selectedUser.branches?.[0] || 'Sede Principal',
+          branches: selectedUser.branches || ['Sede Principal'],
+        } as any);
+
         if (success) {
-          await loadUsers();
+          Swal.fire({
+            icon: 'success',
+            title: 'Usuario actualizado',
+            text: `El usuario "${selectedUser.full_name}" ha sido actualizado correctamente.`,
+            timer: 2000,
+            showConfirmButton: false,
+          });
+          await loadData();
+          setIsModalOpen(false);
+          setSelectedUser(null);
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'Error al actualizar',
+            text: 'No se pudo actualizar el usuario en la base de datos.',
+          });
         }
       } else {
         const newUser = await usersService.createUser({
           name: selectedUser.full_name,
+          username: selectedUser.username || selectedUser.email?.split('@')[0] || 'usuario',
           email: selectedUser.email || `${selectedUser.username || 'user'}@ventasbv.com`,
-          role: selectedUser.role || 'Vendedor',
-          branch: 'Sede Principal',
-          status: 'ACTIVE',
-        });
+          role: roleName,
+          roleId: selectedRoleObj?.id,
+          password: selectedUser.password || '123',
+          branch: selectedUser.branches?.[0] || 'Sede Principal',
+          branches: selectedUser.branches || ['Sede Principal'],
+          status: selectedUser.status || 'ACTIVE',
+        } as any);
+
         if (newUser) {
-          await loadUsers();
+          Swal.fire({
+            icon: 'success',
+            title: 'Usuario creado',
+            text: `El usuario "${selectedUser.full_name}" ha sido creado con éxito.`,
+            timer: 2000,
+            showConfirmButton: false,
+          });
+          await loadData();
+          setIsModalOpen(false);
+          setSelectedUser(null);
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'Error al crear usuario',
+            text: 'Hubo un inconveniente al guardar el usuario en la base de datos.',
+          });
         }
       }
-      setIsModalOpen(false);
-      setSelectedUser(null);
     } catch (err) {
       console.error('Error saving user:', err);
+      Swal.fire({
+        icon: 'error',
+        title: 'Error inesperado',
+        text: 'Ocurrió un error al procesar la solicitud.',
+      });
     } finally {
       setIsLoading(false);
     }
@@ -155,7 +223,16 @@ export default function UsersPage() {
         title="Gestión de Usuarios"
         subtitle="Administra los miembros del equipo y sus permisos de acceso en Supabase"
         action={
-          <Button onClick={() => { setSelectedUser({}); setIsModalOpen(true); }}>
+          <Button
+            onClick={() => {
+              setSelectedUser({
+                role: availableRoles[0]?.name || 'Vendedor',
+                branches: [availableBranches[0]?.name || 'Sede Principal'],
+                status: 'ACTIVE',
+              });
+              setIsModalOpen(true);
+            }}
+          >
             <Plus size={18} className="mr-1.5 inline" /> Nuevo Usuario
           </Button>
         }
@@ -173,7 +250,10 @@ export default function UsersPage() {
               <button
                 className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors border-0 bg-transparent cursor-pointer"
                 title="Editar"
-                onClick={() => { setSelectedUser(row); setIsModalOpen(true); }}
+                onClick={() => {
+                  setSelectedUser(row);
+                  setIsModalOpen(true);
+                }}
               >
                 <Edit2 size={16} />
               </button>
@@ -197,14 +277,20 @@ export default function UsersPage() {
                       confirmButton: 'btn btn-danger font-semibold px-4 py-2 text-sm',
                       cancelButton: 'btn btn-secondary font-semibold px-4 py-2 text-sm',
                     },
-                    buttonsStyling: true,
                   }).then(async (result) => {
                     if (result.isConfirmed) {
                       setIsLoading(true);
                       try {
                         const success = await usersService.deleteUser(row.id);
                         if (success) {
-                          await loadUsers();
+                          Swal.fire({
+                            icon: 'success',
+                            title: 'Usuario eliminado',
+                            text: 'El usuario fue eliminado correctamente.',
+                            timer: 1500,
+                            showConfirmButton: false,
+                          });
+                          await loadData();
                         }
                       } catch (err) {
                         console.error('Error deleting user:', err);
@@ -229,7 +315,7 @@ export default function UsersPage() {
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <label className="form-label">Nombre Completo</label>
+            <label className="form-label font-bold text-xs">Nombre Completo</label>
             <input
               type="text"
               className="form-control"
@@ -242,7 +328,7 @@ export default function UsersPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="form-label">Usuario</label>
+              <label className="form-label font-bold text-xs">Usuario</label>
               <input
                 type="text"
                 className="form-control"
@@ -253,7 +339,7 @@ export default function UsersPage() {
               />
             </div>
             <div>
-              <label className="form-label">Email</label>
+              <label className="form-label font-bold text-xs">Email</label>
               <input
                 type="email"
                 className="form-control"
@@ -265,38 +351,71 @@ export default function UsersPage() {
             </div>
           </div>
 
-          <div>
-            <label className="form-label font-bold text-xs">Rol Asignado</label>
-            <select
-              className="form-control text-xs font-semibold"
-              value={selectedUser?.role || 'Vendedor'}
-              onChange={(e) => setSelectedUser({ ...selectedUser, role: e.target.value })}
-            >
-              <option value="Super Admin">Super Admin</option>
-              <option value="Administrador Sede">Administrador Sede</option>
-              <option value="Cajero POS">Cajero POS</option>
-              <option value="Vendedor">Vendedor</option>
-            </select>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label font-bold text-xs">Rol de Sistema</label>
+              <select
+                className="form-control text-xs font-semibold"
+                value={selectedUser?.role || (availableRoles[0]?.name ?? 'Vendedor')}
+                onChange={(e) => setSelectedUser({ ...selectedUser, role: e.target.value })}
+              >
+                {availableRoles.map((r) => (
+                  <option key={r.id} value={r.name}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="form-label font-bold text-xs">Sucursal Principal</label>
+              <select
+                className="form-control text-xs font-semibold"
+                value={selectedUser?.branches?.[0] || availableBranches[0]?.name || 'Sede Principal'}
+                onChange={(e) => setSelectedUser({ ...selectedUser, branches: [e.target.value] })}
+              >
+                {availableBranches.map((b) => (
+                  <option key={b.id} value={b.name}>
+                    {b.name}
+                  </option>
+                ))}
+                {availableBranches.length === 0 && <option value="Sede Principal">Sede Principal</option>}
+              </select>
+            </div>
           </div>
 
-          <div>
-            <label className="form-label font-bold text-xs">Contraseña de Acceso</label>
-            <input
-              type="password"
-              className="form-control text-xs font-mono"
-              placeholder={selectedUser?.id ? '•••••••• (Dejar en blanco para mantener)' : 'Ingresa la contraseña del usuario'}
-              value={selectedUser?.password || ''}
-              onChange={(e) => setSelectedUser({ ...selectedUser, password: e.target.value })}
-              required={!selectedUser?.id}
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label font-bold text-xs">Estado</label>
+              <select
+                className="form-control text-xs font-semibold"
+                value={selectedUser?.status || 'ACTIVE'}
+                onChange={(e) => setSelectedUser({ ...selectedUser, status: e.target.value as any })}
+              >
+                <option value="ACTIVE">Activo</option>
+                <option value="DISABLED">Deshabilitado</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="form-label font-bold text-xs">Contraseña de Acceso</label>
+              <input
+                type="password"
+                className="form-control text-xs font-mono"
+                placeholder={selectedUser?.id ? '•••••••• (Opcional)' : 'Contraseña de acceso'}
+                value={selectedUser?.password || ''}
+                onChange={(e) => setSelectedUser({ ...selectedUser, password: e.target.value })}
+                required={!selectedUser?.id}
+              />
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4">
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
             <Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
             <Button variant="primary" type="submit">
-              Guardar
+              {selectedUser?.id ? 'Actualizar Usuario' : 'Guardar Usuario'}
             </Button>
           </div>
         </form>

@@ -7,46 +7,49 @@ import {
   LayoutDashboard, Store, Users, Shield, BookOpen, Package, 
   Archive, Truck, ShoppingCart, Users2, DollarSign, MonitorSmartphone, 
   CreditCard, FileText, BarChart3, Activity, Bell, Settings,
-  Sun, Moon, Search, ChevronDown, ArrowRight, Receipt, Menu, LogOut, User
+  Sun, Moon, Search, ChevronDown, ArrowRight, Receipt, Menu, LogOut, User,
+  FileCheck
 } from 'lucide-react';
+import { usePermissions } from '../context/PermissionContext';
 
 const MENU_ITEMS = [
   { section: 'PRINCIPAL', items: [
-    { label: 'Dashboard', icon: LayoutDashboard, path: '/app' },
-    { label: 'Punto de Venta', icon: MonitorSmartphone, path: '/app/pos' }
+    { label: 'Dashboard', icon: LayoutDashboard, path: '/app', perm: 'dashboard.read' },
+    { label: 'Punto de Venta', icon: MonitorSmartphone, path: '/app/pos', perm: 'sales.create' }
   ]},
   { section: 'VENTAS', items: [
-    { label: 'Clientes', icon: Users2, path: '/app/customers' },
-    { label: 'Historial de Ventas', icon: DollarSign, path: '/app/sales' },
-    { label: 'Caja Chica / Registro', icon: CreditCard, path: '/app/cash' }
+    { label: 'Cotizaciones & Contratos', icon: FileCheck, path: '/app/contracts', perm: 'contracts.read' },
+    { label: 'Clientes', icon: Users2, path: '/app/customers', perm: 'customers.read' },
+    { label: 'Historial de Ventas', icon: DollarSign, path: '/app/sales', perm: 'sales.read' },
+    { label: 'Caja Chica / Registro', icon: CreditCard, path: '/app/cash', perm: 'cash.read' }
   ]},
   { section: 'CATÁLOGO', items: [
-    { label: 'Productos', icon: Package, path: '/app/products' },
-    { label: 'Categorías & Atributos', icon: BookOpen, path: '/app/catalog' }
+    { label: 'Productos', icon: Package, path: '/app/products', perm: 'products.read' },
+    { label: 'Categorías & Atributos', icon: BookOpen, path: '/app/catalog', perm: 'catalog.read' }
   ]},
   { section: 'OPERACIONES', items: [
-    { label: 'Inventario / Kardex', icon: Archive, path: '/app/inventory' },
-    { label: 'Gastos Operativos', icon: Receipt, path: '/app/expenses' },
-    { label: 'Ordenes de Compra', icon: ShoppingCart, path: '/app/purchases' },
-    { label: 'Proveedores', icon: Truck, path: '/app/suppliers' }
+    { label: 'Inventario / Kardex', icon: Archive, path: '/app/inventory', perm: 'inventory.read' },
+    { label: 'Gastos Operativos', icon: Receipt, path: '/app/expenses', perm: 'expenses.read' },
+    { label: 'Ordenes de Compra', icon: ShoppingCart, path: '/app/purchases', perm: 'purchases.read' },
+    { label: 'Proveedores', icon: Truck, path: '/app/suppliers', perm: 'suppliers.read' }
   ]},
   { section: 'COMPROBANTES', items: [
-    { label: 'Facturación / Boletas', icon: FileText, path: '/app/billing' },
-    { label: 'Reportes & BI', icon: BarChart3, path: '/app/reports' }
+    { label: 'Facturación / Boletas', icon: FileText, path: '/app/billing', perm: 'billing.read' },
+    { label: 'Reportes & BI', icon: BarChart3, path: '/app/reports', perm: 'reports.read' }
   ]},
   { section: 'GESTIÓN', items: [
-    { label: 'Usuarios', icon: Users, path: '/app/users' },
-    { label: 'Roles y Permisos', icon: Shield, path: '/app/roles' },
-    { label: 'Sucursales', icon: Store, path: '/app/branches' }
+    { label: 'Usuarios', icon: Users, path: '/app/users', perm: 'users.read' },
+    { label: 'Roles y Permisos', icon: Shield, path: '/app/roles', perm: 'roles.manage' },
+    { label: 'Sucursales', icon: Store, path: '/app/branches', perm: 'branches.manage' }
   ]},
   { section: 'SISTEMA', items: [
-    { label: 'Notificaciones', icon: Bell, path: '/app/notifications' },
-    { label: 'Auditoría', icon: Activity, path: '/app/audit' },
-    { label: 'Configuración', icon: Settings, path: '/app/settings' }
+    { label: 'Notificaciones', icon: Bell, path: '/app/notifications', perm: 'notifications.read' },
+    { label: 'Auditoría', icon: Activity, path: '/app/audit', perm: 'audit.read' },
+    { label: 'Configuración', icon: Settings, path: '/app/settings', perm: 'settings.manage' }
   ]}
 ];
 
-import { settingsService } from '../lib/db-services';
+import { settingsService, notificationsService } from '../lib/db-services';
 
 import { applyCustomTheme } from '../lib/tenant-theme';
 
@@ -56,10 +59,17 @@ export default function AppLayout() {
   const { branches, activeBranchId, activeBranch, setActiveBranchId, isSuperAdmin } = useBranch();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem('theme') as 'light' | 'dark') || 'light';
-  });
   const [tenantInfo, setTenantInfo] = useState<{ name?: string; trade_name?: string; logo_path?: string }>({});
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+
+  const loadNotificationsCount = async () => {
+    try {
+      const list = await notificationsService.getNotifications();
+      setUnreadNotificationsCount(list.filter(n => !n.read).length);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const loadTenantData = async () => {
     try {
@@ -89,9 +99,12 @@ export default function AppLayout() {
 
   useEffect(() => {
     loadTenantData();
+    loadNotificationsCount();
     window.addEventListener('tenant_info_updated', loadTenantData);
+    window.addEventListener('notifications_updated', loadNotificationsCount);
     return () => {
       window.removeEventListener('tenant_info_updated', loadTenantData);
+      window.removeEventListener('notifications_updated', loadNotificationsCount);
     };
   }, []);
 
@@ -119,18 +132,47 @@ export default function AppLayout() {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  const authUser = localStorage.getItem('auth_user') || 'Admin Principal';
-  const tenantRuc = localStorage.getItem('tenant_ruc') || '20998877665';
+  const [authUser, setAuthUser] = useState(() => localStorage.getItem('auth_user') || 'Admin Principal');
+  const [tenantRuc, setTenantRuc] = useState(() => localStorage.getItem('tenant_ruc') || '20998877665');
+
+  useEffect(() => {
+    const handleProfileUpdate = () => {
+      setAuthUser(localStorage.getItem('auth_user') || 'Admin Principal');
+      setTenantRuc(localStorage.getItem('tenant_ruc') || '20998877665');
+    };
+    window.addEventListener('user_profile_updated', handleProfileUpdate);
+    return () => {
+      window.removeEventListener('user_profile_updated', handleProfileUpdate);
+    };
+  }, []);
+
 
   const handleLogout = () => {
     localStorage.removeItem('is_logged_in');
     localStorage.removeItem('auth_user');
+    localStorage.removeItem('auth_username');
+    localStorage.removeItem('auth_email');
+    localStorage.removeItem('auth_user_id');
+    localStorage.removeItem('auth_role');
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('auth_ruc');
+    localStorage.removeItem('tenant_id');
+    localStorage.removeItem('tenant_name');
     localStorage.removeItem('tenant_ruc');
+    localStorage.removeItem('active_branch_id');
+    localStorage.removeItem('active_branch_name');
     localStorage.removeItem('is_platform_superadmin');
     navigate('/login');
   };
 
-  const allModules = MENU_ITEMS.flatMap(group => group.items);
+  const { hasPermission, userRole } = usePermissions();
+
+  const visibleMenuGroups = MENU_ITEMS.map(group => ({
+    ...group,
+    items: group.items.filter(item => !item.perm || hasPermission(item.perm))
+  })).filter(group => group.items.length > 0);
+
+  const allModules = visibleMenuGroups.flatMap(group => group.items);
   const filteredModules = globalSearch.trim()
     ? allModules.filter(m => m.label.toLowerCase().includes(globalSearch.toLowerCase()))
     : [];
@@ -156,17 +198,10 @@ export default function AppLayout() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
-  }, [theme]);
-
-  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.setItem('theme', 'light');
     loadSavedTheme();
   }, []);
-
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  };
 
   const toggleSection = (sectionName: string) => {
     setExpandedSections(prev => ({
@@ -243,7 +278,7 @@ export default function AppLayout() {
         </div>
 
         <nav className="sidebar-nav">
-          {MENU_ITEMS.map((group, i) => {
+          {visibleMenuGroups.map((group, i) => {
             const isSectionExpanded = collapsed || !!expandedSections[group.section];
             return (
               <div key={i} className="sidebar-nav-group">
@@ -311,22 +346,28 @@ export default function AppLayout() {
             {/* Branch Selector on Mobile/Tablet */}
             <div className="flex md:hidden items-center gap-1.5 px-1 py-1 text-xs">
               <Store size={14} className="text-secondary shrink-0" />
-              <select
-                value={activeBranchId}
-                onChange={(e) => setActiveBranchId(e.target.value)}
-                className="bg-transparent font-bold text-primary border-0 p-0 pr-3 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors max-w-[120px] truncate"
-              >
-                {isSuperAdmin && (
-                  <option value="ALL" className="bg-surface text-primary">
-                    Todas las Sedes
-                  </option>
-                )}
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id} className="bg-surface text-primary">
-                    {b.name}
-                  </option>
-                ))}
-              </select>
+              {isSuperAdmin || branches.length > 1 ? (
+                <select
+                  value={activeBranchId}
+                  onChange={(e) => setActiveBranchId(e.target.value)}
+                  className="bg-transparent font-bold text-primary border-0 p-0 pr-3 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors max-w-[120px] truncate"
+                >
+                  {isSuperAdmin && (
+                    <option value="ALL" className="bg-surface text-primary">
+                      Todas las Sedes
+                    </option>
+                  )}
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id} className="bg-surface text-primary">
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="font-bold text-primary text-xs truncate max-w-[120px]">
+                  {branches[0]?.name || activeBranch?.name || 'Sede Principal'}
+                </span>
+              )}
             </div>
           </div>
 
@@ -336,22 +377,28 @@ export default function AppLayout() {
               <Store size={15} className="text-secondary shrink-0" />
               <div className="flex flex-col">
                 <span className="text-[10px] text-secondary font-semibold uppercase tracking-wider">Sucursal Activa</span>
-                <select
-                  value={activeBranchId}
-                  onChange={(e) => setActiveBranchId(e.target.value)}
-                  className="bg-transparent font-bold text-primary border-0 p-0 pr-4 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors"
-                >
-                  {isSuperAdmin && (
-                    <option value="ALL" className="bg-surface text-primary">
-                      Todas las Sedes (Super Admin)
-                    </option>
-                  )}
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id} className="bg-surface text-primary">
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
+                {isSuperAdmin || branches.length > 1 ? (
+                  <select
+                    value={activeBranchId}
+                    onChange={(e) => setActiveBranchId(e.target.value)}
+                    className="bg-transparent font-bold text-primary border-0 p-0 pr-4 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors"
+                  >
+                    {isSuperAdmin && (
+                      <option value="ALL" className="bg-surface text-primary">
+                        Todas las Sedes (Super Admin)
+                      </option>
+                    )}
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id} className="bg-surface text-primary">
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="font-bold text-primary text-xs">
+                    {branches[0]?.name || activeBranch?.name || 'Sede Principal'}
+                  </span>
+                )}
               </div>
             </div>
             {/* Functional Header Search Bar */}
@@ -393,17 +440,13 @@ export default function AppLayout() {
               )}
             </div>
 
-            <button 
-              className="icon-btn" 
-              onClick={toggleTheme} 
-              title={theme === 'light' ? 'Modo Oscuro' : 'Modo Claro'}
-            >
-              {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-            </button>
-
-            <Link to="/app/notifications" className="icon-btn" title="Notificaciones">
+            <Link to="/app/notifications" className="icon-btn relative" title="Notificaciones">
               <Bell size={18} />
-              <span className="icon-btn-badge" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-rose-600 text-white font-extrabold text-[10px] rounded-full flex items-center justify-center px-1 shadow-sm animate-pulse">
+                  {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+                </span>
+              )}
             </Link>
 
             {/* User Profile Pill with Dropdown */}
@@ -416,7 +459,7 @@ export default function AppLayout() {
                 <div className="user-avatar">{authUser.charAt(0).toUpperCase()}</div>
                 <div className="user-profile-info hidden sm:flex">
                   <span className="user-profile-name">{authUser}</span>
-                  <span className="user-profile-role">Super Admin</span>
+                  <span className="user-profile-role">{userRole || 'Vendedor'}</span>
                 </div>
                 <ChevronDown size={14} className="text-secondary ml-1.5 opacity-70 shrink-0" />
               </div>
@@ -424,6 +467,7 @@ export default function AppLayout() {
               {userMenuOpen && (
                 <UserProfileMenu
                   authUser={authUser}
+                  userRole={userRole}
                   tenantRuc={tenantRuc}
                   onClose={() => setUserMenuOpen(false)}
                   onLogout={handleLogout}

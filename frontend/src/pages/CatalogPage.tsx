@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, Tag, Edit2, Trash2, Link as LinkIcon } from 'lucide-react';
+import { Plus, Folder, Tag, Layers, Edit2, Trash2, Link as LinkIcon } from 'lucide-react';
 import { PageHeader, Button, Tabs, DataTable, Modal, Badge } from '../components/ui';
-import { catalogService, Category, Brand } from '../lib/db-services';
+import { catalogService, Category, Brand, Model } from '../lib/db-services';
 import Swal from 'sweetalert2';
 
 export default function CatalogPage() {
@@ -9,20 +9,23 @@ export default function CatalogPage() {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [models, setModels] = useState<Model[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<{ id?: string; name: string; categoryId?: string } | null>(null);
+  const [selectedItem, setSelectedItem] = useState<{ id?: string; name: string; categoryId?: string; brandId?: string } | null>(null);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [cats, brs] = await Promise.all([
+      const [cats, brs, mdls] = await Promise.all([
         catalogService.getCategories(),
         catalogService.getBrands(),
+        catalogService.getModels(),
       ]);
       setCategories(cats);
       setBrands(brs);
+      setModels(mdls);
     } catch (err) {
       console.error('Error loading catalog:', err);
     } finally {
@@ -37,6 +40,7 @@ export default function CatalogPage() {
   const tabs = [
     { id: 'categories', label: 'Categorías', icon: <Folder size={16} /> },
     { id: 'brands', label: 'Marcas', icon: <Tag size={16} /> },
+    { id: 'models', label: 'Modelos', icon: <Layers size={16} /> },
   ];
 
   const handleSave = async (e: React.FormEvent) => {
@@ -49,11 +53,17 @@ export default function CatalogPage() {
       } else {
         await catalogService.createCategory(selectedItem.name.trim());
       }
-    } else {
+    } else if (activeTab === 'brands') {
       if (selectedItem.id) {
         await catalogService.updateBrand(selectedItem.id, selectedItem.name.trim(), selectedItem.categoryId);
       } else {
         await catalogService.createBrand(selectedItem.name.trim(), selectedItem.categoryId);
+      }
+    } else {
+      if (selectedItem.id) {
+        await catalogService.updateModel(selectedItem.id, selectedItem.name.trim(), selectedItem.brandId);
+      } else {
+        await catalogService.createModel(selectedItem.name.trim(), selectedItem.brandId);
       }
     }
 
@@ -63,7 +73,7 @@ export default function CatalogPage() {
   };
 
   const handleDelete = (id: string) => {
-    const itemType = activeTab === 'categories' ? 'categoría' : 'marca';
+    const itemType = activeTab === 'categories' ? 'categoría' : activeTab === 'brands' ? 'marca' : 'modelo';
     Swal.fire({
       title: `¿Desea eliminar esta ${itemType}?`,
       text: `Esta acción eliminará de forma permanente la ${itemType} de la base de datos.`,
@@ -85,8 +95,10 @@ export default function CatalogPage() {
       if (result.isConfirmed) {
         if (activeTab === 'categories') {
           await catalogService.deleteCategory(id);
-        } else {
+        } else if (activeTab === 'brands') {
           await catalogService.deleteBrand(id);
+        } else {
+          await catalogService.deleteModel(id);
         }
         await loadData();
       }
@@ -95,7 +107,8 @@ export default function CatalogPage() {
 
   const getActiveData = () => {
     if (activeTab === 'categories') return categories;
-    return brands;
+    if (activeTab === 'brands') return brands;
+    return models;
   };
 
   const columns = activeTab === 'categories' ? [
@@ -139,7 +152,7 @@ export default function CatalogPage() {
         </Badge>
       ),
     },
-  ] : [
+  ] : activeTab === 'brands' ? [
     {
       key: 'name',
       header: 'Marca',
@@ -175,16 +188,52 @@ export default function CatalogPage() {
         </Badge>
       ),
     },
+  ] : [
+    {
+      key: 'name',
+      header: 'Modelo',
+      render: (r: Model) => (
+        <div className="font-bold text-primary flex items-center gap-2">
+          <Layers size={16} className="text-primary-600" />
+          <span>{r.name}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'brandName',
+      header: 'Marca Vinculada',
+      render: (r: Model) => (
+        <div className="flex items-center gap-1.5">
+          {r.brandId ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">
+              <Tag size={12} />
+              {r.brandName}
+            </span>
+          ) : (
+            <span className="text-xs text-secondary italic">Sin marca (General)</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'active',
+      header: 'Estado',
+      render: (r: Model) => (
+        <Badge variant={r.active !== false ? 'success' : 'secondary'}>
+          {r.active !== false ? 'Activo' : 'Inactivo'}
+        </Badge>
+      ),
+    },
   ];
 
   return (
     <div>
       <PageHeader
         title="Catálogo Base"
-        subtitle="Administración de categorías y vinculación de marcas asociadas"
+        subtitle="Administración de categorías, marcas y modelos de vehículos"
         action={
-          <Button onClick={() => { setSelectedItem({ name: '', categoryId: '' }); setIsModalOpen(true); }}>
-            <Plus size={18} className="mr-1.5 inline" /> {activeTab === 'categories' ? 'Nueva Categoría' : 'Nueva Marca'}
+          <Button onClick={() => { setSelectedItem({ name: '', categoryId: '', brandId: '' }); setIsModalOpen(true); }}>
+            <Plus size={18} className="mr-1.5 inline" /> {activeTab === 'categories' ? 'Nueva Categoría' : activeTab === 'brands' ? 'Nueva Marca' : 'Nuevo Modelo'}
           </Button>
         }
       />
@@ -199,7 +248,7 @@ export default function CatalogPage() {
         <DataTable
           columns={columns}
           data={getActiveData()}
-          searchPlaceholder={`Buscar en ${activeTab === 'categories' ? 'categorías' : 'marcas'}...`}
+          searchPlaceholder={`Buscar en ${activeTab === 'categories' ? 'categorías' : activeTab === 'brands' ? 'marcas' : 'modelos'}...`}
           actions={(row: any) => (
             <div className="flex gap-2 justify-end">
               <button
@@ -210,6 +259,7 @@ export default function CatalogPage() {
                     id: row.id,
                     name: row.name,
                     categoryId: row.categoryId || '',
+                    brandId: row.brandId || '',
                   });
                   setIsModalOpen(true);
                 }}
@@ -228,27 +278,27 @@ export default function CatalogPage() {
         />
       )}
 
-      {/* Modal for Creating / Editing Category or Brand */}
+      {/* Modal for Creating / Editing Category, Brand or Model */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={
           selectedItem?.id
-            ? `Editar ${activeTab === 'categories' ? 'Categoría' : 'Marca'}`
-            : `Nueva ${activeTab === 'categories' ? 'Categoría' : 'Marca'}`
+            ? `Editar ${activeTab === 'categories' ? 'Categoría' : activeTab === 'brands' ? 'Marca' : 'Modelo'}`
+            : `Nueva ${activeTab === 'categories' ? 'Categoría' : activeTab === 'brands' ? 'Marca' : 'Modelo'}`
         }
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
             <label className="form-label font-semibold">
-              Nombre de la {activeTab === 'categories' ? 'Categoría' : 'Marca'}
+              {activeTab === 'models' ? 'Nombre del Modelo' : `Nombre de la ${activeTab === 'categories' ? 'Categoría' : 'Marca'}`}
             </label>
             <input
               type="text"
               className="form-control"
-              placeholder={activeTab === 'categories' ? 'Ej. Motocicleta, Repuesto' : 'Ej. Pulsar, Yamaha, Chino'}
+              placeholder={activeTab === 'categories' ? 'Ej. Motocicleta, Repuesto' : activeTab === 'brands' ? 'Ej. Pulsar, Yamaha, Chino' : 'Ej. Pulsar 200 NS, FZ-16'}
               value={selectedItem?.name || ''}
-              onChange={(e) => setSelectedItem(prev => ({ id: prev?.id, name: e.target.value, categoryId: prev?.categoryId }))}
+              onChange={(e) => setSelectedItem(prev => ({ id: prev?.id, name: e.target.value, categoryId: prev?.categoryId, brandId: prev?.brandId }))}
               required
             />
           </div>
@@ -262,7 +312,7 @@ export default function CatalogPage() {
               <select
                 className="form-control"
                 value={selectedItem?.categoryId || ''}
-                onChange={(e) => setSelectedItem(prev => ({ id: prev?.id, name: prev?.name || '', categoryId: e.target.value }))}
+                onChange={(e) => setSelectedItem(prev => ({ id: prev?.id, name: prev?.name || '', categoryId: e.target.value, brandId: prev?.brandId }))}
               >
                 <option value="">-- Sin Categoría (General) --</option>
                 {categories.map((cat) => (
@@ -273,6 +323,30 @@ export default function CatalogPage() {
               </select>
               <p className="text-xs text-secondary mt-1">
                 Al vincular esta marca a una categoría (ej. Motocicleta), aparecerá asociada a ella en todo el sistema.
+              </p>
+            </div>
+          )}
+
+          {activeTab === 'models' && (
+            <div>
+              <label className="form-label font-semibold flex items-center gap-1.5">
+                <LinkIcon size={14} className="text-primary-600" />
+                Vincular a Marca
+              </label>
+              <select
+                className="form-control"
+                value={selectedItem?.brandId || ''}
+                onChange={(e) => setSelectedItem(prev => ({ id: prev?.id, name: prev?.name || '', categoryId: prev?.categoryId, brandId: e.target.value }))}
+              >
+                <option value="">-- Sin Marca (General) --</option>
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-secondary mt-1">
+                Al vincular este modelo a una marca (ej. Bajaj), aparecerá asociada a ella en todo el sistema.
               </p>
             </div>
           )}

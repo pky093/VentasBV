@@ -15,6 +15,9 @@ import {
 import { Field } from '../components/ui';
 import Swal from 'sweetalert2';
 
+import { usersService } from '../lib/db-services';
+import { usePermissions } from '../context/PermissionContext';
+
 interface StaffCredentials {
   taxId: string;
   username: string;
@@ -33,10 +36,13 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { setUserRole } = usePermissions();
+
+  const savedRuc = typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '20613639030' : '20613639030';
 
   const staffForm = useForm<StaffCredentials>({
     defaultValues: {
-      taxId: '20601234567',
+      taxId: savedRuc,
       username: '',
       password: '',
     },
@@ -58,12 +64,37 @@ export default function LoginPage() {
   const submitPersonal = async (values: StaffCredentials) => {
     setError(null);
     try {
+      const res = await usersService.authenticatePersonal(
+        values.username,
+        values.password,
+        values.taxId
+      );
+
+      if (!res.success || !res.user || !res.tenant) {
+        setError(res.error || 'Credenciales inválidas.');
+        return;
+      }
+
+      const { user, tenant } = res;
+
       localStorage.setItem('is_logged_in', 'true');
-      localStorage.setItem('auth_user', values.username);
-      localStorage.setItem('auth_ruc', values.taxId);
-      localStorage.setItem('auth_role', 'staff');
-      localStorage.setItem('active_branch_id', 'MAIN');
+      localStorage.setItem('auth_user', user.name || user.username);
+      localStorage.setItem('auth_username', user.username);
+      localStorage.setItem('auth_email', user.email);
+      localStorage.setItem('auth_user_id', user.id);
+      localStorage.setItem('auth_role', user.role);
+      localStorage.setItem('user_role', user.role);
+      localStorage.setItem('tenant_id', tenant.id);
+      localStorage.setItem('tenant_ruc', tenant.ruc);
+      localStorage.setItem('auth_ruc', tenant.ruc);
+      localStorage.setItem('tenant_name', tenant.name);
+      localStorage.setItem('active_branch_id', user.branchId);
+      localStorage.setItem('active_branch_name', user.branchName);
+      localStorage.setItem('assigned_branches', JSON.stringify(user.branches || [user.branchName]));
+      localStorage.setItem('assigned_branch_ids', JSON.stringify((user as any).branchIds || [user.branchId]));
       
+      setUserRole(user.role);
+
       navigate('/app');
     } catch (loginError) {
       setError(
@@ -79,8 +110,11 @@ export default function LoginPage() {
     try {
       localStorage.setItem('is_logged_in', 'true');
       localStorage.setItem('auth_user', values.email);
-      localStorage.setItem('auth_role', 'superadmin');
+      localStorage.setItem('auth_role', 'Super Admin');
+      localStorage.setItem('user_role', 'Super Admin');
+      localStorage.setItem('is_platform_superadmin', 'true');
       
+      setUserRole('Super Admin');
       navigate('/platform');
     } catch (loginError) {
       setError(
@@ -90,6 +124,7 @@ export default function LoginPage() {
       );
     }
   };
+
 
   const handleSupportClick = (e: React.MouseEvent) => {
     e.preventDefault();

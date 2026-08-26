@@ -87,6 +87,8 @@ export const applyCustomTheme = (theme: ThemeColors) => {
   root.style.setProperty('--primary-600', theme.primaryColor);
   root.style.setProperty('--primary-500', theme.primaryColor);
   root.style.setProperty('--primary-700', theme.primaryColor);
+  root.style.setProperty('--primary-800', theme.primaryColor);
+  root.style.setProperty('--primary-900', theme.primaryColor);
   root.style.setProperty('--primary-100', `${theme.primaryColor}22`);
   root.style.setProperty('--primary-50', `${theme.primaryColor}11`);
 
@@ -100,27 +102,16 @@ export const applyCustomTheme = (theme: ThemeColors) => {
   root.style.setProperty('--text-sidebar', theme.sidebarText);
   root.style.setProperty('--bg-surface', theme.surfaceBg);
 
-  const isDark = isDarkColor(theme.surfaceBg) || isDarkColor(theme.pageBg);
-
-  if (isDark) {
-    root.setAttribute('data-theme', 'dark');
-    root.style.setProperty('--text-primary', '#f9fafb');
-    root.style.setProperty('--text-secondary', '#9ca3af');
-    root.style.setProperty('--text-muted', '#6b7280');
-    root.style.setProperty('--text-inverse', '#0f172a');
-    root.style.setProperty('--border-color', '#334155');
-    root.style.setProperty('--border-subtle', '#1e293b');
-  } else {
-    root.setAttribute('data-theme', 'light');
-    root.style.setProperty('--text-primary', '#0f172a');
-    root.style.setProperty('--text-secondary', '#64748b');
-    root.style.setProperty('--text-muted', '#94a3b8');
-    root.style.setProperty('--text-inverse', '#ffffff');
-    root.style.setProperty('--border-color', '#e2e8f0');
-    root.style.setProperty('--border-subtle', '#f1f5f9');
-  }
+  root.setAttribute('data-theme', 'light');
+  root.style.setProperty('--text-primary', '#0f172a');
+  root.style.setProperty('--text-secondary', '#64748b');
+  root.style.setProperty('--text-muted', '#94a3b8');
+  root.style.setProperty('--text-inverse', '#ffffff');
+  root.style.setProperty('--border-color', '#e2e8f0');
+  root.style.setProperty('--border-subtle', '#f1f5f9');
 
   localStorage.setItem('custom_tenant_theme', JSON.stringify(theme));
+  localStorage.setItem('theme', 'light');
 };
 
 export const applyTenantTheme = (presetOrTheme: string | ThemeColors) => {

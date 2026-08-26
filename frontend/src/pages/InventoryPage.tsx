@@ -12,8 +12,9 @@ import {
   AlertTriangle,
   Building2,
   Package,
+  Sparkles,
 } from 'lucide-react';
-import { PageHeader, Button, Badge, Tabs, DataTable, Modal } from '../components/ui';
+import { PageHeader, Button, Badge, Tabs, DataTable, Modal, SuggestionChip } from '../components/ui';
 import {
   productsService,
   branchesService,
@@ -69,7 +70,7 @@ export default function InventoryPage() {
         setSelectedProductId(prods[0].id);
       }
       if (brs.length > 0) {
-        const defaultBId = activeBranchId !== 'ALL' ? activeBranchId : brs[0].id;
+        const defaultBId = activeBranchId && activeBranchId !== 'ALL' ? activeBranchId : brs[0].id;
         setSelectedBranchId(defaultBId);
       }
     } catch (err) {
@@ -81,6 +82,9 @@ export default function InventoryPage() {
 
   useEffect(() => {
     loadData();
+    if (activeBranchId && activeBranchId !== 'ALL') {
+      setSelectedBranchId(activeBranchId);
+    }
   }, [activeBranchId]);
 
   const openMovementModal = (type: 'IN' | 'OUT' | 'ADJUSTMENT', preselectedProdId?: string) => {
@@ -89,6 +93,12 @@ export default function InventoryPage() {
       setSelectedProductId(preselectedProdId);
     } else if (products.length > 0 && !selectedProductId) {
       setSelectedProductId(products[0].id);
+    }
+
+    if (activeBranchId && activeBranchId !== 'ALL') {
+      setSelectedBranchId(activeBranchId);
+    } else if (branches.length > 0 && !selectedBranchId) {
+      setSelectedBranchId(branches[0].id);
     }
 
     setMovementQty(1);
@@ -114,7 +124,8 @@ export default function InventoryPage() {
     if (!selectedProductId) return;
 
     const prod = products.find((p) => p.id === selectedProductId);
-    const branch = branches.find((b) => b.id === selectedBranchId) || branches[0];
+    const targetBranchId = selectedBranchId || (activeBranchId !== 'ALL' ? activeBranchId : branches[0]?.id);
+    const branch = branches.find((b) => b.id === targetBranchId) || (activeBranchId !== 'ALL' ? activeBranch : branches[0]);
     if (!prod) return;
 
     setIsSubmitting(true);
@@ -130,8 +141,8 @@ export default function InventoryPage() {
       const success = await inventoryService.registerMovement({
         productId: prod.id,
         productName: prod.name,
-        branchId: branch?.id || '',
-        branchName: branch?.name || 'Sede Principal',
+        branchId: branch?.id || targetBranchId || '',
+        branchName: branch?.name || activeBranch?.name || 'Sucursal',
         type: movementType,
         qty: finalQty,
         reason: movementReason || `${movementType === 'IN' ? 'Ingreso' : movementType === 'OUT' ? 'Salida' : 'Ajuste'} de stock`,
@@ -142,7 +153,7 @@ export default function InventoryPage() {
           type: 'success',
           text: `Se registró correctamente el ${
             movementType === 'IN' ? 'ingreso' : movementType === 'OUT' ? 'salida' : 'ajuste'
-          } de "${prod.name}".`,
+          } de "${prod.name}" en la sucursal "${branch?.name || activeBranch?.name || 'Sede Seleccionada'}".`,
         });
         await loadData();
         setIsMovementModalOpen(false);
@@ -266,8 +277,10 @@ export default function InventoryPage() {
       render: (r: Product) => (
         <div>
           <div className="font-bold text-primary text-sm">{r.name}</div>
-          <div className="text-xs text-secondary">
-            Marca: <strong>{r.brand}</strong> | Categoría: {r.category}
+          <div className="text-xs text-secondary flex items-center gap-1.5 flex-wrap">
+            <span>Marca: <strong>{r.brand}</strong></span>
+            {r.model && <span>• Modelo: <strong>{r.model}</strong></span>}
+            <span>| Categoría: {r.category}</span>
           </div>
         </div>
       ),
@@ -275,7 +288,31 @@ export default function InventoryPage() {
     {
       key: 'branch',
       header: 'SUCURSAL',
-      render: () => <span className="text-xs text-secondary font-medium">Sede Principal</span>,
+      render: (r: Product) => {
+        if (activeBranchId && activeBranchId !== 'ALL') {
+          return (
+            <SuggestionChip
+              label={activeBranch?.name || 'Sucursal Seleccionada'}
+              count={`${r.stock} unid.`}
+            />
+          );
+        }
+        if (r.branchStocks && r.branchStocks.length > 0) {
+          return (
+            <div className="flex flex-wrap gap-1.5 items-center">
+              {r.branchStocks.map((bs) => (
+                <SuggestionChip
+                  key={bs.branchId}
+                  label={bs.branchName}
+                  count={`${bs.stock} unid.`}
+                  selected={bs.branchId === activeBranchId}
+                />
+              ))}
+            </div>
+          );
+        }
+        return <span className="text-xs text-secondary font-medium">Todas las Sedes</span>;
+      },
     },
     {
       key: 'stock',
@@ -617,22 +654,25 @@ export default function InventoryPage() {
           </div>
 
           {/* Motivo suggestions */}
-          <div className="flex gap-2 flex-wrap items-center pt-1">
-            <span className="text-[11px] text-secondary">Sugerencias:</span>
+          <div className="flex gap-1.5 flex-wrap items-center pt-1.5">
+            <span className="text-[11px] font-semibold text-secondary flex items-center gap-1">
+              <Sparkles size={13} className="text-primary-600 dark:text-primary-400" />
+              Sugerencias:
+            </span>
             {[
               movementType === 'IN' ? 'Orden de Compra OC-005' : 'Merma por Rotura',
               movementType === 'IN' ? 'Ingreso por Importación' : 'Uso Interno de Oficina',
               'Inventario Físico Mensual',
               'Corrección de Kardex',
+              ...(movementType === 'IN' ? ['Devolución de Cliente'] : movementType === 'OUT' ? ['Venta Directa'] : ['Ajuste por Auditoría']),
             ].map((chip) => (
-              <button
+              <SuggestionChip
                 key={chip}
-                type="button"
-                className="text-[11px] px-2 py-0.5 rounded bg-surface hover:bg-surface-hover border border-color text-secondary"
+                label={chip}
+                selected={movementReason === chip}
                 onClick={() => setMovementReason(chip)}
-              >
-                {chip}
-              </button>
+                size="sm"
+              />
             ))}
           </div>
 
