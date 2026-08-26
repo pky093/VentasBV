@@ -282,6 +282,23 @@ export default function InventoryPage() {
             {r.model && <span>• Modelo: <strong>{r.model}</strong></span>}
             <span>| Categoría: {r.category}</span>
           </div>
+          {r.colors && r.colors.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5 items-center">
+              {r.colors.map((c, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded-md bg-app border border-color text-primary"
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-full border border-black/20 shrink-0"
+                    style={{ backgroundColor: c.hex || '#94a3b8' }}
+                  />
+                  <span>{c.color}</span>
+                  <span className="font-bold text-primary-600">({c.stock})</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       ),
     },
@@ -532,10 +549,10 @@ export default function InventoryPage() {
         onClose={() => setIsMovementModalOpen(false)}
         title={
           movementType === 'IN'
-            ? '📦 Registrar Ingreso de Producto (Entrada)'
+            ? 'Registrar Ingreso de Producto (Entrada)'
             : movementType === 'OUT'
-            ? '📤 Registrar Salida de Producto (Egreso)'
-            : '⚡ Ajuste Manual de Inventario'
+            ? 'Registrar Salida de Producto (Egreso)'
+            : 'Ajuste Manual de Inventario'
         }
         size="lg"
       >

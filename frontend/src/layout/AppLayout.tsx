@@ -49,7 +49,7 @@ const MENU_ITEMS = [
   ]}
 ];
 
-import { settingsService, notificationsService } from '../lib/db-services';
+import { settingsService, notificationsService, auditService } from '../lib/db-services';
 
 import { applyCustomTheme } from '../lib/tenant-theme';
 
@@ -147,7 +147,35 @@ export default function AppLayout() {
   }, []);
 
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const user = localStorage.getItem('auth_user') || 'Usuario';
+    const username = localStorage.getItem('auth_username') || user;
+    const role = localStorage.getItem('user_role') || localStorage.getItem('auth_role') || 'Usuario';
+    const userId = localStorage.getItem('auth_user_id') || undefined;
+    const branchId = localStorage.getItem('active_branch_id') || undefined;
+    const branchName = localStorage.getItem('active_branch_name') || 'Sede Principal';
+
+    try {
+      await auditService.logAction({
+        action: 'CIERRE DE SESIÓN',
+        entityType: 'auth',
+        branchId: branchId,
+        actorUserId: userId,
+        actorUserName: user,
+        actorUsername: username,
+        actorRole: role,
+        branchName: branchName,
+        description: `Cierre de sesión de ${user} (${role}) en la sede ${branchName}`,
+        details: {
+          user_name: `${user} (${role})`,
+          username: username,
+          branch_name: branchName,
+        },
+      });
+    } catch (e) {
+      console.error('Error logging logout:', e);
+    }
+
     localStorage.removeItem('is_logged_in');
     localStorage.removeItem('auth_user');
     localStorage.removeItem('auth_username');

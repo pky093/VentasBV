@@ -1,4 +1,5 @@
 import { supabase, DEFAULT_TENANT_ID } from './supabase';
+import { auditService } from './db-services';
 
 export interface VehicleContract {
   id: string;
@@ -189,6 +190,19 @@ export const contractsService = {
     list.unshift(newContract);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'contracts',
+      entityId: newId,
+      description: `Emisión de ${contract.docType || 'Contrato'} N° ${contract.contractNumber} para "${contract.customerName}" (Vehículo: ${contract.brand} ${contract.model}, Total: S/ ${Number(contract.totalPrice).toFixed(2)})`,
+      details: {
+        contract_number: contract.contractNumber,
+        customer_name: contract.customerName,
+        total_price: contract.totalPrice,
+        vehicle: `${contract.brand} ${contract.model}`,
+      },
+    });
+
     return newContract;
   },
 
@@ -232,6 +246,15 @@ export const contractsService = {
     if (idx !== -1) {
       list[idx] = { ...list[idx], ...updates };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'contracts',
+        entityId: id,
+        description: `Actualización de Contrato N° ${list[idx].contractNumber || id} (Cliente: ${list[idx].customerName})`,
+        details: { ...updates },
+      });
+
       return true;
     }
     return false;
@@ -245,8 +268,21 @@ export const contractsService = {
     }
 
     const list = getInitialContracts();
+    const target = list.find((c) => c.id === id);
+    const contractNum = target?.contractNumber || id;
+    const custName = target?.customerName || '';
+
     const filtered = list.filter((c) => c.id !== id);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+
+    auditService.logAction({
+      action: 'ELIMINAR',
+      entityType: 'contracts',
+      entityId: id,
+      description: `Eliminación de Contrato N° ${contractNum} ${custName ? `(Cliente: ${custName})` : ''}`.trim(),
+      details: { contract_number: contractNum, customer_name: custName },
+    });
+
     return true;
   },
 

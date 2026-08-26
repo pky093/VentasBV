@@ -114,7 +114,7 @@ export default function POSPage() {
             model: p.model || '',
             price: p.price,
             stock: p.stock,
-            icon: '📦',
+            icon: '',
             imagePath: p.imagePath,
             dbProduct: p,
           }))
@@ -154,23 +154,53 @@ export default function POSPage() {
     return matchesCategory && matchesSearch;
   });
 
+  // Color Selection Modal State
+  const [colorModalProduct, setColorModalProduct] = useState<Product | null>(null);
+
   // Cart operations
-  const addToCart = (product: Product) => {
+  const handleProductClick = (product: Product) => {
     if (product.stock <= 0) {
       alert('Producto sin stock disponible.');
       return;
     }
 
-    const existing = cart.find((item) => item.id === product.id);
+    if (product.dbProduct?.colors && product.dbProduct.colors.length > 0) {
+      setColorModalProduct(product);
+    } else {
+      addToCartWithColor(product);
+    }
+  };
+
+  const addToCartWithColor = (product: Product, selectedColor?: { color: string; hex?: string; stock: number }) => {
+    const itemId = selectedColor ? `${product.id}-${selectedColor.color}` : product.id;
+    const itemName = selectedColor ? `${product.name} (${selectedColor.color})` : product.name;
+    const maxStock = selectedColor ? selectedColor.stock : product.stock;
+
+    if (maxStock <= 0) {
+      alert(`El color "${selectedColor?.color}" no tiene stock disponible.`);
+      return;
+    }
+
+    const existing = cart.find((item) => item.id === itemId);
     if (existing) {
-      if (existing.qty < product.stock) {
-        setCart(cart.map((item) => (item.id === product.id ? { ...item, qty: item.qty + 1 } : item)));
+      if (existing.qty < maxStock) {
+        setCart(cart.map((item) => (item.id === itemId ? { ...item, qty: item.qty + 1 } : item)));
       } else {
-        alert(`Stock máximo alcanzado (${product.stock} unidades).`);
+        alert(`Stock máximo alcanzado para este producto/color (${maxStock} unidades).`);
       }
     } else {
-      setCart([...cart, { ...product, qty: 1 }]);
+      setCart([
+        ...cart,
+        {
+          ...product,
+          id: itemId,
+          name: itemName,
+          stock: maxStock,
+          qty: 1,
+        },
+      ]);
     }
+    setColorModalProduct(null);
   };
 
   const updateQty = (id: string, delta: number) => {
@@ -396,7 +426,7 @@ export default function POSPage() {
               </div>
             ) : (
               filteredProducts.map((prod) => (
-                <div key={prod.id} className="pos-card flex flex-col justify-between" onClick={() => addToCart(prod)}>
+                <div key={prod.id} className="pos-card flex flex-col justify-between cursor-pointer hover:shadow-md transition-all" onClick={() => handleProductClick(prod)}>
                   <div className="pos-card-img overflow-hidden w-full flex items-center justify-center border-b border-color mb-3 rounded-lg shrink-0" style={{ height: '115px', backgroundColor: 'var(--bg-app)' }}>
                     {prod.imagePath ? (
                       <img
@@ -418,9 +448,28 @@ export default function POSPage() {
                           </span>
                         )}
                       </div>
-                      <div className="pos-card-title text-sm font-bold text-primary line-clamp-2 leading-tight mb-2 h-10 overflow-hidden" title={prod.name}>
+                      <div className="pos-card-title text-sm font-bold text-primary line-clamp-2 leading-tight mb-1 h-9 overflow-hidden" title={prod.name}>
                         {prod.name}
                       </div>
+
+                      {prod.dbProduct?.colors && prod.dbProduct.colors.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-1">
+                          {prod.dbProduct.colors.map((c, i) => (
+                            <span
+                              key={i}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold rounded-md bg-app border border-color text-primary"
+                              title={`${c.color} (${c.stock} dispon.)`}
+                            >
+                              <span
+                                className="w-2 h-2 rounded-full border border-black/20 shrink-0"
+                                style={{ backgroundColor: c.hex || '#94a3b8' }}
+                              />
+                              <span>{c.color}</span>
+                              <span className="text-primary-600">({c.stock})</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="pos-card-footer flex items-center justify-between border-t border-color pt-2 mt-1">
                       <div className="pos-card-price text-base font-extrabold text-primary-600">S/ {prod.price.toFixed(2)}</div>
@@ -1024,6 +1073,96 @@ export default function POSPage() {
           loadPOSData();
         }}
       />
+
+      {/* Modal Selección de Color en POS */}
+      <Modal
+        isOpen={!!colorModalProduct}
+        onClose={() => setColorModalProduct(null)}
+        title="Seleccionar Variante de Color"
+        size="md"
+      >
+        <div className="space-y-4 p-1">
+          {/* Header Info Banner */}
+          <div className="flex items-center gap-3.5 p-3.5 rounded-xl border border-color bg-app/80">
+            {colorModalProduct?.imagePath ? (
+              <img
+                src={colorModalProduct.imagePath}
+                alt={colorModalProduct.name}
+                className="w-12 h-12 rounded-lg object-cover border border-color shrink-0 bg-surface"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded-lg border border-color bg-surface flex items-center justify-center text-primary shrink-0 font-bold text-lg">
+                🎨
+              </div>
+            )}
+            <div>
+              <h4 className="font-extrabold text-sm text-primary leading-tight">
+                {colorModalProduct?.name}
+              </h4>
+              <p className="text-xs text-secondary mt-0.5">
+                {colorModalProduct?.brand}{colorModalProduct?.model ? ` • ${colorModalProduct.model}` : ''} — <strong className="text-primary-600 font-mono">S/ {(colorModalProduct?.price || 0).toFixed(2)}</strong>
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs font-medium text-secondary">
+            Este producto dispone de varios colores en stock. Selecciona el color que va a llevar el cliente:
+          </p>
+
+          {/* Color Options List */}
+          <div className="space-y-2.5">
+            {colorModalProduct?.dbProduct?.colors?.map((c, idx) => {
+              const isAvailable = c.stock > 0;
+              const unitText = c.stock === 1 ? '1 unidad disponible' : `${c.stock} unidades disponibles`;
+              const isWhite = c.hex?.toLowerCase() === '#ffffff' || c.hex?.toLowerCase() === '#fff';
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={!isAvailable}
+                  onClick={() => addToCartWithColor(colorModalProduct, c)}
+                  className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl border transition-all text-left group ${
+                    isAvailable
+                      ? 'border-color bg-surface hover:border-primary-500 hover:shadow-md cursor-pointer'
+                      : 'border-color/40 bg-app/50 opacity-40 cursor-not-allowed'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0 pr-2">
+                    <div className="relative shrink-0 flex items-center justify-center">
+                      <span
+                        className="w-7 h-7 rounded-full border-2 border-white dark:border-slate-800 shadow-sm transition-transform group-hover:scale-110"
+                        style={{
+                          backgroundColor: c.hex || '#94a3b8',
+                          boxShadow: isWhite ? 'inset 0 0 0 1px rgba(0,0,0,0.25), 0 2px 4px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.15)',
+                        }}
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-extrabold text-sm text-primary truncate flex items-center gap-2">
+                        {c.color}
+                      </div>
+                      <div className={`text-xs ${isAvailable ? 'text-secondary font-medium' : 'text-danger-500 font-semibold'}`}>
+                        {isAvailable ? unitText : 'Sin stock disponible'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 pl-2">
+                    <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${
+                      isAvailable
+                        ? 'bg-primary-600 text-white shadow-xs group-hover:bg-primary-700'
+                        : 'bg-secondary/10 text-secondary'
+                    }`}>
+                      {isAvailable ? 'Seleccionar ➔' : 'Agotado'}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

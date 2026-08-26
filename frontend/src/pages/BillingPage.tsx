@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Eye, Send, FileMinus, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { RefreshCw, Eye, Send, FileMinus, CheckCircle, Clock, AlertCircle, Ban } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { PageHeader, Button, Badge, DataTable } from '../components/ui';
 import { SunatReceiptModal } from '../components/billing/SunatReceiptModal';
@@ -126,6 +126,60 @@ export default function BillingPage() {
     }
   };
 
+  const handleAnnulInvoice = async (invoice: BillingInvoice) => {
+    const { value: reason } = await Swal.fire({
+      title: `Anular Comprobante ${invoice.series}-${invoice.sequence}`,
+      text: 'Ingrese el motivo para generar la Comunicación de Baja ante SUNAT:',
+      input: 'text',
+      inputPlaceholder: 'Ej. Error en digitación / Operación no concretada',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, Anular Comprobante',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#dc2626',
+      background: 'var(--bg-surface)',
+      color: 'var(--text-primary)',
+      customClass: {
+        popup: 'rounded-2xl border border-color shadow-xl',
+        confirmButton: 'btn btn-danger font-semibold px-4 py-2 text-sm',
+        cancelButton: 'btn btn-secondary font-semibold px-4 py-2 text-sm',
+      },
+      inputValidator: (value) => {
+        if (!value) {
+          return 'Debes ingresar un motivo para anular el comprobante.';
+        }
+      },
+    });
+
+    if (reason) {
+      Swal.fire({
+        title: 'Procesando Anulación...',
+        text: 'Enviando Comunicación de Baja a SUNAT y reincorporando inventario...',
+        allowOutsideClick: false,
+        didOpen: () => {
+          Swal.showLoading();
+        },
+      });
+
+      const res = await salesService.annulInvoice(invoice.id, reason);
+
+      if (res.success) {
+        await loadInvoices();
+        Swal.fire({
+          icon: 'success',
+          title: '¡Comprobante Anulado!',
+          text: res.message,
+          confirmButtonColor: '#f59e0b',
+        });
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error al Anular',
+          text: res.message,
+        });
+      }
+    }
+  };
+
   const columns = [
     {
       key: 'document',
@@ -153,6 +207,9 @@ export default function BillingPage() {
       key: 'status',
       header: 'Estado SUNAT',
       render: (r: BillingInvoice) => {
+        if (r.status === 'CANCELLED') {
+          return <Badge variant="danger"><Ban size={12} className="inline mr-1" /> Anulado</Badge>;
+        }
         if (r.status === 'ACCEPTED') {
           return <Badge variant="success"><CheckCircle size={12} className="inline mr-1" /> Aceptado SUNAT</Badge>;
         }
@@ -188,37 +245,55 @@ export default function BillingPage() {
           data={invoices}
           searchPlaceholder="Buscar por número o cliente..."
           actions={(row) => (
-            <div className="flex flex-wrap gap-2 justify-end items-center w-full sm:w-auto">
+            <div className="grid grid-cols-2 gap-1.5 min-w-[280px]">
               <Button
                 variant="outline"
                 size="sm"
-                icon={<Eye size={14} />}
+                icon={<Eye size={13} />}
                 onClick={() => setSelectedInvoice(row)}
                 title="Vista Previa Comprobante"
+                className="w-full justify-center text-xs py-1"
               >
                 Vista Previa
               </Button>
 
-              {row.status !== 'NOTA_CREDITO' && (
-                <>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    icon={<Send size={14} />}
-                    onClick={() => handleSendToSunat(row)}
-                    title="Enviar / Reenviar comprobante a SUNAT OSE"
-                  >
-                    {row.status === 'ACCEPTED' ? 'Reenviar SUNAT' : 'Enviar a SUNAT'}
-                  </Button>
+              {row.status !== 'NOTA_CREDITO' && row.status !== 'CANCELLED' ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Send size={13} />}
+                  onClick={() => handleSendToSunat(row)}
+                  title="Enviar / Reenviar comprobante a SUNAT OSE"
+                  className="w-full justify-center text-xs py-1"
+                >
+                  {row.status === 'ACCEPTED' ? 'Reenviar SUNAT' : 'Enviar a SUNAT'}
+                </Button>
+              ) : (
+                <div />
+              )}
 
+              {row.status !== 'NOTA_CREDITO' && row.status !== 'CANCELLED' && (
+                <>
                   <Button
                     variant="danger"
                     size="sm"
-                    icon={<FileMinus size={14} />}
+                    icon={<FileMinus size={13} />}
                     onClick={() => handleEmitCreditNote(row)}
                     title="Emitir Nota de Crédito SUNAT"
+                    className="w-full justify-center text-xs py-1"
                   >
                     Nota de Crédito
+                  </Button>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Ban size={13} className="text-danger-500" />}
+                    onClick={() => handleAnnulInvoice(row)}
+                    title="Anular Comprobante / Comunicación de Baja SUNAT"
+                    className="w-full justify-center text-xs py-1 border-danger-200 text-danger-600 hover:bg-danger-50 dark:border-danger-800 dark:hover:bg-danger-950/40 font-semibold"
+                  >
+                    Anular Comprobante
                   </Button>
                 </>
               )}

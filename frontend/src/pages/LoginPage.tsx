@@ -15,7 +15,7 @@ import {
 import { Field } from '../components/ui';
 import Swal from 'sweetalert2';
 
-import { usersService } from '../lib/db-services';
+import { usersService, auditService } from '../lib/db-services';
 import { usePermissions } from '../context/PermissionContext';
 
 interface StaffCredentials {
@@ -95,13 +95,37 @@ export default function LoginPage() {
       
       setUserRole(user.role);
 
+      // Record Audit Log for User Login
+      auditService.logAction({
+        action: 'INICIO DE SESIÓN',
+        entityType: 'login',
+        branchId: user.branchId,
+        actorUserId: user.userId || user.id,
+        actorUserName: user.name || user.username,
+        actorUsername: user.username,
+        actorRole: user.role,
+        branchName: user.branchName,
+        description: `Inicio de sesión exitoso de ${user.name || user.username} (${user.role}) en la sede ${user.branchName}`,
+        details: {
+          user_name: `${user.name || user.username} (${user.role})`,
+          username: user.username,
+          branch_name: user.branchName,
+        },
+      });
+
       navigate('/app');
     } catch (loginError) {
-      setError(
-        loginError instanceof Error
-          ? loginError.message
-          : 'El RUC, usuario o contraseña no coinciden.'
-      );
+      const errMsg = loginError instanceof Error ? loginError.message : 'El RUC, usuario o contraseña no coinciden.';
+      setError(errMsg);
+
+      auditService.logAction({
+        action: 'ACCESO FALLIDO',
+        entityType: 'auth',
+        actorUserName: values.username || 'Desconocido',
+        actorUsername: values.username || 'usuario',
+        description: `Intento fallido de inicio de sesión con usuario "${values.username}" (RUC: ${values.taxId || 'N/A'})`,
+        details: { username: values.username, ruc: values.taxId, error: errMsg },
+      });
     }
   };
 
@@ -110,18 +134,40 @@ export default function LoginPage() {
     try {
       localStorage.setItem('is_logged_in', 'true');
       localStorage.setItem('auth_user', values.email);
+      localStorage.setItem('auth_username', values.email.split('@')[0]);
       localStorage.setItem('auth_role', 'Super Admin');
       localStorage.setItem('user_role', 'Super Admin');
       localStorage.setItem('is_platform_superadmin', 'true');
       
       setUserRole('Super Admin');
+
+      // Record Audit Log for Superadmin Login
+      auditService.logAction({
+        action: 'INICIO DE SESIÓN',
+        entityType: 'login',
+        actorUserName: values.email,
+        actorUsername: values.email.split('@')[0],
+        actorRole: 'Super Admin',
+        description: `Inicio de sesión de Administrador de Plataforma (${values.email})`,
+        details: {
+          user_name: `${values.email} (Super Admin)`,
+          username: values.email.split('@')[0],
+        },
+      });
+
       navigate('/platform');
     } catch (loginError) {
-      setError(
-        loginError instanceof Error
-          ? loginError.message
-          : 'El correo o la contraseña no coinciden.'
-      );
+      const errMsg = loginError instanceof Error ? loginError.message : 'El correo o la contraseña no coinciden.';
+      setError(errMsg);
+
+      auditService.logAction({
+        action: 'ACCESO FALLIDO',
+        entityType: 'auth',
+        actorUserName: values.email || 'Super Admin',
+        actorUsername: (values.email && values.email.split('@')[0]) || 'admin',
+        description: `Intento fallido de acceso Superadmin con correo "${values.email}"`,
+        details: { email: values.email, error: errMsg },
+      });
     }
   };
 

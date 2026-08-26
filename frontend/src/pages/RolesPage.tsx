@@ -90,6 +90,7 @@ const PERMISSION_GROUPS: PermissionGroup[] = [
     permissions: [
       { id: 'billing.read', label: 'Consultar Comprobantes Emitidos' },
       { id: 'billing.manage', label: 'Enviar Comprobantes a SUNAT' },
+      { id: 'billing.annul', label: 'Anular Comprobantes de Pago' },
       { id: 'billing.void', label: 'Solicitar Anulaciones y Comunicaciones' },
       { id: 'reports.read', label: 'Consultar Reportes & Business Intelligence' }
     ] 

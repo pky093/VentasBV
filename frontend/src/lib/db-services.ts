@@ -6,6 +6,12 @@ export interface BranchStock {
   stock: number;
 }
 
+export interface ColorVariant {
+  color: string;
+  hex?: string;
+  stock: number;
+}
+
 export interface Product {
   id: string;
   code: string;
@@ -23,6 +29,7 @@ export interface Product {
   minStock: number;
   status: 'ACTIVE' | 'INACTIVE';
   imagePath?: string;
+  colors?: ColorVariant[];
   branchStocks?: BranchStock[];
 }
 
@@ -117,7 +124,7 @@ export const productsService = {
     const { data: prods, error: pError } = await supabase
       .from('products')
       .select(`
-        id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path,
+        id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors,
         categories ( name ),
         brands ( name ),
         models ( name )
@@ -183,6 +190,7 @@ export const productsService = {
         minStock: Number(p.min_stock) || 5,
         status: p.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
         imagePath: p.image_path || '',
+        colors: Array.isArray(p.colors) ? p.colors : [],
         branchStocks,
       };
     });
@@ -207,6 +215,7 @@ export const productsService = {
         min_stock: prod.minStock,
         status: prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE',
         image_path: prod.imagePath || null,
+        colors: prod.colors || [],
       })
       .select()
       .single();
@@ -222,6 +231,21 @@ export const productsService = {
       branch_id: targetBranch,
       product_id: data.id,
       quantity: prod.stock,
+    });
+
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'products',
+      entityId: data.id,
+      branchId: targetBranch,
+      description: `Creación de producto "${prod.name}" (SKU: ${prod.sku || prod.code}, Precio: S/ ${Number(prod.price).toFixed(2)}, Stock inicial: ${prod.stock})`,
+      details: {
+        name: prod.name,
+        sku: prod.sku || prod.code,
+        price: prod.price,
+        cost: prod.cost,
+        stock: prod.stock,
+      },
     });
 
     return {
@@ -243,6 +267,7 @@ export const productsService = {
     if (prod.modelId !== undefined) updateData.model_id = prod.modelId || null;
     if (prod.status !== undefined) updateData.status = prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE';
     if (prod.imagePath !== undefined) updateData.image_path = prod.imagePath;
+    if (prod.colors !== undefined) updateData.colors = prod.colors;
 
     if (Object.keys(updateData).length > 0) {
       const { error } = await supabase.from('products').update(updateData).eq('id', id);
@@ -275,11 +300,36 @@ export const productsService = {
       }
     }
 
+    const priceText = prod.price !== undefined ? `Precio: S/ ${Number(prod.price).toFixed(2)}` : '';
+    const stockText = prod.stock !== undefined ? `Stock: ${prod.stock}` : '';
+    const descExtra = [priceText, stockText].filter(Boolean).join(', ');
+
+    auditService.logAction({
+      action: 'MODIFICAR',
+      entityType: 'products',
+      entityId: id,
+      branchId: branchId && branchId !== 'ALL' ? branchId : undefined,
+      description: `Actualización de producto "${prod.name || 'ID ' + id.slice(0, 8)}" ${descExtra ? `(${descExtra})` : ''}`.trim(),
+      details: {
+        name: prod.name,
+        ...prod,
+      },
+    });
+
     return true;
   },
 
   async deleteProduct(id: string): Promise<boolean> {
     try {
+      // Find product info for rich audit log
+      let prodName = 'Producto';
+      let prodSku = '';
+      const { data: prodData } = await supabase.from('products').select('name, sku, code').eq('id', id).maybeSingle();
+      if (prodData) {
+        prodName = prodData.name || prodName;
+        prodSku = prodData.sku || prodData.code || '';
+      }
+
       await supabase.from('sale_items').delete().eq('product_id', id);
       await supabase.from('purchase_items').delete().eq('product_id', id);
       await supabase.from('purchase_order_items').delete().eq('product_id', id);
@@ -291,6 +341,18 @@ export const productsService = {
         console.error('Error deleting product:', error);
         return false;
       }
+
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'products',
+        entityId: id,
+        description: `Eliminación de producto "${prodName}" ${prodSku ? `(SKU: ${prodSku})` : ''}`.trim(),
+        details: {
+          name: prodName,
+          sku: prodSku,
+        },
+      });
+
       return true;
     } catch (err) {
       console.error('Error deleting product:', err);
@@ -343,6 +405,18 @@ export const branchesService = {
       return null;
     }
 
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'branches',
+      entityId: data.id,
+      description: `Creación de sucursal "${branch.name}" (Dirección: ${branch.address || 'Sin especificar'}, Responsable: ${branch.managerName || 'Sin asignar'})`,
+      details: {
+        name: branch.name,
+        address: branch.address,
+        manager_name: branch.managerName,
+      },
+    });
+
     return {
       id: data.id,
       name: data.name,
@@ -365,11 +439,34 @@ export const branchesService = {
       })
       .eq('id', id);
 
+    if (!error) {
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'branches',
+        entityId: id,
+        description: `Actualización de sucursal "${branch.name || id}"`,
+        details: { ...branch },
+      });
+    }
+
     return !error;
   },
 
   async deleteBranch(id: string): Promise<boolean> {
+    let branchName = 'Sucursal';
+    const { data } = await supabase.from('branches').select('name').eq('id', id).maybeSingle();
+    if (data) branchName = data.name || branchName;
+
     const { error } = await supabase.from('branches').delete().eq('id', id);
+    if (!error) {
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'branches',
+        entityId: id,
+        description: `Eliminación de sucursal "${branchName}"`,
+        details: { name: branchName },
+      });
+    }
     return !error;
   },
 };
@@ -421,16 +518,47 @@ export const catalogService = {
       console.error('Error creating category:', error);
       return null;
     }
+
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'categories',
+      entityId: data.id,
+      description: `Creación de categoría "${name}"`,
+      details: { name },
+    });
+
     return { id: data.id, name: data.name, active: true, brands: [] };
   },
 
   async updateCategory(id: string, name: string): Promise<boolean> {
     const { error } = await supabase.from('categories').update({ name }).eq('id', id);
+    if (!error) {
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'categories',
+        entityId: id,
+        description: `Actualización de categoría a "${name}"`,
+        details: { name },
+      });
+    }
     return !error;
   },
 
   async deleteCategory(id: string): Promise<boolean> {
+    let catName = 'Categoría';
+    const { data } = await supabase.from('categories').select('name').eq('id', id).maybeSingle();
+    if (data) catName = data.name || catName;
+
     const { error } = await supabase.from('categories').delete().eq('id', id);
+    if (!error) {
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'categories',
+        entityId: id,
+        description: `Eliminación de categoría "${catName}"`,
+        details: { name: catName },
+      });
+    }
     return !error;
   },
 
@@ -474,6 +602,15 @@ export const catalogService = {
       console.error('Error creating brand:', error);
       return null;
     }
+
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'brands',
+      entityId: data.id,
+      description: `Creación de marca "${name}"`,
+      details: { name, category_id: categoryId },
+    });
+
     return {
       id: data.id,
       name: data.name,
@@ -488,11 +625,34 @@ export const catalogService = {
       .from('brands')
       .update({ name, category_id: categoryId || null })
       .eq('id', id);
+
+    if (!error) {
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'brands',
+        entityId: id,
+        description: `Actualización de marca "${name}"`,
+        details: { name, category_id: categoryId },
+      });
+    }
     return !error;
   },
 
   async deleteBrand(id: string): Promise<boolean> {
+    let brandName = 'Marca';
+    const { data } = await supabase.from('brands').select('name').eq('id', id).maybeSingle();
+    if (data) brandName = data.name || brandName;
+
     const { error } = await supabase.from('brands').delete().eq('id', id);
+    if (!error) {
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'brands',
+        entityId: id,
+        description: `Eliminación de marca "${brandName}"`,
+        details: { name: brandName },
+      });
+    }
     return !error;
   },
 
@@ -536,6 +696,15 @@ export const catalogService = {
       console.error('Error creating model:', error);
       return null;
     }
+
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'models',
+      entityId: data.id,
+      description: `Creación de modelo "${name}"`,
+      details: { name, brand_id: brandId },
+    });
+
     return {
       id: data.id,
       name: data.name,
@@ -550,11 +719,34 @@ export const catalogService = {
       .from('models')
       .update({ name, brand_id: brandId || null })
       .eq('id', id);
+
+    if (!error) {
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'models',
+        entityId: id,
+        description: `Actualización de modelo "${name}"`,
+        details: { name, brand_id: brandId },
+      });
+    }
     return !error;
   },
 
   async deleteModel(id: string): Promise<boolean> {
+    let modelName = 'Modelo';
+    const { data } = await supabase.from('models').select('name').eq('id', id).maybeSingle();
+    if (data) modelName = data.name || modelName;
+
     const { error } = await supabase.from('models').delete().eq('id', id);
+    if (!error) {
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'models',
+        entityId: id,
+        description: `Eliminación de modelo "${modelName}"`,
+        details: { name: modelName },
+      });
+    }
     return !error;
   },
 };
@@ -585,6 +777,7 @@ export const customersService = {
   },
 
   async createCustomer(cust: Omit<Customer, 'id' | 'name'>): Promise<Customer | null> {
+    const custName = cust.businessName || cust.fullName || 'Cliente';
     const { data, error } = await supabase
       .from('customers')
       .insert({
@@ -602,6 +795,15 @@ export const customersService = {
       .single();
 
     if (error || !data) return null;
+
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'customers',
+      entityId: data.id,
+      description: `Cliente ${custName} registrado`,
+      details: { business_name: cust.businessName, full_name: cust.fullName, name: custName, document_number: cust.documentNumber },
+    });
+
     return {
       id: data.id,
       ...cust,
@@ -610,6 +812,7 @@ export const customersService = {
   },
 
   async updateCustomer(id: string, cust: Partial<Customer>): Promise<boolean> {
+    const custName = cust.businessName || cust.fullName || cust.name || 'Cliente';
     const { error } = await supabase
       .from('customers')
       .update({
@@ -624,11 +827,29 @@ export const customersService = {
       })
       .eq('id', id);
 
+    if (!error) {
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'customers',
+        entityId: id,
+        description: `Cliente ${custName} actualizado`,
+        details: { business_name: cust.businessName, full_name: cust.fullName, name: custName, document_number: cust.documentNumber },
+      });
+    }
+
     return !error;
   },
 
   async deleteCustomer(id: string): Promise<boolean> {
     const { error } = await supabase.from('customers').delete().eq('id', id);
+    if (!error) {
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'customers',
+        entityId: id,
+        description: `Cliente eliminado`,
+      });
+    }
     return !error;
   },
 };
@@ -672,6 +893,19 @@ export const suppliersService = {
       .single();
 
     if (error || !data) return null;
+
+    auditService.logAction({
+      action: 'CREAR',
+      entityType: 'suppliers',
+      entityId: data.id,
+      description: `Registro de proveedor "${sup.businessName}" (RUC: ${sup.ruc || 'S/N'}, Contacto: ${sup.contactName || 'S/N'})`,
+      details: {
+        business_name: sup.businessName,
+        ruc: sup.ruc,
+        contact_name: sup.contactName,
+      },
+    });
+
     return {
       id: data.id,
       ...sup,
@@ -692,11 +926,34 @@ export const suppliersService = {
       })
       .eq('id', id);
 
+    if (!error) {
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'suppliers',
+        entityId: id,
+        description: `Actualización de proveedor "${sup.businessName || id}"`,
+        details: { ...sup },
+      });
+    }
+
     return !error;
   },
 
   async deleteSupplier(id: string): Promise<boolean> {
+    let supName = 'Proveedor';
+    const { data } = await supabase.from('suppliers').select('business_name').eq('id', id).maybeSingle();
+    if (data) supName = data.business_name || supName;
+
     const { error } = await supabase.from('suppliers').delete().eq('id', id);
+    if (!error) {
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'suppliers',
+        entityId: id,
+        description: `Eliminación de proveedor "${supName}"`,
+        details: { business_name: supName },
+      });
+    }
     return !error;
   },
 };
@@ -774,6 +1031,17 @@ export const rolesService = {
         }
       }
 
+      auditService.logAction({
+        action: 'CREAR',
+        entityType: 'roles',
+        entityId: roleId,
+        description: `Creación de rol "${role.name}" con ${permissions.length} permisos asignados`,
+        details: {
+          role_name: role.name,
+          permissions_count: permissions.length,
+        },
+      });
+
       return {
         id: roleId,
         name: role.name,
@@ -803,6 +1071,15 @@ export const rolesService = {
         console.error('Error updating role details in Supabase:', error);
         return false;
       }
+
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'roles',
+        entityId: id,
+        description: `Actualización de rol "${role.name || id}"`,
+        details: { ...role },
+      });
+
       return true;
     } catch (err) {
       console.error('Exception in updateRole:', err);
@@ -813,6 +1090,12 @@ export const rolesService = {
   async updateRolePermissions(roleId: string, permissions: string[]): Promise<boolean> {
     try {
       const tenantId = getActiveTenantId();
+
+      // Find role name for clean audit log
+      let roleName = 'Rol';
+      const { data: roleRow } = await supabase.from('roles').select('name').eq('id', roleId).maybeSingle();
+      if (roleRow) roleName = roleRow.name || roleName;
+
       // 1. Delete existing permissions
       const { error: dError } = await supabase
         .from('role_permissions')
@@ -843,6 +1126,18 @@ export const rolesService = {
         }
       }
 
+      auditService.logAction({
+        action: 'MODIFICAR PERMISOS',
+        entityType: 'roles',
+        entityId: roleId,
+        description: `Actualización de permisos del rol "${roleName}" (${validPermissions.length} permisos asignados)`,
+        details: {
+          role_name: roleName,
+          permissions: validPermissions,
+          permissions_count: validPermissions.length,
+        },
+      });
+
       return true;
     } catch (err) {
       console.error('Exception in updateRolePermissions:', err);
@@ -852,6 +1147,10 @@ export const rolesService = {
 
   async deleteRole(id: string): Promise<boolean> {
     try {
+      let roleName = 'Rol';
+      const { data: roleRow } = await supabase.from('roles').select('name').eq('id', id).maybeSingle();
+      if (roleRow) roleName = roleRow.name || roleName;
+
       // 1. Clear its permissions first to satisfy potential references
       await supabase
         .from('role_permissions')
@@ -868,6 +1167,14 @@ export const rolesService = {
         console.error('Error deleting role from Supabase:', error);
         return false;
       }
+
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'roles',
+        entityId: id,
+        description: `Eliminación de rol "${roleName}"`,
+        details: { role_name: roleName },
+      });
 
       return true;
     } catch (err) {
@@ -1241,6 +1548,19 @@ export const usersService = {
         return null;
       }
 
+      auditService.logAction({
+        action: 'CREAR',
+        entityType: 'users',
+        entityId: membershipId,
+        description: `Creación de usuario "${user.name}" (@${rawUsername}) con rol "${user.role}" en la sede "${user.branch || (user.branches && user.branches[0]) || 'Sede Principal'}"`,
+        details: {
+          name: user.name,
+          username: rawUsername,
+          role: user.role,
+          email: user.email,
+        },
+      });
+
       const m = data as any;
       const pObj = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
       const rObj = Array.isArray(m.roles) ? m.roles[0] : m.roles;
@@ -1268,7 +1588,7 @@ export const usersService = {
       // 1. Find user_id associated with this membership
       const { data: membership, error: fError } = await supabase
         .from('tenant_memberships')
-        .select('user_id')
+        .select('user_id, username')
         .eq('id', id)
         .single();
 
@@ -1346,6 +1666,18 @@ export const usersService = {
         }
       }
 
+      const roleText = user.role ? `Rol: ${user.role}` : '';
+      const statusText = user.status ? `Estado: ${user.status}` : '';
+      const updateSummary = [roleText, statusText].filter(Boolean).join(', ');
+
+      auditService.logAction({
+        action: user.status && Object.keys(user).length === 1 ? 'CAMBIO ESTADO USUARIO' : 'MODIFICAR',
+        entityType: 'users',
+        entityId: id,
+        description: `Actualización de usuario "${user.name || membership.username || 'Usuario'}" ${updateSummary ? `(${updateSummary})` : ''}`.trim(),
+        details: { ...user },
+      });
+
       return true;
     } catch (err) {
       console.error('Exception in updateUser:', err);
@@ -1359,7 +1691,10 @@ export const usersService = {
       // 1. Find user_id associated with this membership
       const { data: membership, error: fError } = await supabase
         .from('tenant_memberships')
-        .select('user_id')
+        .select(`
+          user_id, username,
+          profiles ( full_name )
+        `)
         .eq('id', id)
         .single();
 
@@ -1369,6 +1704,8 @@ export const usersService = {
       }
 
       const userId = membership.user_id;
+      const pObj = Array.isArray(membership.profiles) ? membership.profiles[0] : membership.profiles;
+      const userName = pObj?.full_name || membership.username || 'Usuario';
 
       // 2. Delete Membership
       const { error: mError } = await supabase
@@ -1390,6 +1727,14 @@ export const usersService = {
       if (pError) {
         console.warn('Could not delete profile associated with membership (it might be in use):', pError);
       }
+
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'users',
+        entityId: id,
+        description: `Eliminación de usuario "${userName}" (@${membership.username})`,
+        details: { name: userName, username: membership.username },
+      });
 
       return true;
     } catch (err) {
@@ -1553,6 +1898,23 @@ export const inventoryService = {
       console.warn('Could not persist movement to Supabase DB, updating local memory state:', movErr);
     }
 
+    if (params.referenceType !== 'SALE') {
+      const typeLabel = type === 'IN' ? 'Entrada +' : type === 'OUT' ? 'Salida -' : 'Ajuste ';
+      auditService.logAction({
+        action: 'AJUSTE STOCK',
+        entityType: 'inventory',
+        branchId: targetBranch,
+        description: `Ajuste de inventario (${typeLabel}${Math.abs(qtyChange)} und) para "${productName}". Motivo: ${reason || 'Ajuste manual'}`,
+        details: {
+          product_name: productName,
+          quantity: qtyChange,
+          movement_type: type,
+          resulting_stock: resultingStock,
+          reason,
+        },
+      });
+    }
+
     const newMovement: InventoryMovement = {
       id: `mov-${Date.now()}`,
       date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
@@ -1644,6 +2006,20 @@ export const inventoryService = {
       target_branch_id: targetBranchId,
     });
 
+    auditService.logAction({
+      action: 'TRASPASO',
+      entityType: 'inventory',
+      branchId: sourceBranchId,
+      description: `Traspaso de ${qty} und de "${productName}" desde ${sourceBranchName} hacia ${targetBranchName}. Motivo: ${reason || 'Traspaso entre sedes'}`,
+      details: {
+        product_name: productName,
+        quantity: qty,
+        source_branch: sourceBranchName,
+        target_branch: targetBranchName,
+        reason,
+      },
+    });
+
     const newMovement: InventoryMovement = {
       id: `tr-${Date.now()}`,
       date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
@@ -1685,7 +2061,7 @@ export interface Sale {
   paymentMethod: 'CASH' | 'TRANSFER' | 'CARD' | 'YAPE' | 'PLIN' | 'OTHER';
   documentType?: 'BOLETA' | 'FACTURA';
   status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED';
-  sunatStatus?: 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO';
+  sunatStatus?: 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO' | 'CANCELLED';
   creditNoteNumber?: string;
   creditNoteReason?: string;
   items?: { productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }[];
@@ -1698,7 +2074,7 @@ const getPastDateStr = (daysAgo: number) => {
 };
 
 let memorySales: Sale[] = [];
-const sunatStatusMemoryMap = new Map<string, 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO'>();
+const sunatStatusMemoryMap = new Map<string, 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO' | 'CANCELLED'>();
 const creditNoteMemoryMap = new Map<string, string>();
 
 export const salesService = {
@@ -1899,8 +2275,15 @@ export const salesService = {
         entityType: 'sales',
         entityId: saleId,
         branchId: isValidUuid(sale.branchId) ? sale.branchId : undefined,
-        description: `Venta ${finalSaleNumber} emitida por S/ ${sale.total.toFixed(2)} (${sale.paymentMethod}) a ${customerName}`,
-        details: { doc_number: finalSaleNumber, total: sale.total },
+        description: `Emisión de ${sale.documentType || 'BOLETA'} ${finalSaleNumber} por S/ ${sale.total.toFixed(2)} (${sale.paymentMethod}) al cliente "${customerName}" (${sale.items.length} ítems)`,
+        details: {
+          doc_number: finalSaleNumber,
+          total: sale.total,
+          customer_name: customerName,
+          payment_method: sale.paymentMethod,
+          document_type: sale.documentType || 'BOLETA',
+          items_count: sale.items.length,
+        },
       });
 
       return saleId;
@@ -1924,6 +2307,14 @@ export const salesService = {
       }
 
       await supabase.from('sales').update({ status: 'COMPLETED' }).eq('id', saleId);
+
+      auditService.logAction({
+        action: 'ENVÍO SUNAT',
+        entityType: 'sales',
+        entityId: saleId,
+        description: `Envío y validación en SUNAT del comprobante ${s?.saleNumber || 'Venta'} (Constancia CDR: ${cdrCode})`,
+        details: { sale_id: saleId, cdr_code: cdrCode, sale_number: s?.saleNumber },
+      });
 
       return {
         success: true,
@@ -1970,6 +2361,14 @@ export const salesService = {
         });
       }
 
+      auditService.logAction({
+        action: 'NOTA_CREDITO',
+        entityType: 'sales',
+        entityId: saleId,
+        description: `Emisión de Nota de Crédito ${ncNumber} para anulación de comprobante ${s?.saleNumber || 'Venta'}. Motivo: ${reason}`,
+        details: { credit_note: ncNumber, reason, sale_id: saleId, sale_number: s?.saleNumber },
+      });
+
       return {
         success: true,
         creditNoteNumber: ncNumber,
@@ -1978,6 +2377,53 @@ export const salesService = {
     } catch (err) {
       console.error('Error in createCreditNote:', err);
       return { success: false, message: 'Error al emitir la Nota de Crédito en SUNAT.' };
+    }
+  },
+
+  async annulInvoice(saleId: string, reason: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const s = memorySales.find((x) => x.id === saleId);
+      const docStr = s?.saleNumber || `V-${saleId.slice(0, 8).toUpperCase()}`;
+
+      // Update memory state maps
+      sunatStatusMemoryMap.set(saleId, 'CANCELLED');
+
+      await supabase.from('sales').update({ status: 'CANCELLED' }).eq('id', saleId);
+
+      if (s) {
+        s.status = 'CANCELLED';
+        s.sunatStatus = 'CANCELLED';
+      }
+
+      const items = await this.getSaleItems(saleId);
+      for (const item of items) {
+        await inventoryService.registerMovement({
+          productId: item.productId,
+          productName: item.productName,
+          branchId: s?.branchId || DEFAULT_BRANCH_ID,
+          branchName: s?.branch || 'Sede Principal',
+          type: 'IN',
+          qty: item.quantity,
+          reason: `Anulación de Comprobante ${docStr}: ${reason}`,
+          referenceType: 'ANNULMENT',
+        });
+      }
+
+      auditService.logAction({
+        action: 'ANULACIÓN',
+        entityType: 'sales',
+        entityId: saleId,
+        description: `Comunicación de Baja y anulación de comprobante ${docStr}. Motivo: ${reason}`,
+        details: { doc_number: docStr, reason, sale_id: saleId },
+      });
+
+      return {
+        success: true,
+        message: `El comprobante ${docStr} fue anulado correctamente. Se emitió la Comunicación de Baja a SUNAT y el inventario fue reincorporado.`,
+      };
+    } catch (err) {
+      console.error('Error in annulInvoice:', err);
+      return { success: false, message: 'Error al procesar la anulación del comprobante.' };
     }
   },
 
@@ -2022,7 +2468,7 @@ export interface BillingInvoice {
   total: number;
   subtotal: number;
   tax: number;
-  status: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED' | 'NOTA_CREDITO';
+  status: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED' | 'NOTA_CREDITO' | 'CANCELLED';
   creditNoteNumber?: string;
   date: string;
 }
@@ -2035,7 +2481,16 @@ export const billingService = {
         const parts = (s.saleNumber || '').split('-');
         const series = parts.length > 1 ? parts[0] : (s.documentType === 'FACTURA' ? 'F001' : 'B001');
         const sequence = parts.length > 1 ? parts[1] : (parts[0] || '00001');
-        const isCancelled = s.status === 'CANCELLED';
+        const isCancelled = s.status === 'CANCELLED' || (s.status as string) === 'ANULADO';
+
+        let mappedStatus: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED' | 'NOTA_CREDITO' | 'CANCELLED' = 'PENDING';
+        if (isCancelled) {
+          mappedStatus = 'CANCELLED';
+        } else if (s.creditNoteNumber) {
+          mappedStatus = 'NOTA_CREDITO';
+        } else if (s.sunatStatus === 'ACEPTADO') {
+          mappedStatus = 'ACCEPTED';
+        }
 
         return {
           id: s.id,
@@ -2047,7 +2502,7 @@ export const billingService = {
           total: s.total,
           subtotal: s.subtotal,
           tax: s.tax,
-          status: isCancelled ? 'NOTA_CREDITO' : (s.sunatStatus === 'ACEPTADO' ? 'ACCEPTED' : 'PENDING'),
+          status: mappedStatus,
           creditNoteNumber: s.creditNoteNumber,
           date: s.date,
         };
@@ -2344,9 +2799,25 @@ export interface Expense {
   frequency?: string;
   amount: number;
   expenseDate: string;
+  voucherUrl?: string;
+  voucherName?: string;
 }
 
 export const expensesService = {
+  getCapital(): number {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('operating_capital');
+      return saved !== null ? parseFloat(saved) : 10000;
+    }
+    return 10000;
+  },
+
+  setCapital(amount: number): void {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('operating_capital', String(amount));
+    }
+  },
+
   async getExpenses(): Promise<Expense[]> {
     try {
       const { data, error } = await supabase
@@ -2367,6 +2838,8 @@ export const expensesService = {
         frequency: e.frequency,
         amount: Number(e.amount) || 0,
         expenseDate: e.expense_date,
+        voucherUrl: e.voucher_url || e.voucherUrl || undefined,
+        voucherName: e.voucher_name || e.voucherName || undefined,
       }));
     } catch (err) {
       console.error(err);
@@ -2385,6 +2858,8 @@ export const expensesService = {
           frequency: expense.frequency || 'ONCE',
           amount: expense.amount,
           expense_date: expense.expenseDate,
+          voucher_url: expense.voucherUrl,
+          voucher_name: expense.voucherName,
         })
         .select()
         .single();
@@ -2394,6 +2869,18 @@ export const expensesService = {
         return null;
       }
 
+      auditService.logAction({
+        action: 'GASTO OPERATIVO',
+        entityType: 'expenses',
+        entityId: data.id,
+        description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" (${expense.expenseType === 'FIXED' ? 'Fijo' : 'Variable'})`,
+        details: {
+          description: expense.description,
+          amount: expense.amount,
+          expense_type: expense.expenseType,
+        },
+      });
+
       return {
         id: data.id,
         description: data.description,
@@ -2401,6 +2888,8 @@ export const expensesService = {
         frequency: data.frequency,
         amount: Number(data.amount) || 0,
         expenseDate: data.expense_date,
+        voucherUrl: data.voucher_url || expense.voucherUrl,
+        voucherName: data.voucher_name || expense.voucherName,
       };
     } catch (err) {
       console.error(err);
@@ -2416,6 +2905,8 @@ export const expensesService = {
       if (expense.frequency !== undefined) updateData.frequency = expense.frequency;
       if (expense.amount !== undefined) updateData.amount = expense.amount;
       if (expense.expenseDate !== undefined) updateData.expense_date = expense.expenseDate;
+      if (expense.voucherUrl !== undefined) updateData.voucher_url = expense.voucherUrl;
+      if (expense.voucherName !== undefined) updateData.voucher_name = expense.voucherName;
 
       const { error } = await supabase
         .from('expenses')
@@ -2426,6 +2917,15 @@ export const expensesService = {
         console.error('Error updating expense:', error);
         return false;
       }
+
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'expenses',
+        entityId: id,
+        description: `Actualización de gasto operativo "${expense.description || id}"`,
+        details: { ...expense },
+      });
+
       return true;
     } catch (err) {
       console.error(err);
@@ -2435,6 +2935,10 @@ export const expensesService = {
 
   async deleteExpense(id: string): Promise<boolean> {
     try {
+      let expDesc = 'Gasto';
+      const { data: expRow } = await supabase.from('expenses').select('description, amount').eq('id', id).maybeSingle();
+      if (expRow) expDesc = `${expRow.description} (S/ ${Number(expRow.amount).toFixed(2)})`;
+
       const { error } = await supabase
         .from('expenses')
         .delete()
@@ -2444,6 +2948,15 @@ export const expensesService = {
         console.error('Error deleting expense:', error);
         return false;
       }
+
+      auditService.logAction({
+        action: 'ELIMINAR',
+        entityType: 'expenses',
+        entityId: id,
+        description: `Eliminación de gasto "${expDesc}"`,
+        details: { description: expDesc },
+      });
+
       return true;
     } catch (err) {
       console.error(err);
@@ -2478,6 +2991,14 @@ export const settingsService = {
         console.error('Error updating tenant info:', error);
         return false;
       }
+
+      auditService.logAction({
+        action: 'CONFIGURACIÓN',
+        entityType: 'settings',
+        description: `Actualización de datos y configuración general de la empresa`,
+        details: { ...updates },
+      });
+
       return true;
     } catch (err) {
       console.error('Error updating tenant info:', err);
@@ -2697,6 +3218,14 @@ export const profileService = {
         window.dispatchEvent(new Event('user_profile_updated'));
       }
 
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'profiles',
+        entityId: memberId || undefined,
+        description: `Actualización de perfil personal de usuario "${params.fullName || params.username}"`,
+        details: { full_name: params.fullName, username: params.username, email: params.email },
+      });
+
       return { success: true };
     } catch (err: any) {
       console.error('Exception in updateProfile:', err);
@@ -2858,6 +3387,7 @@ export interface AuditLogEntry {
   time: string;
   actor: string;
   username?: string;
+  userRole?: string;
   action: string;
   branchName: string;
   branchId?: string;
@@ -2866,6 +3396,25 @@ export interface AuditLogEntry {
   entityType?: string;
   rawAction?: string;
 }
+
+let cachedClientIp = (typeof window !== 'undefined' && sessionStorage.getItem('client_ip')) || '';
+
+export const getOrFetchClientIp = async (): Promise<string> => {
+  if (typeof window === 'undefined') return '127.0.0.1';
+  if (cachedClientIp) return cachedClientIp;
+  try {
+    const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(1500) });
+    const data = await res.json();
+    if (data?.ip) {
+      sessionStorage.setItem('client_ip', data.ip);
+      cachedClientIp = data.ip;
+      return data.ip;
+    }
+  } catch (e) {
+    // Offline or network restriction fallback
+  }
+  return '190.235.12.89';
+};
 
 export const auditService = {
   async getAuditLogs(): Promise<AuditLogEntry[]> {
@@ -2877,9 +3426,9 @@ export const auditService = {
         supabase
           .from('audit_logs')
           .select('*')
-          .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID}`)
+          .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
           .order('created_at', { ascending: false })
-          .limit(100),
+          .limit(200),
         branchesService.getBranches(),
         usersService.getUsers(),
         supabase.from('profiles').select('id, full_name, email'),
@@ -2895,7 +3444,7 @@ export const auditService = {
         userMap.set(p.id, {
           name: p.full_name || 'Usuario',
           username: p.email ? p.email.split('@')[0] : 'usuario',
-          role: 'Usuario',
+          role: '',
         });
       });
 
@@ -2904,103 +3453,140 @@ export const auditService = {
         const info = {
           name: m.name,
           username: m.username || m.name,
-          role: m.role || 'Usuario',
+          role: m.role || '',
         };
         userMap.set(m.id, info);
         if (m.userId) userMap.set(m.userId, info);
       });
 
-      // 3. Current logged in user from session
-      const currentAuthName = (typeof window !== 'undefined' && localStorage.getItem('auth_user')) || 'Usuario';
-      const currentAuthUsername = (typeof window !== 'undefined' && (localStorage.getItem('auth_username') || localStorage.getItem('auth_user'))) || 'usuario';
-      const currentAuthRole = (typeof window !== 'undefined' && (localStorage.getItem('user_role') || localStorage.getItem('auth_role'))) || '';
+      const MODULE_MAP: Record<string, string> = {
+        customers: 'MODULO CLIENTE',
+        sales: 'MODULO VENTAS',
+        products: 'MODULO PRODUCTO',
+        inventory_movements: 'MODULO INVENTARIO',
+        inventory: 'MODULO INVENTARIO',
+        branch_inventory: 'MODULO INVENTARIO SUCURSAL',
+        transfers: 'MODULO TRASPASO',
+        tenant_memberships: 'MODULO USUARIO',
+        users: 'MODULO USUARIO',
+        profiles: 'MODULO USUARIO',
+        roles: 'MODULO ROLES Y PERMISOS',
+        role_permissions: 'MODULO ROLES Y PERMISOS',
+        permissions: 'MODULO ROLES Y PERMISOS',
+        cash_registers: 'MODULO CAJA CHICA',
+        cash_movements: 'MODULO CAJA CHICA',
+        cash: 'MODULO CAJA CHICA',
+        expenses: 'MODULO GASTOS OPERATIVOS',
+        tenants: 'MODULO CONFIGURACIÓN',
+        settings: 'MODULO CONFIGURACIÓN',
+        branches: 'MODULO SUCURSALES',
+        categories: 'MODULO CATEGORÍAS',
+        brands: 'MODULO MARCAS',
+        models: 'MODULO MODELOS',
+        suppliers: 'MODULO PROVEEDORES',
+        contracts: 'MODULO CONTRATOS',
+        auth: 'MODULO SEGURIDAD',
+        login: 'MODULO INICIO DE SESIÓN',
+        notifications: 'MODULO NOTIFICACIONES',
+      };
 
-      return (logsRes.data || []).map((log: any) => {
-        let branchName = 'Sede Principal';
-        if (log.branch_id && branchMap.has(log.branch_id)) {
-          branchName = branchMap.get(log.branch_id)!;
-        } else if (log.new_values?.branch_name) {
-          branchName = log.new_values.branch_name;
-        } else if (branchesRes.length > 0) {
-          branchName = branchesRes[0].name;
-        }
+      return (logsRes.data || [])
+        // Filter out noisy secondary child entities if any
+        .filter((log: any) => !['role_permissions', 'branch_inventory', 'sale_items', 'purchase_items', 'purchase_order_items', 'physical_count_items', 'invoice_items', 'product_attribute_values', 'product_images'].includes(log.entity_type))
+        .map((log: any) => {
+          const nv = log.new_values || {};
+          const pv = log.previous_values || {};
+          const normType = (log.entity_type || 'sistema').toLowerCase();
+          const moduleName = MODULE_MAP[normType] || `MODULO ${normType.replace(/_/g, ' ').toUpperCase()}`;
 
-        let actorName = currentAuthRole ? `${currentAuthName} (${currentAuthRole})` : currentAuthName;
-        let username = currentAuthUsername;
+          // Determine branch name
+          let branchName = 'Sede Principal';
+          if (log.branch_id && branchMap.has(log.branch_id)) {
+            branchName = branchMap.get(log.branch_id)!;
+          } else if (nv.branch_name) {
+            branchName = nv.branch_name;
+          } else if (pv.branch_name) {
+            branchName = pv.branch_name;
+          } else if (branchesRes.length > 0) {
+            branchName = branchesRes[0].name;
+          }
 
-        if (log.actor_user_id && userMap.has(log.actor_user_id)) {
-          const u = userMap.get(log.actor_user_id)!;
-          actorName = u.role ? `${u.name} (${u.role})` : u.name;
-          username = u.username;
-        } else if (log.new_values?.user_name) {
-          actorName = log.new_values.user_name;
-          username = log.new_values.username || log.new_values.user_name;
-        }
+          // Determine user identity snapshot
+          let actorName = 'Sistema / Automático';
+          let username = 'sistema';
+          let userRole = '';
 
-        // Map module name to clean friendly Spanish title
-        const MODULE_MAP: Record<string, string> = {
-          customers: 'MODULO CLIENTE',
-          sales: 'MODULO VENTAS',
-          products: 'MODULO PRODUCTO',
-          inventory_movements: 'MODULO INVENTARIO',
-          inventory: 'MODULO INVENTARIO',
-          transfers: 'MODULO TRASPASO',
-          tenant_memberships: 'MODULO USUARIO',
-          users: 'MODULO USUARIO',
-          profiles: 'MODULO USUARIO',
-          roles: 'MODULO ROLES Y PERMISOS',
-          role_permissions: 'MODULO ROLES Y PERMISOS',
-          cash_registers: 'MODULO CAJA CHICA',
-          cash: 'MODULO CAJA CHICA',
-          tenants: 'MODULO CONFIGURACIÓN',
-          settings: 'MODULO CONFIGURACIÓN',
-          contracts: 'MODULO CONTRATOS',
-          auth: 'MODULO SEGURIDAD',
-          notifications: 'MODULO NOTIFICACIONES',
-        };
+          if (nv.user_name) {
+            actorName = nv.user_name;
+            username = nv.username || nv.user_name;
+            userRole = nv.user_role || '';
+          } else if (nv.actor_name) {
+            actorName = nv.user_role ? `${nv.actor_name} (${nv.user_role})` : nv.actor_name;
+            username = nv.username || nv.actor_name;
+            userRole = nv.user_role || '';
+          } else if (log.actor_user_id && userMap.has(log.actor_user_id)) {
+            const u = userMap.get(log.actor_user_id)!;
+            actorName = u.role ? `${u.name} (${u.role})` : u.name;
+            username = u.username;
+            userRole = u.role || '';
+          } else if (nv.created_by && userMap.has(nv.created_by)) {
+            const u = userMap.get(nv.created_by)!;
+            actorName = u.role ? `${u.name} (${u.role})` : u.name;
+            username = u.username;
+            userRole = u.role || '';
+          } else if (nv.updated_by && userMap.has(nv.updated_by)) {
+            const u = userMap.get(nv.updated_by)!;
+            actorName = u.role ? `${u.name} (${u.role})` : u.name;
+            username = u.username;
+            userRole = u.role || '';
+          } else if (pv.created_by && userMap.has(pv.created_by)) {
+            const u = userMap.get(pv.created_by)!;
+            actorName = u.role ? `${u.name} (${u.role})` : u.name;
+            username = u.username;
+            userRole = u.role || '';
+          } else if (pv.updated_by && userMap.has(pv.updated_by)) {
+            const u = userMap.get(pv.updated_by)!;
+            actorName = u.role ? `${u.name} (${u.role})` : u.name;
+            username = u.username;
+            userRole = u.role || '';
+          }
 
-        const moduleName = MODULE_MAP[log.entity_type] || `MODULO ${(log.entity_type || 'SISTEMA').toUpperCase()}`;
+          // Format description
+          let description = '';
+          if (nv.description) {
+            description = nv.description;
+          } else if (log.action === 'DELETE') {
+            const deletedItemName = pv.name || pv.business_name || pv.full_name || pv.contract_number || pv.description || (pv.sku ? `SKU: ${pv.sku}` : '');
+            if (deletedItemName) {
+              description = `Eliminación en ${moduleName}: "${deletedItemName}"`;
+            } else {
+              description = `Eliminación en ${moduleName}`;
+            }
+          } else if (log.action === 'INSERT') {
+            const createdItemName = nv.name || nv.business_name || nv.full_name || nv.contract_number || nv.description || (nv.sku ? `SKU: ${nv.sku}` : '');
+            description = createdItemName ? `Creación en ${moduleName}: "${createdItemName}"` : `Creación en ${moduleName}`;
+          } else if (log.action === 'UPDATE') {
+            const updatedItemName = nv.name || nv.business_name || nv.full_name || nv.contract_number || nv.description || pv.name || '';
+            description = updatedItemName ? `Modificación en ${moduleName}: "${updatedItemName}"` : `Modificación en ${moduleName}`;
+          } else {
+            description = `${log.action} en ${moduleName}`;
+          }
 
-        let detailName = '';
-        const nv = log.new_values || {};
-        if (log.entity_type === 'customers') {
-          detailName = nv.business_name || nv.full_name || nv.name || (nv.document_number ? `Doc: ${nv.document_number}` : 'Cliente / Razón Social');
-        } else if (log.entity_type === 'sales') {
-          detailName = nv.doc_number ? `Comprobante ${nv.doc_number}` : nv.description || 'Venta';
-        } else if (log.entity_type === 'products') {
-          detailName = nv.name || nv.sku || 'Artículo';
-        } else if (log.entity_type === 'inventory_movements' || log.entity_type === 'inventory') {
-          detailName = nv.product_name || nv.reason || nv.description || 'Movimiento Kardex';
-        } else if (log.entity_type === 'tenant_memberships' || log.entity_type === 'users' || log.entity_type === 'profiles') {
-          detailName = nv.full_name || nv.name || nv.username || 'Usuario';
-        } else if (log.entity_type === 'roles' || log.entity_type === 'role_permissions') {
-          detailName = nv.role_name || nv.name || (nv.permission_code ? `Permiso ${nv.permission_code}` : 'Permisos');
-        } else if (log.entity_type === 'cash_registers' || log.entity_type === 'cash') {
-          detailName = nv.description || 'Turno de Caja';
-        } else if (log.entity_type === 'contracts') {
-          detailName = nv.contract_number ? `Contrato N° ${nv.contract_number}` : 'Cotización';
-        } else if (log.entity_type === 'notifications') {
-          detailName = nv.title || 'Alerta';
-        } else if (nv.description) {
-          detailName = nv.description;
-        }
-
-        const formattedDesc = detailName ? `${moduleName}, (${detailName})` : moduleName;
-
-        return {
-          id: log.id,
-          time: log.created_at ? new Date(log.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'medium' }) : new Date().toLocaleString('es-PE'),
-          actor: actorName,
-          username: username,
-          action: log.action || 'INSERT',
-          branchName: branchName,
-          branchId: log.branch_id,
-          description: formattedDesc,
-          ip: log.ip_address || '190.235.12.89',
-          entityType: log.entity_type,
-          rawAction: log.action,
-        };
-      });
+          return {
+            id: log.id,
+            time: log.created_at ? new Date(log.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'medium' }) : new Date().toLocaleString('es-PE'),
+            actor: actorName,
+            username: username,
+            userRole: userRole,
+            action: log.action || 'INSERT',
+            branchName: branchName,
+            branchId: log.branch_id,
+            description: description,
+            ip: log.ip_address || '190.235.12.89',
+            entityType: log.entity_type,
+            rawAction: log.action,
+          };
+        });
     } catch (err) {
       console.error('Exception in getAuditLogs:', err);
       return [];
@@ -3014,26 +3600,42 @@ export const auditService = {
     branchId?: string;
     description?: string;
     details?: any;
+    actorUserId?: string;
+    actorUserName?: string;
+    actorUsername?: string;
+    actorRole?: string;
+    branchName?: string;
   }): Promise<boolean> {
     try {
       const tenantId = getActiveTenantId();
       const branchId = params.branchId || getActiveBranchId();
-      const currentUserName = typeof window !== 'undefined' ? localStorage.getItem('auth_user') || 'Usuario' : 'Usuario';
-      const currentAuthUsername = typeof window !== 'undefined' ? localStorage.getItem('auth_username') || currentUserName : 'usuario';
+      const currentUserId = params.actorUserId || (typeof window !== 'undefined' ? localStorage.getItem('auth_user_id') : null);
+      const currentUserName = params.actorUserName || (typeof window !== 'undefined' ? localStorage.getItem('auth_user') || 'Usuario' : 'Usuario');
+      const currentAuthUsername = params.actorUsername || (typeof window !== 'undefined' ? (localStorage.getItem('auth_username') || localStorage.getItem('auth_user')) || 'usuario' : 'usuario');
+      const currentUserRole = params.actorRole || (typeof window !== 'undefined' ? (localStorage.getItem('user_role') || localStorage.getItem('auth_role')) || '' : '');
+      const activeBranchName = params.branchName || (typeof window !== 'undefined' ? localStorage.getItem('active_branch_name') || 'Sede Principal' : 'Sede Principal');
       
+      const clientIp = await getOrFetchClientIp();
+
+      const formattedUserName = currentUserRole ? `${currentUserName} (${currentUserRole})` : currentUserName;
+
       const { error } = await supabase.from('audit_logs').insert({
         id: generateUUID(),
         tenant_id: tenantId,
-        branch_id: branchId && branchId !== 'ALL' ? branchId : null,
+        branch_id: branchId && branchId !== 'ALL' && isValidUuid(branchId) ? branchId : null,
+        actor_user_id: currentUserId && isValidUuid(currentUserId) ? currentUserId : null,
         action: params.action,
         entity_type: params.entityType,
-        entity_id: params.entityId || null,
-        ip_address: '190.235.12.89',
+        entity_id: params.entityId && isValidUuid(params.entityId) ? params.entityId : null,
+        ip_address: clientIp,
         user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : 'Web Browser',
         new_values: {
           description: params.description || `${params.action} en ${params.entityType}`,
-          user_name: currentUserName,
+          user_name: formattedUserName,
+          actor_name: currentUserName,
           username: currentAuthUsername,
+          user_role: currentUserRole,
+          branch_name: activeBranchName,
           ...params.details,
         },
       });

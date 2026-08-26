@@ -130,6 +130,7 @@ export default function ProductsPage() {
       minStock: 5,
       status: 'ACTIVE',
       imagePath: '',
+      colors: [],
     });
     setImageUrlInput('');
     setMarketCompetitors([]);
@@ -138,7 +139,7 @@ export default function ProductsPage() {
   };
 
   const openEditModal = (product: Product) => {
-    setSelectedProduct(product);
+    setSelectedProduct({ ...product, colors: product.colors || [] });
     setImageUrlInput(product.imagePath || '');
     setMarketCompetitors([]);
     setIsSearchingMarket(false);
@@ -228,6 +229,7 @@ export default function ProductsPage() {
       const matchedModel = models.find((m) => m.name === selectedProduct.model || m.id === selectedProduct.modelId);
 
       const finalImagePath = selectedProduct.imagePath || imageUrlInput || '';
+      const cleanColors = (selectedProduct.colors || []).filter((c) => c.color && c.color.trim() !== '');
 
       if (selectedProduct.id) {
         // Edit existing
@@ -239,6 +241,7 @@ export default function ProductsPage() {
             brandId: matchedBrand?.id,
             modelId: matchedModel?.id || selectedProduct.modelId || undefined,
             imagePath: finalImagePath,
+            colors: cleanColors,
           },
           activeBranchId
         );
@@ -268,6 +271,7 @@ export default function ProductsPage() {
             minStock: Number(selectedProduct.minStock) || 5,
             status: selectedProduct.status || 'ACTIVE',
             imagePath: finalImagePath,
+            colors: cleanColors,
           },
           activeBranchId
         );
@@ -326,6 +330,29 @@ export default function ProductsPage() {
                 </>
               )}
             </div>
+            {row.colors && row.colors.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2 items-center">
+                {row.colors.map((c, i) => {
+                  const isWhite = c.hex?.toLowerCase() === '#ffffff' || c.hex?.toLowerCase() === '#fff';
+                  return (
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-bold rounded-lg bg-surface border border-color text-primary shadow-xs hover:shadow-sm transition-all"
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full shrink-0 shadow-xs"
+                        style={{
+                          backgroundColor: c.hex || '#94a3b8',
+                          boxShadow: isWhite ? 'inset 0 0 0 1px rgba(0,0,0,0.3)' : '0 1px 2px rgba(0,0,0,0.15)',
+                        }}
+                      />
+                      <span>{c.color}:</span>
+                      <span className="font-mono text-primary-600 font-extrabold">{c.stock} u.</span>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       ),
@@ -800,6 +827,117 @@ export default function ProductsPage() {
                       {selectedProduct?.status === 'ACTIVE' ? 'Habilitado (Activo en POS)' : 'Inactivo'}
                     </label>
                   </div>
+                </div>
+
+                {/* SECCIÓN DE COLORES Y VARIANTES DE STOCK */}
+                <div className="col-span-full border border-color rounded-xl p-4 bg-app/50 space-y-3 mt-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-xs text-primary flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-primary-600 inline-block"></span>
+                        Colores y Desglose de Stock por Color
+                      </h4>
+                      <p className="text-[11px] text-secondary">
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm text-xs font-bold flex items-center gap-1"
+                      onClick={() => {
+                        const currentColors = selectedProduct?.colors || [];
+                        const defaultHexes = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#1e293b', '#ffffff'];
+                        const nextHex = defaultHexes[currentColors.length % defaultHexes.length];
+                        const newColors = [...currentColors, { color: '', hex: nextHex, stock: 1 }];
+                        const totalStock = newColors.reduce((sum, c) => sum + (Number(c.stock) || 0), 0);
+                        setSelectedProduct({
+                          ...selectedProduct,
+                          colors: newColors,
+                          stock: totalStock,
+                        });
+                      }}
+                    >
+                      <Plus size={14} /> Agregar Color
+                    </button>
+                  </div>
+
+                  {selectedProduct?.colors && selectedProduct.colors.length > 0 ? (
+                    <div className="space-y-2 pt-1">
+                      {selectedProduct.colors.map((c, idx) => (
+                        <div key={idx} className="flex items-center gap-2 p-2 rounded-lg border border-color bg-surface">
+                          <input
+                            type="color"
+                            value={c.hex || '#ef4444'}
+                            onChange={(e) => {
+                              const updated = [...(selectedProduct.colors || [])];
+                              updated[idx] = { ...updated[idx], hex: e.target.value };
+                              setSelectedProduct({ ...selectedProduct, colors: updated });
+                            }}
+                            className="w-8 h-8 rounded border-none cursor-pointer shrink-0 bg-transparent"
+                            title="Seleccionar tono visual"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Nombre del color (ej: Rojo, Blanco, Negro)"
+                            value={c.color}
+                            onChange={(e) => {
+                              const updated = [...(selectedProduct.colors || [])];
+                              updated[idx] = { ...updated[idx], color: e.target.value };
+                              setSelectedProduct({ ...selectedProduct, colors: updated });
+                            }}
+                            className="form-control text-xs font-semibold flex-1"
+                            required
+                          />
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="text-xs text-secondary font-medium">Cant:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={c.stock}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                const updated = [...(selectedProduct.colors || [])];
+                                updated[idx] = { ...updated[idx], stock: val };
+                                const totalStock = updated.reduce((sum, item) => sum + (Number(item.stock) || 0), 0);
+                                setSelectedProduct({
+                                  ...selectedProduct,
+                                  colors: updated,
+                                  stock: totalStock,
+                                });
+                              }}
+                              className="form-control text-xs font-bold w-20 text-center"
+                              required
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className="text-danger-500 hover:text-danger-700 p-1 rounded-md hover:bg-danger-50 dark:hover:bg-danger-950/40 shrink-0"
+                            onClick={() => {
+                              const updated = selectedProduct.colors?.filter((_, i) => i !== idx) || [];
+                              const totalStock = updated.length > 0 
+                                ? updated.reduce((sum, item) => sum + (Number(item.stock) || 0), 0)
+                                : selectedProduct?.stock || 0;
+                              setSelectedProduct({
+                                ...selectedProduct,
+                                colors: updated,
+                                stock: totalStock,
+                              });
+                            }}
+                            title="Eliminar este color"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="text-right text-xs font-bold text-primary pt-1">
+                        Stock acumulado por colores: <span className="text-primary-600 font-mono text-sm">{selectedProduct.colors.reduce((s, c) => s + (Number(c.stock) || 0), 0)} unidades</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-2 text-xs text-secondary italic border border-dashed border-color rounded-lg">
+                      No hay colores configurados. Haz clic en "Agregar Color" para definir las cantidades por color.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, TrendingUp, DollarSign, Package, ShoppingCart } from 'lucide-react';
 import ExcelJS from 'exceljs';
-import { PageHeader, Button, Card, CardHeader, CardBody, StatCard, Badge, SuggestionChip } from '../components/ui';
+import { PageHeader, Button, Card, CardHeader, CardBody, StatCard, Badge, SuggestionChip, DataTable } from '../components/ui';
 import { reportsService, ReportSummary, settingsService } from '../lib/db-services';
 
 export default function ReportsPage() {
@@ -837,103 +837,126 @@ export default function ReportsPage() {
             <div className="hidden md:block"></div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Card 1: Top 5 Productos Más Vendidos */}
-            <Card>
-              <CardHeader title="Top 5 Productos Más Vendidos" subtitle="Ranking de artículos con mayor volumen y facturación" />
-              <CardBody>
-                <div className="space-y-3">
-                  {summary.topProducts.length === 0 ? (
-                    <div className="text-center py-8 text-xs text-secondary">
-                      No se registraron ventas en este periodo
-                    </div>
-                  ) : (
-                    summary.topProducts.map((item, i) => {
-                      const maxTotal = Math.max(...summary.topProducts.map(p => p.total), 1);
-                      const barPct = Math.round((item.total / maxTotal) * 100);
-                      return (
-                        <div
-                          key={i}
-                          className="p-3.5 rounded-xl bg-surface border border-color transition-all hover:border-primary-300 dark:hover:border-primary-700 shadow-2xs space-y-2.5"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                              <Badge variant={i === 0 ? 'warning' : 'primary'} className="shrink-0 font-extrabold px-2 py-0.5 text-xs">
-                                #{i + 1}
-                              </Badge>
-                              <div className="min-w-0">
-                                <span className="font-bold text-sm text-primary block truncate leading-tight">
-                                  {item.name}
-                                </span>
-                                <div className="mt-1 flex items-center gap-1.5">
-                                  <SuggestionChip label={`${item.sales} unid. vendidas`} size="xs" />
-                                </div>
-                              </div>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <span className="font-bold text-sm text-primary block font-mono">
-                                {formatMoney(item.total)}
-                              </span>
-                              <span className="text-[11px] text-secondary font-medium block">
-                                Facturación ({barPct}%)
-                              </span>
-                            </div>
-                          </div>
-                          <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                            <div
-                              className="bg-primary-600 h-full rounded-full transition-all duration-300"
-                              style={{ width: `${barPct}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </CardBody>
-            </Card>
+          {(() => {
+            const topProductsData = summary.topProducts.map((p, idx) => ({
+              ...p,
+              rank: idx + 1,
+            }));
 
-            {/* Card 2: Ventas por Medio de Pago */}
-            <Card>
-              <CardHeader title="Ventas por Medio de Pago" subtitle="Distribución porcentual por canal de cobro" />
-              <CardBody>
-                <div className="space-y-3">
-                  {summary.salesByPayment.length === 0 ? (
-                    <div className="text-center py-8 text-xs text-secondary">
-                      Sin datos de pago este periodo
+            const topProductsColumns = [
+              {
+                key: 'rank',
+                header: '# POSICIÓN',
+                render: (r: { rank: number }) => (
+                  <Badge variant={r.rank === 1 ? 'warning' : 'primary'} className="font-extrabold px-2.5 py-0.5 text-xs">
+                    #{r.rank}
+                  </Badge>
+                ),
+              },
+              {
+                key: 'name',
+                header: 'PRODUCTO',
+                render: (r: { name: string; sales: number; total: number }) => (
+                  <div>
+                    <span className="font-bold text-sm text-primary block leading-tight">{r.name}</span>
+                    <div className="mt-1">
+                      <SuggestionChip label={`${r.sales} unid. vendidas`} size="xs" />
                     </div>
-                  ) : (
-                    summary.salesByPayment.map((item, i) => (
-                      <div
-                        key={i}
-                        className="p-3.5 rounded-xl bg-surface border border-color transition-all hover:border-primary-300 dark:hover:border-primary-700 shadow-2xs space-y-2.5"
-                      >
-                        <div className="flex justify-between items-center gap-3">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <SuggestionChip label={item.method} size="sm" />
-                          </div>
-                          <div className="flex items-center gap-2.5 shrink-0">
-                            <span className="font-bold text-sm text-primary font-mono">
-                              {formatMoney(item.amount)}
-                            </span>
-                            <Badge variant="primary" className="font-bold">
-                              {item.pct}%
-                            </Badge>
-                          </div>
-                        </div>
-                        <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                  </div>
+                ),
+              },
+              {
+                key: 'total',
+                header: 'FACTURACIÓN TOTAL',
+                render: (r: { name: string; sales: number; total: number }) => {
+                  const maxTotal = Math.max(...(summary.topProducts.map((p) => p.total) || [1]), 1);
+                  const barPct = Math.round((r.total / maxTotal) * 100);
+                  return (
+                    <div className="space-y-1 text-right">
+                      <span className="font-bold text-sm text-primary font-mono block">
+                        {formatMoney(r.total)}
+                      </span>
+                      <div className="flex items-center gap-2 justify-end">
+                        <span className="text-[11px] text-secondary font-medium">({barPct}%)</span>
+                        <div className="w-16 bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden inline-block">
                           <div
-                            className="bg-primary-600 h-full rounded-full transition-all duration-300"
-                            style={{ width: `${item.pct}%` }}
+                            className="bg-primary-600 h-full rounded-full"
+                            style={{ width: `${barPct}%` }}
                           />
                         </div>
                       </div>
-                    ))
-                  )}
-                </div>
-              </CardBody>
-            </Card>
-          </div>
+                    </div>
+                  );
+                },
+              },
+            ];
+
+            const salesByPaymentColumns = [
+              {
+                key: 'method',
+                header: 'MEDIO DE PAGO',
+                render: (r: { method: string; amount: number; pct: number }) => (
+                  <SuggestionChip label={r.method} size="sm" />
+                ),
+              },
+              {
+                key: 'amount',
+                header: 'MONTO FACTURADO',
+                render: (r: { method: string; amount: number; pct: number }) => (
+                  <span className="font-bold text-sm text-primary font-mono">
+                    {formatMoney(r.amount)}
+                  </span>
+                ),
+              },
+              {
+                key: 'pct',
+                header: 'PARTICIPACIÓN',
+                render: (r: { method: string; amount: number; pct: number }) => (
+                  <div className="flex items-center justify-end gap-2">
+                    <Badge variant="primary" className="font-extrabold text-xs">
+                      {r.pct}%
+                    </Badge>
+                    <div className="w-16 bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden inline-block">
+                      <div
+                        className="bg-primary-600 h-full rounded-full"
+                        style={{ width: `${r.pct}%` }}
+                      />
+                    </div>
+                  </div>
+                ),
+              },
+            ];
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Card 1: Top 5 Productos Más Vendidos */}
+                <Card>
+                  <CardHeader title="Top 5 Productos Más Vendidos" subtitle="Ranking de artículos con mayor volumen y facturación" />
+                  <CardBody>
+                    <DataTable
+                      columns={topProductsColumns}
+                      data={topProductsData}
+                      searchable={false}
+                      emptyMessage="No se registraron ventas en este periodo"
+                    />
+                  </CardBody>
+                </Card>
+
+                {/* Card 2: Ventas por Medio de Pago */}
+                <Card>
+                  <CardHeader title="Ventas por Medio de Pago" subtitle="Distribución porcentual por canal de cobro" />
+                  <CardBody>
+                    <DataTable
+                      columns={salesByPaymentColumns}
+                      data={summary.salesByPayment}
+                      searchable={false}
+                      emptyMessage="Sin datos de pago este periodo"
+                    />
+                  </CardBody>
+                </Card>
+              </div>
+            );
+          })()}
         </>
       )}
     </div>
