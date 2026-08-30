@@ -1,4 +1,4 @@
-import { supabase, DEFAULT_TENANT_ID } from './supabase';
+import { supabase, getActiveTenantId } from './supabase';
 import { auditService } from './db-services';
 
 export interface VehicleContract {
@@ -38,10 +38,10 @@ export interface VehicleContract {
   createdAt?: string;
 }
 
-const STORAGE_KEY = 'ventasbv_vehicle_contracts';
+const getStorageKey = () => `ventasbv_vehicle_contracts_${getActiveTenantId() || 'global'}`;
 
-const getInitialContracts = (): VehicleContract[] => {
-  const local = localStorage.getItem(STORAGE_KEY);
+const getStoredContracts = (): VehicleContract[] => {
+  const local = localStorage.getItem(getStorageKey());
   if (local) {
     try {
       return JSON.parse(local);
@@ -49,50 +49,19 @@ const getInitialContracts = (): VehicleContract[] => {
       // ignore
     }
   }
-  const defaultContracts: VehicleContract[] = [
-    {
-      id: 'c-001',
-      contractNumber: '000157',
-      docType: 'CONTRATO',
-      vehicleType: 'MOTOCICLETA',
-      date: '2026-05-04',
-      customerName: 'CONTRERAS TORRES NILVER EVER',
-      customerDocType: 'DNI',
-      customerDoc: '60413282',
-      customerAddress: 'Av. Los Próceres 1240, Surco, Lima',
-      customerPhone: '993275893',
-      maritalStatus: 'SOLTERO',
-      brand: 'BAJAJ',
-      model: 'PULSAR 400 Z',
-      color: 'Amarillo, Gris',
-      cylinderCapacity: '373 cc',
-      dua: '118-2026-10-045821',
-      item: '01',
-      engineNumber: 'JLXCSH51401',
-      chassisNumber: 'MD2C49NX8TCK74226',
-      totalPrice: 17740.00,
-      downPayment: 10740.00,
-      balance: 7000.00,
-      paymentMethodDetail: 'BCP: 03596987',
-      dueDate: '2026-05-04',
-      balanceReason: '7000 Anticipo / Saldo contraentrega de placa y tarjeta',
-      notaryLegalization: 'SI_20',
-      observations: 'Unidad en exhibición con entrega inmediata. Trámite de placa y tarjeta de propiedad en curso.',
-      status: 'VIGENTE',
-      createdAt: '2026-05-04T10:30:00Z',
-    },
-  ];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultContracts));
-  return defaultContracts;
+  return [];
 };
 
 export const contractsService = {
   async getContracts(): Promise<VehicleContract[]> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
+
       const { data, error } = await supabase
         .from('contracts')
         .select('*')
-        .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (!error && data && data.length > 0) {
@@ -132,7 +101,7 @@ export const contractsService = {
       // fallback to localStorage
     }
 
-    return getInitialContracts();
+    return getStoredContracts();
   },
 
   async getContractById(id: string): Promise<VehicleContract | null> {
@@ -141,6 +110,7 @@ export const contractsService = {
   },
 
   async createContract(contract: Omit<VehicleContract, 'id' | 'createdAt'>): Promise<VehicleContract> {
+    const tenantId = getActiveTenantId();
     const newId = 'c-' + Date.now().toString(36);
     const newContract: VehicleContract = {
       ...contract,
@@ -152,7 +122,7 @@ export const contractsService = {
     try {
       await supabase.from('contracts').insert({
         id: newId,
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         contract_number: contract.contractNumber,
         doc_type: contract.docType,
         vehicle_type: contract.vehicleType,
@@ -186,9 +156,9 @@ export const contractsService = {
     }
 
     // Save to localStorage
-    const list = getInitialContracts();
+    const list = getStoredContracts();
     list.unshift(newContract);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    localStorage.setItem(getStorageKey(), JSON.stringify(list));
 
     auditService.logAction({
       action: 'CREAR',
@@ -241,11 +211,11 @@ export const contractsService = {
       // ignore
     }
 
-    const list = getInitialContracts();
+    const list = getStoredContracts();
     const idx = list.findIndex((c) => c.id === id);
     if (idx !== -1) {
       list[idx] = { ...list[idx], ...updates };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+      localStorage.setItem(getStorageKey(), JSON.stringify(list));
 
       auditService.logAction({
         action: 'MODIFICAR',
@@ -267,13 +237,13 @@ export const contractsService = {
       // ignore
     }
 
-    const list = getInitialContracts();
+    const list = getStoredContracts();
     const target = list.find((c) => c.id === id);
     const contractNum = target?.contractNumber || id;
     const custName = target?.customerName || '';
 
     const filtered = list.filter((c) => c.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+    localStorage.setItem(getStorageKey(), JSON.stringify(filtered));
 
     auditService.logAction({
       action: 'ELIMINAR',
@@ -287,7 +257,7 @@ export const contractsService = {
   },
 
   getNextContractNumber(): string {
-    const list = getInitialContracts();
+    const list = getStoredContracts();
     if (list.length === 0) return '000001';
     const numbers = list.map((c) => parseInt(c.contractNumber.replace(/\D/g, ''), 10) || 0);
     const maxNum = Math.max(...numbers, 0);

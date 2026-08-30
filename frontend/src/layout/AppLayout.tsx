@@ -8,9 +8,10 @@ import {
   Archive, Truck, ShoppingCart, Users2, DollarSign, MonitorSmartphone, 
   CreditCard, FileText, BarChart3, Activity, Bell, Settings,
   Sun, Moon, Search, ChevronDown, ArrowRight, Receipt, Menu, LogOut, User,
-  FileCheck
+  FileCheck, Calendar
 } from 'lucide-react';
 import { usePermissions } from '../context/PermissionContext';
+import SyncStatusIndicator from '../components/ui/SyncStatusIndicator';
 
 const MENU_ITEMS = [
   { section: 'PRINCIPAL', items: [
@@ -21,6 +22,7 @@ const MENU_ITEMS = [
     { label: 'Cotizaciones & Contratos', icon: FileCheck, path: '/app/contracts', perm: 'contracts.read' },
     { label: 'Clientes', icon: Users2, path: '/app/customers', perm: 'customers.read' },
     { label: 'Historial de Ventas', icon: DollarSign, path: '/app/sales', perm: 'sales.read' },
+    { label: 'Créditos / Cobranzas', icon: Calendar, path: '/app/credits', perm: 'sales.read' },
     { label: 'Caja Chica / Registro', icon: CreditCard, path: '/app/cash', perm: 'cash.read' }
   ]},
   { section: 'CATÁLOGO', items: [
@@ -365,51 +367,25 @@ export default function AppLayout() {
             >
               <Menu size={20} />
             </button>
-            <div className="header-title-section hidden md:flex">
-              <div className="header-title truncate">Sistema de Gestión Comercial</div>
-              <div className="header-subtitle truncate text-xs">
-                {tenantInfo.name || 'Ventas B&V'} • <span className="font-bold text-primary-500">{activeBranchId === 'ALL' ? 'Todas las Sedes' : activeBranch?.name || 'Sede Principal'}</span>
+            <div className="header-title-section">
+              <div className="header-title truncate font-bold">Sistema de Gestión Comercial</div>
+              <div className="header-subtitle truncate text-xs text-secondary font-medium">
+                {tenantInfo.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || '' : '')}
               </div>
-            </div>
-            {/* Branch Selector on Mobile/Tablet */}
-            <div className="flex md:hidden items-center gap-1.5 px-1 py-1 text-xs">
-              <Store size={14} className="text-secondary shrink-0" />
-              {isSuperAdmin || branches.length > 1 ? (
-                <select
-                  value={activeBranchId}
-                  onChange={(e) => setActiveBranchId(e.target.value)}
-                  className="bg-transparent font-bold text-primary border-0 p-0 pr-3 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors max-w-[120px] truncate"
-                >
-                  {isSuperAdmin && (
-                    <option value="ALL" className="bg-surface text-primary">
-                      Todas las Sedes
-                    </option>
-                  )}
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id} className="bg-surface text-primary">
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <span className="font-bold text-primary text-xs truncate max-w-[120px]">
-                  {branches[0]?.name || activeBranch?.name || 'Sede Principal'}
-                </span>
-              )}
             </div>
           </div>
 
           <div className="header-actions">
-            {/* Branch Selector Dropdown for Desktop */}
-            <div className="hidden md:flex items-center gap-1.5 px-2 py-1 text-xs">
+            {/* Branch Selector Dropdown */}
+            <div className="flex items-center gap-1.5 px-2 py-1 text-xs">
               <Store size={15} className="text-secondary shrink-0" />
               <div className="flex flex-col">
-                <span className="text-[10px] text-secondary font-semibold uppercase tracking-wider">Sucursal Activa</span>
+                <span className="text-[10px] text-secondary font-medium uppercase tracking-wider">Sucursal Activa</span>
                 {isSuperAdmin || branches.length > 1 ? (
                   <select
                     value={activeBranchId}
                     onChange={(e) => setActiveBranchId(e.target.value)}
-                    className="bg-transparent font-bold text-primary border-0 p-0 pr-4 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors"
+                    className="bg-transparent font-medium text-primary border-0 p-0 pr-4 focus:ring-0 cursor-pointer outline-none text-xs hover:text-primary-600 transition-colors"
                   >
                     {isSuperAdmin && (
                       <option value="ALL" className="bg-surface text-primary">
@@ -423,7 +399,7 @@ export default function AppLayout() {
                     ))}
                   </select>
                 ) : (
-                  <span className="font-bold text-primary text-xs">
+                  <span className="font-medium text-primary text-xs">
                     {branches[0]?.name || activeBranch?.name || 'Sede Principal'}
                   </span>
                 )}
@@ -467,6 +443,9 @@ export default function AppLayout() {
                 </div>
               )}
             </div>
+
+            {/* Sync Status Indicator */}
+            <SyncStatusIndicator />
 
             <Link to="/app/notifications" className="icon-btn relative" title="Notificaciones">
               <Bell size={18} />

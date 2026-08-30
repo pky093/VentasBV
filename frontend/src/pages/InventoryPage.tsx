@@ -23,6 +23,7 @@ import {
   Branch,
   InventoryMovement,
 } from '../lib/db-services';
+import Swal from 'sweetalert2';
 import { useBranch } from '../context/BranchContext';
 import { TransferModal } from '../components/inventory/TransferModal';
 
@@ -149,20 +150,26 @@ export default function InventoryPage() {
       });
 
       if (success) {
-        setFeedbackMsg({
-          type: 'success',
-          text: `Se registró correctamente el ${
-            movementType === 'IN' ? 'ingreso' : movementType === 'OUT' ? 'salida' : 'ajuste'
-          } de "${prod.name}" en la sucursal "${branch?.name || activeBranch?.name || 'Sede Seleccionada'}".`,
+        const actionLabel =
+          movementType === 'IN' ? 'el ingreso' : movementType === 'OUT' ? 'la salida' : 'el ajuste';
+        const branchLabel = branch?.name || activeBranch?.name || 'Sede Principal';
+
+        Swal.fire({
+          title: '¡Movimiento Registrado!',
+          text: `Se registró correctamente ${actionLabel} de "${prod.name}" en la sucursal "${branchLabel}".`,
+          icon: 'success',
+          timer: 2200,
+          showConfirmButton: false,
         });
+
         await loadData();
         setIsMovementModalOpen(false);
       } else {
-        setFeedbackMsg({ type: 'error', text: 'No se pudo procesar el movimiento en la base de datos.' });
+        Swal.fire('Error', 'No se pudo procesar el movimiento en la base de datos.', 'error');
       }
     } catch (err) {
       console.error('Error saving movement:', err);
-      setFeedbackMsg({ type: 'error', text: 'Error inesperado al registrar el movimiento.' });
+      Swal.fire('Error', 'Error inesperado al registrar el movimiento.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -428,20 +435,6 @@ export default function InventoryPage() {
         }
       />
 
-      {/* Global Feedback Banner */}
-      {feedbackMsg && (
-        <div
-          className={`mb-4 p-3.5 rounded-lg flex items-center gap-3 text-sm font-medium ${
-            feedbackMsg.type === 'success'
-              ? 'bg-success-500/10 border border-success-500/30 text-success-700 dark:text-success-300'
-              : 'bg-danger-500/10 border border-danger-500/30 text-danger-700 dark:text-danger-300'
-          }`}
-        >
-          {feedbackMsg.type === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-          <span>{feedbackMsg.text}</span>
-        </div>
-      )}
-
       <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
       {/* TAB 1: STOCK ACTUAL */}
@@ -564,7 +557,7 @@ export default function InventoryPage() {
             ) : movementType === 'OUT' ? (
               <Badge variant="danger">- SALIDA / RETIRO DE STOCK</Badge>
             ) : (
-              <Badge variant="warning">⚡ AJUSTE FÍSICO DE KARDEX</Badge>
+              <Badge variant="warning">AJUSTE FÍSICO DE KARDEX</Badge>
             )}
           </div>
 

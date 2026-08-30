@@ -54,7 +54,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
               width: '36px',
               height: '36px',
               borderRadius: '50%',
-              background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+              background: 'linear-gradient(135deg, var(--primary-600, #dc2626) 0%, var(--primary-800, #991b1b) 100%)',
               color: '#ffffff',
               display: 'flex',
               alignItems: 'center',
@@ -62,7 +62,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
               fontWeight: '800',
               fontSize: '15px',
               flexShrink: 0,
-              boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)',
+              boxShadow: '0 2px 8px rgba(220, 38, 38, 0.3)',
             }}
           >
             {authUser.charAt(0).toUpperCase()}
@@ -80,14 +80,14 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
             >
               {authUser}
             </div>
-            <div style={{ fontSize: '11px', color: isSuperOrAdmin ? '#2563eb' : '#10b981', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: isSuperOrAdmin ? '#2563eb' : '#10b981', display: 'inline-block' }} />
+            <div style={{ fontSize: '11px', color: isSuperOrAdmin ? 'var(--primary-600, #dc2626)' : '#10b981', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: isSuperOrAdmin ? 'var(--primary-600, #dc2626)' : '#10b981', display: 'inline-block' }} />
               <span>{displayRole} • En Línea</span>
             </div>
           </div>
         </div>
 
-        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'monospace', fontWeight: '600', marginTop: '4px', padding: '3px 8px', borderRadius: '6px', background: 'var(--bg-app)', display: 'inline-block', width: 'fit-content' }}>
+        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'monospace', fontWeight: '600', marginTop: '4px', padding: '3px 8px', borderRadius: '6px', background: 'var(--bg-app)', display: 'inline-block', width: 'fit-content', border: '1px solid var(--border-color)' }}>
           RUC: {tenantRuc}
         </div>
       </div>

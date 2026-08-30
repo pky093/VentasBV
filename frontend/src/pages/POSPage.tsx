@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   ShoppingCart,
@@ -21,10 +21,29 @@ import {
   User,
   UserPlus,
   Users,
+  Calendar,
+  DollarSign,
+  Percent,
+  Clock,
+  Share2,
+  Coins,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
-import { Button, Modal, Badge } from '../components/ui';
-import { productsService, customersService, catalogService, salesService, settingsService, Product as DBProduct } from '../lib/db-services';
+import Swal from 'sweetalert2';
+import { Button, Modal, Badge, SuggestionChip } from '../components/ui';
+import {
+  productsService,
+  customersService,
+  catalogService,
+  salesService,
+  settingsService,
+  sunatReniecService,
+  creditsService,
+  Product as DBProduct,
+} from '../lib/db-services';
 import { useBranch } from '../context/BranchContext';
+import { useNavigate } from 'react-router-dom';
 import { TransferModal } from '../components/inventory/TransferModal';
 import { DEFAULT_BRANCH_ID } from '../lib/supabase';
 import { numberToSpanishWords } from '../lib/numberToWords';
@@ -45,9 +64,12 @@ interface Product {
 
 interface CartItem extends Product {
   qty: number;
+  productId?: string;
+  selectedColor?: string;
 }
 
 export default function POSPage() {
+  const navigate = useNavigate();
   const { activeBranchId, activeBranch, branches: contextBranches } = useBranch();
   const [products, setProducts] = useState<Product[]>([]);
   const [dbProductList, setDbProductList] = useState<DBProduct[]>([]);
@@ -64,6 +86,22 @@ export default function POSPage() {
   const [paymentMethod, setPaymentMethod] = useState<'EFECTIVO' | 'TARJETA' | 'YAPE'>('EFECTIVO');
   const [docType, setDocType] = useState<'BOLETA' | 'FACTURA'>('BOLETA');
   const [isLoading, setIsLoading] = useState(true);
+
+  // DNI / RUC Lookup state
+  const [isLookingUpDoc, setIsLookingUpDoc] = useState(false);
+
+  // Credit / Financing state
+  const [saleCondition, setSaleCondition] = useState<'CONTADO' | 'CREDITO'>('CONTADO');
+  const [creditInitialPayment, setCreditInitialPayment] = useState<string>('0');
+  const [creditInitialPaymentMethod, setCreditInitialPaymentMethod] = useState<'EFECTIVO' | 'TARJETA' | 'YAPE'>('EFECTIVO');
+  const [creditInterestRate, setCreditInterestRate] = useState<number>(0);
+  const [creditInstallmentsCount, setCreditInstallmentsCount] = useState<number>(3);
+  const [creditFrequency, setCreditFrequency] = useState<'MENSUAL' | 'QUINCENAL' | 'SEMANAL'>('MENSUAL');
+  const [creditFirstDueDate, setCreditFirstDueDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().split('T')[0];
+  });
 
   // Transfer Modal State in POS
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -98,6 +136,23 @@ export default function POSPage() {
     igv: number;
     total: number;
     paymentMethodLabel: string;
+    saleCondition: 'CONTADO' | 'CREDITO';
+    creditInfo?: {
+      initialPayment: number;
+      financedAmount: number;
+      interestRate: number;
+      interestAmount: number;
+      totalCredit: number;
+      installmentsCount: number;
+      installmentFrequency: string;
+      installments: {
+        number: number;
+        dueDate: string;
+        capital: number;
+        interest: number;
+        total: number;
+      }[];
+    };
   } | null>(null);
 
   const loadPOSData = async () => {
@@ -152,6 +207,76 @@ export default function POSPage() {
     loadPOSData();
   }, [activeBranchId]);
 
+  // Lookup DNI / RUC
+  const handleLookupDoc = async () => {
+    const doc = manualCustomerDoc.trim();
+    if (!doc) {
+      Swal.fire({
+        title: 'Documento requerido',
+        text: 'Por favor ingrese un número de DNI (8 dígitos) o RUC (11 dígitos).',
+        icon: 'info',
+      });
+      return;
+    }
+
+    setIsLookingUpDoc(true);
+    try {
+      if (doc.length === 8) {
+        const res = await sunatReniecService.consultarDni(doc);
+        if (res.success && res.data) {
+          setManualCustomerName(res.data.nombreCompleto);
+          setManualCustomerDocType('DNI');
+          Swal.fire({
+            title: '¡DNI Encontrado!',
+            html: `<p style="font-size:15px; font-weight:bold; color:var(--text-primary);">${res.data.nombreCompleto}</p><p style="font-size:12px; color:var(--text-secondary);">DNI: ${res.data.dni}</p>`,
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
+        } else {
+          Swal.fire({
+            title: 'Consulta DNI',
+            text: res.message || 'No se encontraron datos automáticos.',
+            icon: 'warning',
+          });
+        }
+      } else if (doc.length === 11) {
+        const res = await sunatReniecService.consultarRuc(doc);
+        if (res.success && res.data) {
+          setManualCustomerName(res.data.razonSocial);
+          setManualCustomerDocType('RUC');
+          setDocType('FACTURA');
+          Swal.fire({
+            title: '¡RUC Encontrado en SUNAT!',
+            html: `<p style="font-size:15px; font-weight:bold; color:var(--text-primary);">${res.data.razonSocial}</p>
+                   <p style="font-size:12px; color:#10b981; font-weight:bold;">${res.data.estado || 'ACTIVO'} • ${res.data.condicion || 'HABIDO'}</p>
+                   <p style="font-size:11px; color:var(--text-secondary);">${res.data.direccion || ''}</p>`,
+            icon: 'success',
+            timer: 2500,
+            showConfirmButton: false,
+          });
+        } else {
+          Swal.fire({
+            title: 'Consulta RUC',
+            text: res.message || 'No se encontraron datos automáticos.',
+            icon: 'warning',
+          });
+        }
+      } else {
+        Swal.fire({
+          title: 'Documento Inválido',
+          text: 'El DNI debe tener 8 dígitos y el RUC 11 dígitos.',
+          icon: 'warning',
+        });
+      }
+    } catch (err: any) {
+      console.error('Error during doc lookup:', err);
+      Swal.fire({ title: 'Error', text: 'Error al conectar con el servicio.', icon: 'error' });
+    } finally {
+      setIsLookingUpDoc(false);
+    }
+  };
+
   // Filter products
   const filteredProducts = products.filter((p) => {
     const matchesCategory = selectedCategory === 'Todas' || p.category === selectedCategory;
@@ -181,7 +306,8 @@ export default function POSPage() {
   };
 
   const addToCartWithColor = (product: Product, selectedColor?: { color: string; hex?: string; stock: number }) => {
-    const itemId = selectedColor ? `${product.id}-${selectedColor.color}` : product.id;
+    const cleanProdId = product.dbProduct?.id || (product.id.includes('-') && product.id.length > 36 ? product.id.substring(0, 36) : product.id);
+    const itemId = selectedColor ? `${cleanProdId}-${selectedColor.color}` : cleanProdId;
     const itemName = selectedColor ? `${product.name} (${selectedColor.color})` : product.name;
     const maxStock = selectedColor ? selectedColor.stock : product.stock;
 
@@ -203,6 +329,8 @@ export default function POSPage() {
         {
           ...product,
           id: itemId,
+          productId: cleanProdId,
+          selectedColor: selectedColor?.color,
           name: itemName,
           stock: maxStock,
           qty: 1,
@@ -238,45 +366,56 @@ export default function POSPage() {
   const cashNum = parseFloat(cashAmount) || 0;
   const change = Math.max(0, cashNum - total);
 
-  const handleProcessSale = async () => {
-    setIsProcessing(true);
+  // Credit Financing Calculations
+  const creditInitialNum = Math.min(total, Math.max(0, parseFloat(creditInitialPayment) || 0));
+  const creditCapitalFinanced = Math.max(0, total - creditInitialNum);
+  const creditInterestAmount = Number(((creditCapitalFinanced * (creditInterestRate || 0)) / 100).toFixed(2));
+  const creditTotalFinanced = Number((creditCapitalFinanced + creditInterestAmount).toFixed(2));
+  const creditInstallmentsNum = Math.max(1, creditInstallmentsCount || 1);
+  const creditInstallmentCapital = Number((creditCapitalFinanced / creditInstallmentsNum).toFixed(2));
+  const creditInstallmentInterest = Number((creditInterestAmount / creditInstallmentsNum).toFixed(2));
+  const creditInstallmentTotal = Number((creditTotalFinanced / creditInstallmentsNum).toFixed(2));
+
+  const creditSchedulePreview = useMemo(() => {
+    if (saleCondition !== 'CREDITO') return [];
+    const list = [];
+    const start = creditFirstDueDate ? new Date(creditFirstDueDate) : new Date();
+    for (let i = 1; i <= creditInstallmentsNum; i++) {
+      const d = new Date(start);
+      if (i > 1) {
+        if (creditFrequency === 'SEMANAL') d.setDate(d.getDate() + (i - 1) * 7);
+        else if (creditFrequency === 'QUINCENAL') d.setDate(d.getDate() + (i - 1) * 15);
+        else d.setMonth(d.getMonth() + (i - 1));
+      }
+      list.push({
+        number: i,
+        dueDate: d.toISOString().split('T')[0],
+        capital: creditInstallmentCapital,
+        interest: creditInstallmentInterest,
+        total: creditInstallmentTotal,
+      });
+    }
+    return list;
+  }, [
+    saleCondition,
+    creditInitialPayment,
+    creditInterestRate,
+    creditInstallmentsCount,
+    creditFrequency,
+    creditFirstDueDate,
+    total,
+    creditInstallmentCapital,
+    creditInstallmentInterest,
+    creditInstallmentTotal,
+    creditInstallmentsNum,
+  ]);
+
+  // Paso 1: Abrir la Vista Previa Preliminar del Comprobante
+  const handleOpenBoletaPreview = async () => {
     try {
-      // Map payment method to DB payment method
-      let dbPaymentMethod: 'CASH' | 'CARD' | 'YAPE' | 'TRANSFER' = 'CASH';
-      if (paymentMethod === 'TARJETA') dbPaymentMethod = 'CARD';
-      if (paymentMethod === 'YAPE') dbPaymentMethod = 'YAPE';
+      const isCredit = saleCondition === 'CREDITO';
 
-      const paymentLabels: Record<string, string> = {
-        EFECTIVO: 'Efectivo',
-        TARJETA: 'Tarjeta de Crédito/Débito',
-        YAPE: 'Yape / Plin',
-      };
-
-      // 1. Fetch tenant info for boleta header
-      const tenant = await settingsService.getTenantInfo();
-
-      // 2. Get next series number
-      const seriesInfo = await settingsService.getNextSeriesNumber(docType);
-      const seriesStr = seriesInfo?.series || (docType === 'BOLETA' ? 'B001' : 'F001');
-      const nextNum = seriesInfo?.number || 1;
-      const numStr = String(nextNum).padStart(5, '0');
-
-      // 3. Create sale in DB
-      const saleItems = cart.map((item) => ({
-        productId: item.id,
-        productName: item.name,
-        quantity: item.qty,
-        unitPrice: item.price,
-        subtotal: item.price * item.qty,
-      }));
-
-      const saleBranchId = activeBranchId !== 'ALL' ? activeBranchId : (activeBranch?.id || DEFAULT_BRANCH_ID);
-      const saleBranchName = activeBranch?.name || 'Sede Principal';
-
-      const currentEmitterName = typeof window !== 'undefined'
-        ? (localStorage.getItem('auth_user') || localStorage.getItem('auth_username') || 'Niver Contreras')
-        : 'Niver Contreras';
-
+      // Validate customer if credit sale
       const effectiveCustomerName = isManualCustomer
         ? (manualCustomerName.trim() || 'Público General')
         : (selectedCustomer?.name || 'Público General');
@@ -285,41 +424,45 @@ export default function POSPage() {
         ? (manualCustomerDocType === 'SIN_DOC' ? '00000000' : (manualCustomerDoc.trim() || '00000000'))
         : (selectedCustomer?.doc || '00000000');
 
-      const effectiveCustomerId = isManualCustomer || selectedCustomer?.id === 'default' || selectedCustomer?.id === '__manual__'
-        ? undefined
-        : selectedCustomer?.id;
-
-      const createdSaleId = await salesService.createSale({
-        customerId: effectiveCustomerId,
-        customerName: effectiveCustomerName,
-        customerDoc: effectiveCustomerDoc,
-        sellerName: currentEmitterName,
-        branchId: saleBranchId,
-        branchName: saleBranchName,
-        total: total,
-        subtotal: subtotal,
-        tax: igv,
-        paymentMethod: dbPaymentMethod,
-        documentType: docType,
-        items: saleItems,
-      });
-
-      if (!createdSaleId) {
-        alert('Ocurrió un error al registrar la venta en la base de datos. Intente nuevamente.');
+      if (isCredit && (!effectiveCustomerDoc || effectiveCustomerDoc === '00000000')) {
+        Swal.fire({
+          title: 'Cliente Requerido',
+          text: 'Para registrar una venta al crédito financiada, es obligatorio ingresar el DNI o RUC del cliente.',
+          icon: 'warning',
+        });
         return;
       }
 
-      // 4. Increment series number
-      await settingsService.incrementSeriesNumber(docType, seriesStr);
+      // Map payment method to label
+      const paymentLabels: Record<string, string> = {
+        EFECTIVO: 'Efectivo',
+        TARJETA: 'Tarjeta de Crédito/Débito',
+        YAPE: 'Yape / Plin',
+      };
 
-      // 5. Build boleta preview data
+      // Fetch tenant info
+      const tenant = await settingsService.getTenantInfo();
+      const seriesInfo = await settingsService.getNextSeriesNumber(docType);
+      const seriesStr = seriesInfo?.series || (docType === 'BOLETA' ? 'B001' : 'F001');
+      const nextNum = seriesInfo?.number || 1;
+      const numStr = String(nextNum).padStart(5, '0');
+
       const now = new Date();
+      const tenantName = tenant.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA');
+      const tenantRuc = tenant.ruc || (typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '' : '');
+      const tenantPhone = tenant.phone || '';
+      const saleBranchName = activeBranch?.name || 'Sede Principal';
+      const tenantAddress = tenant.address || (saleBranchName ? saleBranchName : 'Sede Principal');
+      const currentEmitterName = typeof window !== 'undefined'
+        ? (localStorage.getItem('auth_user') || localStorage.getItem('auth_username') || 'Vendedor')
+        : 'Vendedor';
+
       setBoletaData({
-        companyName: tenant.name || 'Grupo K contreras S.A.C',
+        companyName: tenantName,
         companyTradeName: tenant.trade_name || '',
-        companyRuc: tenant.ruc || '20613639030',
-        companyAddress: saleBranchName ? `${saleBranchName} - Retamas` : (tenant.address || 'Retamas'),
-        companyPhone: tenant.phone || '+51 993 275 893',
+        companyRuc: tenantRuc,
+        companyAddress: saleBranchName ? `${saleBranchName}` : tenantAddress,
+        companyPhone: tenantPhone,
         logoPath: tenant.logo_path || '',
         docTitle: docType === 'BOLETA' ? 'BOLETA DE VENTA ELECTRÓNICA' : 'FACTURA ELECTRÓNICA',
         series: seriesStr,
@@ -339,49 +482,184 @@ export default function POSPage() {
         opGravada: subtotal,
         igv: igv,
         total: total,
-        paymentMethodLabel: paymentLabels[paymentMethod] || paymentMethod,
+        paymentMethodLabel: isCredit ? `CRÉDITO (${creditInstallmentsNum} cuotas ${creditFrequency.toLowerCase()}es)` : (paymentLabels[paymentMethod] || paymentMethod),
+        saleCondition,
+        creditInfo: isCredit
+          ? {
+              initialPayment: creditInitialNum,
+              financedAmount: creditCapitalFinanced,
+              interestRate: creditInterestRate,
+              interestAmount: creditInterestAmount,
+              totalCredit: creditTotalFinanced,
+              installmentsCount: creditInstallmentsNum,
+              installmentFrequency: creditFrequency,
+              installments: creditSchedulePreview,
+            }
+          : undefined,
       });
 
-      // 6. Show boleta preview & close checkout dialog
       setIsCheckoutOpen(false);
       setShowBoletaPreview(true);
     } catch (err) {
-      console.error('Error processing sale:', err);
-      alert('Error inesperado al procesar la venta.');
+      console.error('Error opening boleta preview:', err);
+      Swal.fire({ title: 'Error', text: 'No se pudo generar la vista preliminar del comprobante.', icon: 'error' });
+    }
+  };
+
+  // Paso 2: Confirmar Venta Definitiva desde el Preliminar (Acepta venta y descuenta stock)
+  const handleFinalConfirmSale = async () => {
+    setIsProcessing(true);
+    try {
+      const isCredit = saleCondition === 'CREDITO';
+
+      const effectiveCustomerName = isManualCustomer
+        ? (manualCustomerName.trim() || 'Público General')
+        : (selectedCustomer?.name || 'Público General');
+
+      const effectiveCustomerDoc = isManualCustomer
+        ? (manualCustomerDocType === 'SIN_DOC' ? '00000000' : (manualCustomerDoc.trim() || '00000000'))
+        : (selectedCustomer?.doc || '00000000');
+
+      let dbPaymentMethod: 'CASH' | 'CARD' | 'YAPE' | 'TRANSFER' = 'CASH';
+      if (paymentMethod === 'TARJETA') dbPaymentMethod = 'CARD';
+      if (paymentMethod === 'YAPE') dbPaymentMethod = 'YAPE';
+
+      const seriesInfo = await settingsService.getNextSeriesNumber(docType);
+      const seriesStr = seriesInfo?.series || (docType === 'BOLETA' ? 'B001' : 'F001');
+      const nextNum = seriesInfo?.number || 1;
+      const numStr = String(nextNum).padStart(5, '0');
+
+      const saleItems = cart.map((item) => {
+        let cleanProdId = item.productId || item.dbProduct?.id || item.id;
+        if (cleanProdId.includes('-') && cleanProdId.length > 36) {
+          cleanProdId = cleanProdId.substring(0, 36);
+        }
+        return {
+          productId: cleanProdId,
+          productName: item.name,
+          selectedColor: item.selectedColor,
+          quantity: item.qty,
+          unitPrice: item.price,
+          subtotal: item.price * item.qty,
+        };
+      });
+
+      const saleBranchId = activeBranchId !== 'ALL' ? activeBranchId : (activeBranch?.id || DEFAULT_BRANCH_ID);
+      const saleBranchName = activeBranch?.name || 'Sede Principal';
+
+      const currentEmitterName = typeof window !== 'undefined'
+        ? (localStorage.getItem('auth_user') || localStorage.getItem('auth_username') || 'Vendedor')
+        : 'Vendedor';
+
+      const effectiveCustomerId = isManualCustomer || selectedCustomer?.id === 'default' || selectedCustomer?.id === '__manual__'
+        ? undefined
+        : selectedCustomer?.id;
+
+      // Create sale in DB (automatically records OUT movement and decrements stock in branch_inventory)
+      const createdSaleId = await salesService.createSale({
+        customerId: effectiveCustomerId,
+        customerName: effectiveCustomerName,
+        customerDoc: effectiveCustomerDoc,
+        sellerName: currentEmitterName,
+        branchId: saleBranchId,
+        branchName: saleBranchName,
+        total: total,
+        subtotal: subtotal,
+        tax: igv,
+        paymentMethod: isCredit ? 'TRANSFER' : dbPaymentMethod,
+        documentType: docType,
+        items: saleItems,
+      });
+
+      if (!createdSaleId) {
+        Swal.fire({ title: 'Error', text: 'Ocurrió un error al registrar la venta en la base de datos.', icon: 'error' });
+        return;
+      }
+
+      // If credit sale, register credit & installments schedule
+      if (isCredit) {
+        await creditsService.createCredit({
+          saleId: createdSaleId,
+          saleNumber: `${seriesStr}-${numStr}`,
+          branchId: saleBranchId,
+          branchName: saleBranchName,
+          customerId: effectiveCustomerId,
+          customerName: effectiveCustomerName,
+          customerDoc: effectiveCustomerDoc,
+          totalAmount: total,
+          initialPayment: creditInitialNum,
+          interestRate: creditInterestRate,
+          installmentsCount: creditInstallmentsNum,
+          installmentFrequency: creditFrequency,
+          firstDueDate: creditFirstDueDate,
+        });
+      }
+
+      // Increment series number
+      await settingsService.incrementSeriesNumber(docType, seriesStr);
+
+      // Clean POS state
+      setShowBoletaPreview(false);
+      setCart([]);
+      setSelectedCustomer(null);
+      setIsManualCustomer(false);
+      setManualCustomerName('');
+      setManualCustomerDoc('');
+      setCashAmount('');
+
+      Swal.fire({
+        title: '¡Venta Registrada Exitosamente!',
+        html: `<p style="font-size:14px; margin-bottom:4px;">Comprobante <b>${seriesStr}-${numStr}</b> emitido.</p><p style="font-size:12px; color:var(--text-secondary);">Stock descontado del inventario. Redirigiendo al Historial de Ventas...</p>`,
+        icon: 'success',
+        timer: 1600,
+        showConfirmButton: false,
+      });
+
+      setTimeout(() => {
+        navigate('/app/sales');
+      }, 1000);
+    } catch (err) {
+      console.error('Error confirming sale:', err);
+      Swal.fire({ title: 'Error inesperado', text: 'Ocurrió un error al procesar la venta.', icon: 'error' });
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handlePrintBoleta = () => {
+  // Controlled On-Demand Printing
+  const handlePrintTicket = (paperSize: '80mm' | '58mm' = '80mm') => {
     const printContent = document.getElementById('boleta-preview-content');
     if (!printContent) return;
     const printWindow = window.open('', '_blank', 'width=450,height=750');
     if (!printWindow) return;
+
+    const widthStyle = paperSize === '58mm' ? '220px' : '320px';
+    const fontStyle = paperSize === '58mm' ? '9.5px' : '11px';
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Comprobante ${boletaData?.number || ''}</title>
+          <title>Ticket ${boletaData?.number || ''}</title>
           <style>
-            @page { size: 80mm auto; margin: 0; }
+            @page { size: ${paperSize} auto; margin: 0; }
             body {
               font-family: 'Courier New', Courier, monospace;
-              font-size: 11px;
-              line-height: 1.4;
+              font-size: ${fontStyle};
+              line-height: 1.35;
               color: #000;
               margin: 0;
-              padding: 10px;
+              padding: 6px;
               background: #fff;
             }
             * { box-sizing: border-box; }
             .ticket-container {
               width: 100%;
-              max-width: 320px;
+              max-width: ${widthStyle};
               margin: 0 auto;
             }
             @media print {
-              body { padding: 4px; }
+              body { padding: 2px; }
             }
           </style>
         </head>
@@ -401,12 +679,160 @@ export default function POSPage() {
     printWindow.document.close();
   };
 
+  const handlePrintA4 = () => {
+    if (!boletaData) return;
+    const printWindow = window.open('', '_blank', 'width=850,height=1000');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${boletaData.docTitle} - ${boletaData.number}</title>
+          <style>
+            @page { size: A4 portrait; margin: 15mm; }
+            body {
+              font-family: Arial, sans-serif;
+              color: #1e293b;
+              margin: 0;
+              padding: 20px;
+              background: #fff;
+              font-size: 12px;
+            }
+            * { box-sizing: border-box; }
+            .header-box { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+            .ruc-box { border: 2px solid #0284c7; border-radius: 8px; padding: 12px 20px; text-align: center; width: 260px; background: #f0f9ff; }
+            .ruc-box h3 { margin: 0; font-size: 14px; color: #0369a1; }
+            .ruc-box h2 { margin: 6px 0; font-size: 16px; color: #0f172a; }
+            .section-box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 16px; background: #f8fafc; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            th { background: #0284c7; color: #fff; padding: 8px; text-align: left; font-size: 11px; }
+            td { padding: 8px; border-bottom: 1px solid #e2e8f0; font-size: 11px; }
+            .totals-box { margin-left: auto; width: 280px; margin-top: 16px; }
+            .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+            .totals-total { border-top: 2px solid #0284c7; font-weight: bold; font-size: 16px; color: #0284c7; padding-top: 6px; }
+          </style>
+        </head>
+        <body>
+          <div class="header-box">
+            <div>
+              <h1 style="margin:0; font-size:20px; color:#0f172a;">${boletaData.companyName}</h1>
+              ${boletaData.companyTradeName ? `<p style="margin:2px 0; color:#64748b;">${boletaData.companyTradeName}</p>` : ''}
+              <p style="margin:2px 0; color:#475569;">${boletaData.companyAddress}</p>
+              <p style="margin:2px 0; color:#475569;">Teléfono: ${boletaData.companyPhone}</p>
+            </div>
+            <div class="ruc-box">
+              <h3>RUC: ${boletaData.companyRuc}</h3>
+              <h2>${boletaData.docTitle}</h2>
+              <h3 style="color:#0284c7;">${boletaData.number}</h3>
+            </div>
+          </div>
+
+          <div class="section-box">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+              <div><strong>Señor(es):</strong> ${boletaData.customerName}</div>
+              <div><strong>Fecha de Emisión:</strong> ${boletaData.date} ${boletaData.time}</div>
+              <div><strong>N° Documento:</strong> ${boletaData.customerDoc}</div>
+              <div><strong>Condición / Pago:</strong> ${boletaData.paymentMethodLabel}</div>
+              <div><strong>Sucursal:</strong> ${boletaData.branchName}</div>
+              <div><strong>Moneda:</strong> SOLES (PEN)</div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 50px;">CANT.</th>
+                <th>DESCRIPCIÓN DEL PRODUCTO / SERVICIO</th>
+                <th style="text-align: right; width: 100px;">P. UNITARIO</th>
+                <th style="text-align: right; width: 100px;">IMPORTE</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${boletaData.items.map(item => `
+                <tr>
+                  <td>${item.qty}</td>
+                  <td>${item.name}</td>
+                  <td style="text-align: right;">S/ ${item.unitPrice.toFixed(2)}</td>
+                  <td style="text-align: right;">S/ ${item.total.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="totals-box">
+            <div class="totals-row">
+              <span>Op. Gravada:</span>
+              <span>S/ ${boletaData.opGravada.toFixed(2)}</span>
+            </div>
+            <div class="totals-row">
+              <span>IGV (18%):</span>
+              <span>S/ ${boletaData.igv.toFixed(2)}</span>
+            </div>
+            <div class="totals-row totals-total">
+              <span>IMPORTE TOTAL:</span>
+              <span>S/ ${boletaData.total.toFixed(2)}</span>
+            </div>
+          </div>
+
+          ${boletaData.creditInfo ? `
+            <div class="section-box" style="margin-top: 20px;">
+              <h4 style="margin:0 0 8px 0; color:#0369a1;">INFORMACIÓN DEL CRÉDITO Y CUOTAS (SUNAT)</h4>
+              <p style="margin:2px 0;"><strong>Cuota Inicial Pagada:</strong> S/ ${boletaData.creditInfo.initialPayment.toFixed(2)}</p>
+              <p style="margin:2px 0;"><strong>Monto Neto Financiado:</strong> S/ ${boletaData.creditInfo.totalCredit.toFixed(2)} (${boletaData.creditInfo.installmentsCount} cuotas ${boletaData.creditInfo.installmentFrequency.toLowerCase()}es)</p>
+              <table style="margin-top: 8px;">
+                <thead>
+                  <tr>
+                    <th>N° CUOTA</th>
+                    <th>FECHA DE VENCIMIENTO</th>
+                    <th style="text-align: right;">MONTO CUOTA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${boletaData.creditInfo.installments.map(ins => `
+                    <tr>
+                      <td>Cuota ${ins.number}</td>
+                      <td>${ins.dueDate}</td>
+                      <td style="text-align: right;">S/ ${ins.total.toFixed(2)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
+
+          <div style="margin-top: 30px; text-align: center; color: #64748b; font-size: 10px;">
+            SON: ${numberToSpanishWords(boletaData.total)}<br/>
+            Representación impresa de la ${boletaData.docTitle}. Consulte en línea su comprobante.
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleShareWhatsApp = () => {
+    if (!boletaData) return;
+    const msg = encodeURIComponent(
+      `Hola ${boletaData.customerName},\nLe enviamos el resumen de su ${boletaData.docTitle} N° ${boletaData.number} de ${boletaData.companyName}.\nTotal: S/ ${boletaData.total.toFixed(2)}\nForma de pago: ${boletaData.paymentMethodLabel}\n¡Gracias por su compra!`
+    );
+    window.open(`https://wa.me/?text=${msg}`, '_blank');
+  };
+
   const handleCloseBoletaPreview = () => {
     setShowBoletaPreview(false);
     setBoletaData(null);
     setSaleCompleted(false);
     setCart([]);
     setCashAmount('');
+    setCreditInitialPayment('0');
     loadPOSData();
   };
 
@@ -594,7 +1020,7 @@ export default function POSPage() {
                 </label>
                 <input
                   type="text"
-                  className="form-control text-xs py-1 px-2 font-semibold"
+                  className="form-control text-xs py-1 px-2 font-medium"
                   placeholder="Ej. Carlos Mendoza o Público General"
                   value={manualCustomerName}
                   onChange={(e) => setManualCustomerName(e.target.value)}
@@ -602,13 +1028,13 @@ export default function POSPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-12 gap-1.5">
-                <div className="col-span-5">
-                  <label className="text-[10.5px] font-semibold text-secondary block mb-1">
+              <div className="grid grid-cols-12 gap-1.5 items-end">
+                <div className="col-span-4">
+                  <label className="text-[10.5px] font-medium text-secondary block mb-1">
                     Tipo Doc:
                   </label>
                   <select
-                    className="form-control text-xs py-1 px-1 font-semibold"
+                    className="form-control text-xs py-1 px-1 font-medium"
                     value={manualCustomerDocType}
                     onChange={(e: any) => {
                       setManualCustomerDocType(e.target.value);
@@ -624,19 +1050,38 @@ export default function POSPage() {
                   </select>
                 </div>
 
-                <div className="col-span-7">
+                <div className="col-span-5">
                   <label className="text-[10.5px] font-semibold text-secondary block mb-1">
-                    N° Doc. (Opcional):
+                    N° Doc.:
                   </label>
                   <input
                     type="text"
                     className="form-control text-xs py-1 px-2 font-mono"
-                    placeholder={manualCustomerDocType === 'SIN_DOC' ? 'No requerido' : manualCustomerDocType === 'RUC' ? '11 dígitos' : '8 dígitos (opcional)'}
+                    placeholder={manualCustomerDocType === 'SIN_DOC' ? 'No requerido' : manualCustomerDocType === 'RUC' ? '11 dígitos' : '8 dígitos'}
                     disabled={manualCustomerDocType === 'SIN_DOC'}
                     value={manualCustomerDoc}
                     onChange={(e) => setManualCustomerDoc(e.target.value.replace(/\D/g, ''))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleLookupDoc();
+                      }
+                    }}
                     maxLength={manualCustomerDocType === 'RUC' ? 11 : 12}
                   />
+                </div>
+
+                <div className="col-span-3">
+                  <button
+                    type="button"
+                    disabled={isLookingUpDoc || !manualCustomerDoc || manualCustomerDocType === 'SIN_DOC'}
+                    onClick={handleLookupDoc}
+                    className="btn btn-outline btn-sm w-full h-[30px] flex items-center justify-center p-0 text-[10.5px] font-bold text-primary-600 border-primary-300 hover:bg-primary-50 dark:hover:bg-primary-950 disabled:opacity-40"
+                    title="Consultar en tiempo real con SUNAT / RENIEC"
+                  >
+                    {isLookingUpDoc ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                    <span className="ml-1">Buscar</span>
+                  </button>
                 </div>
               </div>
 
@@ -745,69 +1190,139 @@ export default function POSPage() {
         </div>
       </div>
 
-      {/* Checkout Modal — Redesigned */}
+      {/* Checkout Modal — Redesigned with Credit & Controlled Printing */}
       <Modal
         isOpen={isCheckoutOpen}
         onClose={() => setIsCheckoutOpen(false)}
         title="Procesar Venta & Emisión de Comprobante"
-        size="md"
+        size="lg"
       >
         <div className="space-y-4">
-          {/* Document Type Toggle */}
-          <div style={{
-            display: 'flex',
-            gap: '8px',
-            padding: '4px',
-            background: 'var(--bg-app)',
-            borderRadius: '12px',
-            border: '1px solid var(--border-color)',
-          }}>
-            <button
-              onClick={() => setDocType('BOLETA')}
-              className="border-none"
-              style={{
-                flex: 1,
+          {/* Top Tabs: Document Type & Sale Condition */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Document Type */}
+            <div>
+              <label className="text-[11px] font-bold text-secondary uppercase block mb-1">
+                Tipo de Comprobante
+              </label>
+              <div style={{
                 display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                padding: '10px',
+                gap: '6px',
+                padding: '3px',
+                background: 'var(--bg-app)',
                 borderRadius: '10px',
-                fontWeight: 700,
-                fontSize: '13px',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                background: docType === 'BOLETA' ? 'var(--primary-600)' : 'transparent',
-                color: docType === 'BOLETA' ? '#fff' : 'var(--text-secondary)',
-                boxShadow: docType === 'BOLETA' ? '0 2px 8px rgba(0,0,0,0.2)' : 'none',
-              }}
-            >
-              <Receipt size={16} />
-              Boleta de Venta
-            </button>
-            <button
-              onClick={() => setDocType('FACTURA')}
-              className="border-none"
-              style={{
-                flex: 1,
+                border: '1px solid var(--border-color)',
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setDocType('BOLETA')}
+                  className="border-none"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '8px',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    background: docType === 'BOLETA' ? 'var(--primary-600)' : 'transparent',
+                    color: docType === 'BOLETA' ? '#fff' : 'var(--text-secondary)',
+                  }}
+                >
+                  <Receipt size={15} />
+                  Boleta de Venta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDocType('FACTURA')}
+                  className="border-none"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '8px',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    background: docType === 'FACTURA' ? 'var(--primary-600)' : 'transparent',
+                    color: docType === 'FACTURA' ? '#fff' : 'var(--text-secondary)',
+                  }}
+                >
+                  <FileText size={15} />
+                  Factura
+                </button>
+              </div>
+            </div>
+
+            {/* Sale Condition: Contado vs Crédito */}
+            <div>
+              <label className="text-[11px] font-bold text-secondary uppercase block mb-1">
+                Condición de Pago
+              </label>
+              <div style={{
                 display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                padding: '10px',
+                gap: '6px',
+                padding: '3px',
+                background: 'var(--bg-app)',
                 borderRadius: '10px',
-                fontWeight: 700,
-                fontSize: '13px',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                background: docType === 'FACTURA' ? 'var(--primary-600)' : 'transparent',
-                color: docType === 'FACTURA' ? '#fff' : 'var(--text-secondary)',
-                boxShadow: docType === 'FACTURA' ? '0 2px 8px rgba(0,0,0,0.2)' : 'none',
-              }}
-            >
-              <FileText size={16} />
-              Factura
-            </button>
+                border: '1px solid var(--border-color)',
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setSaleCondition('CONTADO')}
+                  className="border-none"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '8px',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    background: saleCondition === 'CONTADO' ? 'var(--primary-600)' : 'transparent',
+                    color: saleCondition === 'CONTADO' ? '#fff' : 'var(--text-secondary)',
+                  }}
+                >
+                  <Banknote size={15} />
+                  Al Contado
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSaleCondition('CREDITO')}
+                  className="border-none"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '8px',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    background: saleCondition === 'CREDITO' ? '#d97706' : 'transparent',
+                    color: saleCondition === 'CREDITO' ? '#fff' : 'var(--text-secondary)',
+                  }}
+                >
+                  <Calendar size={15} />
+                  Al Crédito (Financiado)
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Customer Info */}
@@ -850,12 +1365,12 @@ export default function POSPage() {
               </div>
               <div>
                 <label className="text-[10px] font-semibold text-secondary block mb-0.5">
-                  N° Documento ({docType === 'FACTURA' ? 'RUC' : 'DNI / Opcional'}):
+                  N° Documento ({docType === 'FACTURA' || saleCondition === 'CREDITO' ? 'RUC / DNI Obligatorio' : 'DNI / Opcional'}):
                 </label>
                 <input
                   type="text"
                   className="form-control text-xs py-1 px-2 font-mono"
-                  placeholder={docType === 'FACTURA' ? 'RUC 11 dígitos' : 'DNI 8 dígitos o vacío'}
+                  placeholder={docType === 'FACTURA' ? 'RUC 11 dígitos' : 'DNI 8 dígitos'}
                   value={isManualCustomer ? manualCustomerDoc : (selectedCustomer?.doc === '00000000' ? '' : (selectedCustomer?.doc || ''))}
                   onChange={(e) => {
                     setIsManualCustomer(true);
@@ -867,152 +1382,254 @@ export default function POSPage() {
             </div>
           </div>
 
-          {/* Items Summary */}
-          <div style={{
-            background: 'var(--bg-app)',
-            borderRadius: '10px',
-            border: '1px solid var(--border-color)',
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '8px 16px',
-              background: 'var(--bg-surface-hover)',
-              fontSize: '11px',
-              fontWeight: 700,
-              color: 'var(--text-secondary)',
-              textTransform: 'uppercase' as const,
-              display: 'flex',
-              justifyContent: 'space-between',
-            }}>
-              <span>Producto</span>
-              <span>Subtotal</span>
-            </div>
-            <div style={{ maxHeight: '140px', overflow: 'auto' }}>
-              {cart.map((item, i) => (
-                <div key={item.id} style={{
-                  padding: '8px 16px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  fontSize: '12px',
-                  borderTop: i > 0 ? '1px solid var(--border-subtle)' : 'none',
-                }}>
-                  <div>
-                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.name}</span>
-                    <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>{item.qty} × S/ {item.price.toFixed(2)}</span>
-                  </div>
-                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>S/ {(item.price * item.qty).toFixed(2)}</span>
+          {/* IF CREDIT FINANCING: SIMULATOR & PARAMETERS */}
+          {/* IF CREDIT FINANCING: SIMULATOR & PARAMETERS */}
+          {/* IF CREDIT FINANCING: SIMULATOR & PARAMETERS (DISEÑO UNIFICADO IMAGEN 2) */}
+          {saleCondition === 'CREDITO' ? (
+            <div style={{ background: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+              {/* Header Banner */}
+              <div style={{ padding: '12px 16px', background: 'var(--bg-app)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="flex items-center gap-2 font-bold text-xs text-primary">
+                  <CreditCard size={15} className="text-primary-600" />
+                  Plan de Financiamiento al Crédito ({creditInstallmentsNum} cuotas • {creditFrequency})
                 </div>
-              ))}
-            </div>
-          </div>
+                <div className="flex items-center gap-2 text-xs text-secondary">
+                  <span>Total Venta: <strong className="text-primary font-bold">S/ {total.toFixed(2)}</strong></span>
+                  <Badge variant="warning">Pendiente</Badge>
+                </div>
+              </div>
 
-          {/* Fiscal Breakdown */}
-          <div style={{
-            padding: '16px',
-            background: 'linear-gradient(135deg, var(--primary-50, #eff6ff), var(--primary-100, #dbeafe))',
-            borderRadius: '12px',
-            border: '1px solid var(--primary-200, #bfdbfe)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-              <span>Op. Gravada</span>
-              <span>S/ {subtotal.toFixed(2)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-              <span>IGV (18%)</span>
-              <span>S/ {igv.toFixed(2)}</span>
-            </div>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              fontSize: '22px',
-              fontWeight: 800,
-              color: 'var(--primary-700)',
-              paddingTop: '8px',
-              borderTop: '2px solid var(--primary-200, #bfdbfe)',
-            }}>
-              <span>TOTAL</span>
-              <span>S/ {total.toFixed(2)}</span>
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', textAlign: 'right' as const }}>
-              Método: <strong>{paymentMethod}</strong>
-            </div>
-          </div>
+              {/* 4 Form Inputs in a Single Clean Form Grid */}
+              <div className="p-3.5 border-b border-border-color">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-primary flex items-center gap-1">
+                      <Coins size={13} className="text-primary-600" />
+                      Cuota Inicial (S/)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max={total}
+                      step="10"
+                      className="form-control text-xs font-bold"
+                      value={creditInitialPayment}
+                      onChange={(e) => setCreditInitialPayment(e.target.value)}
+                      placeholder="0.00"
+                    />
+                  </div>
 
-          {/* Cash Input if Cash Payment */}
-          {paymentMethod === 'EFECTIVO' && (
-            <div className="space-y-2">
-              <label className="form-label">Monto Recibido en Efectivo (S/)</label>
-              <input
-                type="number"
-                step="0.10"
-                className="form-control text-lg font-bold"
-                placeholder="Ej: 700.00"
-                value={cashAmount}
-                onChange={(e) => setCashAmount(e.target.value)}
-                autoFocus
-              />
-              {cashNum > 0 && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-primary flex items-center gap-1">
+                      <Percent size={13} className="text-primary-600" />
+                      Tasa Interés Total (%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      className="form-control text-xs font-bold"
+                      value={creditInterestRate}
+                      onChange={(e) => setCreditInterestRate(parseFloat(e.target.value) || 0)}
+                      placeholder="0%"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-primary flex items-center gap-1">
+                      <Layers size={13} className="text-primary-600" />
+                      Plazo / N° Cuotas
+                    </label>
+                    <select
+                      className="form-control text-xs font-bold"
+                      value={creditInstallmentsCount}
+                      onChange={(e) => setCreditInstallmentsCount(parseInt(e.target.value, 10) || 1)}
+                    >
+                      <option value={1}>1 Cuota (1 mes)</option>
+                      <option value={2}>2 Cuotas (2 meses)</option>
+                      <option value={3}>3 Cuotas (3 meses)</option>
+                      <option value={4}>4 Cuotas (4 meses)</option>
+                      <option value={5}>5 Cuotas (5 meses)</option>
+                      <option value={6}>6 Cuotas (6 meses)</option>
+                      <option value={12}>12 Cuotas (1 año)</option>
+                      <option value={18}>18 Cuotas (1.5 años)</option>
+                      <option value={24}>24 Cuotas (2 años)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-primary flex items-center gap-1">
+                      <Clock size={13} className="text-primary-600" />
+                      Frecuencia de Cobro
+                    </label>
+                    <select
+                      className="form-control text-xs font-bold"
+                      value={creditFrequency}
+                      onChange={(e: any) => setCreditFrequency(e.target.value)}
+                    >
+                      <option value="MENSUAL">Mensual (Cada 30 días)</option>
+                      <option value="QUINCENAL">Quincenal (Cada 15 días)</option>
+                      <option value="SEMANAL">Semanal (Cada 7 días)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary Metrics Row */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', padding: '14px 16px', background: 'var(--bg-app)', borderBottom: '1px solid var(--border-color)' }}>
+                <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Inicial Cobrada</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--emerald-600, #16a34a)', fontFamily: 'monospace', marginTop: '2px' }}>S/ {creditInitialNum.toFixed(2)}</div>
+                </div>
+                <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Saldo Financiado</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace', marginTop: '2px' }}>S/ {creditCapitalFinanced.toFixed(2)}</div>
+                </div>
+                <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Interés ({creditInterestRate}%)</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--primary-600, #2563eb)', fontFamily: 'monospace', marginTop: '2px' }}>+ S/ {creditInterestAmount.toFixed(2)}</div>
+                </div>
+                <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Total a Pagar</div>
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--primary-600, #2563eb)', fontFamily: 'monospace', marginTop: '2px' }}>
+                    S/ {(creditCapitalFinanced + creditInterestAmount).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Installments Schedule Table matching Image 2 style */}
+              <div className="overflow-x-auto">
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg-app)', color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>
+                      <th style={{ padding: '8px 14px', fontWeight: 600 }}>N° Cuota</th>
+                      <th style={{ padding: '8px 14px', fontWeight: 600 }}>Fecha Vencimiento</th>
+                      <th style={{ padding: '8px 14px', fontWeight: 600, textAlign: 'right' }}>Capital</th>
+                      <th style={{ padding: '8px 14px', fontWeight: 600, textAlign: 'right' }}>Interés</th>
+                      <th style={{ padding: '8px 14px', fontWeight: 600, textAlign: 'right' }}>Monto Cuota</th>
+                      <th style={{ padding: '8px 14px', fontWeight: 600, textAlign: 'center' }}>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {creditSchedulePreview.map((item, idx) => (
+                      <tr key={item.number} style={{ borderBottom: idx < creditSchedulePreview.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
+                        <td style={{ padding: '10px 14px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                          Cuota {item.number}
+                        </td>
+                        <td style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>
+                          {item.dueDate}
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'monospace' }}>
+                          S/ {item.capital.toFixed(2)}
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--primary-600)' }}>
+                          + S/ {item.interest.toFixed(2)}
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, fontFamily: 'monospace', color: 'var(--text-primary)' }}>
+                          S/ {item.total.toFixed(2)}
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                          <Badge variant="warning">Pendiente</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            /* CONTADO: Regular Cash / Payment breakdown */
+            <>
+              {/* Fiscal Breakdown */}
+              <div style={{
+                padding: '14px 16px',
+                background: 'linear-gradient(135deg, var(--primary-50, #eff6ff), var(--primary-100, #dbeafe))',
+                borderRadius: '12px',
+                border: '1px solid var(--primary-200, #bfdbfe)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  <span>Op. Gravada</span>
+                  <span>S/ {subtotal.toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  <span>IGV (18%)</span>
+                  <span>S/ {igv.toFixed(2)}</span>
+                </div>
                 <div style={{
-                  padding: '10px 14px',
-                  borderRadius: '10px',
-                  fontSize: '13px',
-                  fontWeight: 700,
                   display: 'flex',
                   justifyContent: 'space-between',
-                  background: cashNum >= total ? 'var(--success-100, #dcfce7)' : 'var(--danger-100, #fef2f2)',
-                  color: cashNum >= total ? 'var(--success-700, #15803d)' : 'var(--danger-700, #b91c1c)',
+                  fontSize: '20px',
+                  fontWeight: 800,
+                  color: 'var(--primary-700)',
+                  paddingTop: '6px',
+                  borderTop: '2px solid var(--primary-200, #bfdbfe)',
                 }}>
-                  <span>Vuelto a entregar:</span>
-                  <span>S/ {change.toFixed(2)}</span>
+                  <span>TOTAL A PAGAR</span>
+                  <span>S/ {total.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Cash Input if Cash Payment */}
+              {paymentMethod === 'EFECTIVO' && (
+                <div className="space-y-2">
+                  <label className="form-label text-xs font-bold">Monto Recibido en Efectivo (S/)</label>
+                  <input
+                    type="number"
+                    step="0.10"
+                    className="form-control text-lg font-bold"
+                    placeholder="Ej: 700.00"
+                    value={cashAmount}
+                    onChange={(e) => setCashAmount(e.target.value)}
+                    autoFocus
+                  />
+                  {cashNum > 0 && (
+                    <div style={{
+                      padding: '10px 14px',
+                      borderRadius: '10px',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      background: cashNum >= total ? 'var(--success-100, #dcfce7)' : 'var(--danger-100, #fef2f2)',
+                      color: cashNum >= total ? 'var(--success-700, #15803d)' : 'var(--danger-700, #b91c1c)',
+                    }}>
+                      <span>Vuelto a entregar:</span>
+                      <span>S/ {change.toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </>
           )}
 
           {/* Actions */}
-          <div className="flex justify-end gap-2 pt-4 border-t border-color">
-            <Button variant="secondary" onClick={() => setIsCheckoutOpen(false)}>
+          <div className="flex justify-end gap-2.5 pt-3 border-t border-border-color">
+            <Button variant="secondary" onClick={() => setIsCheckoutOpen(false)} type="button">
               Cancelar
             </Button>
             <Button
               variant="primary"
-              icon={isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-              disabled={(paymentMethod === 'EFECTIVO' && cashNum < total) || isProcessing}
-              onClick={handleProcessSale}
+              icon={<CheckCircle2 size={16} />}
+              disabled={(saleCondition === 'CONTADO' && paymentMethod === 'EFECTIVO' && cashNum < total)}
+              onClick={handleOpenBoletaPreview}
+              type="button"
             >
-              {isProcessing ? 'Procesando...' : 'Emitir & Imprimir Ticket'}
+              Aceptar Venta
             </Button>
           </div>
         </div>
       </Modal>
 
-      {/* Boleta / Factura Preview Modal */}
+      {/* Modal Vista Previa Preliminar del Comprobante */}
       <Modal
         isOpen={showBoletaPreview}
-        onClose={handleCloseBoletaPreview}
+        onClose={() => setShowBoletaPreview(false)}
         title={boletaData?.docTitle || 'Vista Previa del Comprobante'}
         size="md"
       >
         {boletaData && (
           <div className="space-y-4">
-            {/* Success Banner */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              padding: '12px 16px',
-              borderRadius: '10px',
-              background: 'var(--success-100, #dcfce7)',
-              border: '1px solid var(--success-200, #bbf7d0)',
-            }}>
-              <CheckCircle2 size={20} style={{ color: 'var(--success-600, #16a34a)' }} />
-              <div>
-                <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--success-700, #15803d)' }}>¡Venta Registrada Exitosamente!</div>
-                <div style={{ fontSize: '11px', color: 'var(--success-600, #16a34a)' }}>Comprobante {boletaData.number} emitido • Inventario actualizado</div>
-              </div>
-            </div>
-
             {/* Boleta Ticket Preview */}
             <div
               id="boleta-preview-content"
@@ -1025,7 +1642,7 @@ export default function POSPage() {
                 fontFamily: "'Courier New', Courier, monospace",
                 fontSize: '11px',
                 lineHeight: 1.35,
-                borderRadius: '4px',
+                borderRadius: '6px',
                 border: '1px solid #cbd5e1',
                 boxShadow: '0 8px 30px rgba(0,0,0,0.08)',
               }}
@@ -1082,7 +1699,7 @@ export default function POSPage() {
 
               {/* Subtitle */}
               <div style={{ textAlign: 'center', fontSize: '9.5px', color: '#334155', marginBottom: '8px' }}>
-                Representación impresa de la boleta de venta electrónica
+                Representación preliminar del comprobante
               </div>
 
               {/* Solid Double Divider Line */}
@@ -1120,7 +1737,7 @@ export default function POSPage() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px', marginBottom: '2px' }}>
                   <span>Forma de pago:</span>
-                  <span>{boletaData.paymentMethodLabel}</span>
+                  <span style={{ fontWeight: 700 }}>{boletaData.paymentMethodLabel}</span>
                 </div>
               </div>
 
@@ -1168,6 +1785,28 @@ export default function POSPage() {
                 </div>
               </div>
 
+              {/* Credit Information (SUNAT UBL 2.1 compliance for Credit sales) */}
+              {boletaData.creditInfo && (
+                <div style={{ margin: '8px 0', padding: '6px 0', borderTop: '1px dashed #000', borderBottom: '1px dashed #000' }}>
+                  <div style={{ fontWeight: 700, fontSize: '10px', marginBottom: '4px' }}>INFORMACIÓN DEL CRÉDITO:</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', marginBottom: '2px' }}>
+                    <span>Cuota inicial pagada:</span>
+                    <span style={{ fontWeight: 700 }}>S/ {boletaData.creditInfo.initialPayment.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', marginBottom: '4px' }}>
+                    <span>Monto neto pendiente:</span>
+                    <span style={{ fontWeight: 700 }}>S/ {boletaData.creditInfo.totalCredit.toFixed(2)}</span>
+                  </div>
+                  <div style={{ fontSize: '9.5px', fontWeight: 700, marginTop: '4px', marginBottom: '2px' }}>CUOTAS:</div>
+                  {boletaData.creditInfo.installments.map((ins) => (
+                    <div key={ins.number} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px' }}>
+                      <span>Cuota {ins.number} ({ins.dueDate}):</span>
+                      <span>S/ {ins.total.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Amount in Words */}
               <div style={{ fontSize: '9.5px', fontWeight: 700, margin: '10px 0 6px 0', textTransform: 'uppercase' }}>
                 SON: {numberToSpanishWords(boletaData.total)}
@@ -1176,57 +1815,35 @@ export default function POSPage() {
               {/* Dashed Line */}
               <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
 
-              {/* Test Banner */}
-              <div style={{ textAlign: 'center', fontWeight: 700, fontSize: '10px', margin: '8px 0', letterSpacing: '0.02em' }}>
-                AMBIENTE DE PRUEBAS - SIN VALIDEZ TRIBUTARIA
-              </div>
-
               {/* QR Code & Footer */}
               <div style={{ textAlign: 'center', marginTop: '10px' }}>
                 <div style={{ display: 'inline-flex', padding: '4px', background: '#fff' }}>
-                  <QrCode size={110} className="text-black" />
+                  <QrCode size={105} className="text-black" />
                 </div>
-                <div style={{ fontSize: '8.5px', color: '#334155', marginTop: '8px', padding: '0 4px', lineHeight: 1.3 }}>
-                  Consulte y descargue su comprobante escaneando el QR o en:<br />
-                  <span style={{ wordBreak: 'break-all' }}>https://restaurante-rho-liart.vercel.app/cpe/81db4f00-2acc-4b3f-919f-a28c167da62f</span>
-                </div>
-                <div style={{ fontSize: '8px', color: '#64748b', marginTop: '4px', wordBreak: 'break-all' }}>
-                  Huella digital: KCHh3pS4HsRVixnpQfh80iMVervaqwliUS4G8NP643o=<br />
-                  CDR: 0
-                </div>
-                <div style={{ fontSize: '11px', fontWeight: 700, marginTop: '12px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, marginTop: '8px' }}>
                   Gracias por su preferencia
                 </div>
               </div>
             </div>
 
-            {/* Action Buttons */}
-            <div style={{
-              display: 'flex',
-              gap: '12px',
-              justifyContent: 'center',
-              alignItems: 'center',
-              paddingTop: '16px',
-            }}>
-              <Button
-                variant="primary"
-                icon={<CheckCircle2 size={16} />}
-                onClick={handleCloseBoletaPreview}
-              >
-                Aceptar
-              </Button>
-              <Button
-                variant="outline"
-                icon={<Printer size={16} />}
-                onClick={handlePrintBoleta}
-              >
-                Imprimir Comprobante
-              </Button>
+            {/* Actions: EXACTAMENTE 2 BOTONES (Rechazar Venta / Aceptar Venta) */}
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-border-color">
               <Button
                 variant="secondary"
-                onClick={handleCloseBoletaPreview}
+                onClick={() => setShowBoletaPreview(false)}
+                type="button"
+                disabled={isProcessing}
               >
-                Cerrar
+                Rechazar Venta
+              </Button>
+              <Button
+                variant="primary"
+                icon={isProcessing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                disabled={isProcessing}
+                onClick={handleFinalConfirmSale}
+                type="button"
+              >
+                {isProcessing ? 'Procesando' : 'Aceptar Venta'}
               </Button>
             </div>
           </div>

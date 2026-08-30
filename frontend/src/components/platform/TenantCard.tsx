@@ -18,6 +18,7 @@ interface TenantCardProps {
   isEditing: boolean;
   onEdit: (tenant: TenantCompany) => void;
   onToggleStatus: (tenant: TenantCompany) => void;
+  onEnterTenant?: (tenant: TenantCompany) => void;
 }
 
 export const TenantCard: React.FC<TenantCardProps> = ({
@@ -25,6 +26,7 @@ export const TenantCard: React.FC<TenantCardProps> = ({
   isEditing,
   onEdit,
   onToggleStatus,
+  onEnterTenant,
 }) => {
   return (
     <div className={`tenant-card ${!tenant.active ? 'tenant-card--disabled' : ''} ${isEditing ? 'tenant-card--editing' : ''}`}>
@@ -108,6 +110,18 @@ export const TenantCard: React.FC<TenantCardProps> = ({
       </div>
 
       <div className="tenant-card__actions">
+        {onEnterTenant && tenant.active && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onEnterTenant(tenant)}
+            title="Administrar empresa en el sistema"
+          >
+            Administrar
+          </Button>
+        )}
+
         <Button
           type="button"
           variant={isEditing ? 'primary' : 'ghost'}
@@ -115,7 +129,7 @@ export const TenantCard: React.FC<TenantCardProps> = ({
           icon={<Pencil size={14} />}
           onClick={() => onEdit(tenant)}
         >
--         {isEditing ? 'Editando...' : 'Editar'}
+          {isEditing ? 'Editando...' : 'Editar'}
         </Button>
 
         <Button

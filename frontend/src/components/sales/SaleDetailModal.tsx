@@ -10,7 +10,8 @@ import {
   ShoppingBag,
   CheckCircle2,
   Receipt,
-  QrCode
+  QrCode,
+  Clock
 } from 'lucide-react';
 import { Modal, Badge, Button } from '../ui';
 import { Sale, salesService, settingsService } from '../../lib/db-services';
@@ -28,11 +29,11 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
   const [loadingItems, setLoadingItems] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [tenantInfo, setTenantInfo] = useState<{ name: string; tradeName: string; ruc: string; address: string; phone: string; logo_path?: string }>({
-    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
-    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
-    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '20613639030') : '20613639030',
-    address: 'Retamas',
-    phone: '+51 993 275 893',
+    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '') : '',
+    address: 'Sede Principal',
+    phone: '',
     logo_path: '',
   });
 
@@ -42,11 +43,11 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
       settingsService.getTenantInfo().then((info) => {
         if (info && Object.keys(info).length > 0) {
           setTenantInfo({
-            name: info.legal_name || info.name || 'Grupo K contreras S.A.C',
-            tradeName: info.trade_name || info.name || 'Grupo K contreras S.A.C',
-            ruc: info.ruc || '20613639030',
-            address: info.address || 'Retamas',
-            phone: info.phone || '+51 993 275 893',
+            name: info.legal_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+            tradeName: info.trade_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+            ruc: info.ruc || (typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '' : ''),
+            address: info.address || 'Sede Principal',
+            phone: info.phone || '',
             logo_path: info.logo_path || '',
           });
         }
@@ -78,12 +79,12 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
       const opGravada = (sale.total / 1.18).toFixed(2);
       const igv = (sale.total - sale.total / 1.18).toFixed(2);
       const totalStr = sale.total.toFixed(2);
-      const dateStr = sale.date ? sale.date.split(',')[0].trim() : '2026-08-23';
+      const dateStr = sale.date ? sale.date.split(',')[0].trim() : new Date().toISOString().split('T')[0];
       const custDocType = sale.customerDoc && sale.customerDoc.length === 11 ? '6' : '1';
       const custDocNum = sale.customerDoc || '00000000';
       const hash = '8a9F+zX2qK9/LmQ0wE7YnRtP1uI=';
 
-      const currentRuc = tenantInfo.ruc || '20613639030';
+      const currentRuc = tenantInfo.ruc || (typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '20000000001' : '20000000001');
       const sunatQrPayload = `${currentRuc}|${docTypeCode}|${series}|${seqStr}|${igv}|${totalStr}|${dateStr}|${custDocType}|${custDocNum}|${hash}|`;
 
       QRCode.toDataURL(sunatQrPayload, {
@@ -237,21 +238,66 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
           </div>
 
           <div className="flex items-center gap-3">
-            <span style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '12px',
-              fontWeight: 600,
-              padding: '6px 12px',
-              borderRadius: '20px',
-              background: sale.status === 'CANCELLED' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)',
-              color: sale.status === 'CANCELLED' ? '#fca5a5' : '#86efac',
-              border: `1px solid ${sale.status === 'CANCELLED' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.3)'}`
-            }}>
-              <CheckCircle2 size={14} />
-              {sale.status === 'CANCELLED' ? 'Anulado' : 'Completado'}
-            </span>
+            {(() => {
+              const isCreditPending = (sale.paymentCondition === 'CREDITO' || Boolean(sale.creditInfo)) && (sale.creditInfo?.status !== 'PAID' || (sale.creditInfo?.balancePending && sale.creditInfo.balancePending > 0));
+              const isCancelled = sale.status === 'CANCELLED' || (sale.status as string) === 'ANULADO';
+
+              if (isCancelled) {
+                return (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    padding: '6px 12px',
+                    borderRadius: '20px',
+                    background: 'rgba(239, 68, 68, 0.15)',
+                    color: '#fca5a5',
+                    border: '1px solid rgba(239, 68, 68, 0.3)'
+                  }}>
+                    <X size={14} />
+                    Anulado
+                  </span>
+                );
+              }
+              if (isCreditPending) {
+                return (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    padding: '6px 12px',
+                    borderRadius: '20px',
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    color: '#fcd34d',
+                    border: '1px solid rgba(245, 158, 11, 0.3)'
+                  }}>
+                    <Clock size={14} />
+                    Crédito Pendiente
+                  </span>
+                );
+              }
+              return (
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  padding: '6px 12px',
+                  borderRadius: '20px',
+                  background: 'rgba(34, 197, 94, 0.15)',
+                  color: '#86efac',
+                  border: '1px solid rgba(34, 197, 94, 0.3)'
+                }}>
+                  <CheckCircle2 size={14} />
+                  Completado
+                </span>
+              );
+            })()}
           </div>
         </div>
 
@@ -367,18 +413,102 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
                 <div style={{ background: 'var(--bg-surface)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
                   <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-secondary)' }}>
                     <CreditCard size={14} className="text-emerald-500" />
-                    Método de Pago
+                    Condición & Pago
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="info">
-                      {sale.paymentMethod}
-                    </Badge>
+                    {sale.paymentCondition === 'CREDITO' || sale.creditInfo ? (
+                      <Badge variant="warning">
+                        Al Crédito ({sale.creditInfo?.installmentsCount || 1}c)
+                      </Badge>
+                    ) : (
+                      <Badge variant="success">
+                        Al Contado
+                      </Badge>
+                    )}
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    Operación confirmada
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                    {sale.paymentCondition === 'CREDITO' ? 'Venta financiada' : `Medio: ${sale.paymentMethod}`}
                   </div>
                 </div>
               </div>
+
+              {/* Si es venta al Crédito: Mostrar sección de Cronograma y Financiamiento */}
+              {(sale.paymentCondition === 'CREDITO' || sale.creditInfo) && sale.creditInfo && (
+                <div style={{ background: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 18px', background: 'var(--bg-app)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div className="flex items-center gap-2 font-bold text-xs text-primary">
+                      <CreditCard size={15} className="text-primary-600" />
+                      Plan de Financiamiento al Crédito ({sale.creditInfo.installmentsCount} cuotas • {sale.creditInfo.installmentFrequency})
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-secondary">
+                      <span>Estado:</span>
+                      <Badge variant={sale.creditInfo.status === 'PAID' ? 'success' : 'warning'}>
+                        {sale.creditInfo.status === 'PAID' ? 'Completado' : 'Pendiente'}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {/* Summary Tiles */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', padding: '14px 16px', background: 'var(--bg-app)', borderBottom: '1px solid var(--border-color)' }}>
+                    <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Inicial Pagada</div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--emerald-600, #16a34a)', fontFamily: 'monospace', marginTop: '2px' }}>S/ {sale.creditInfo.initialPayment.toFixed(2)}</div>
+                    </div>
+                    <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Saldo Capital</div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace', marginTop: '2px' }}>S/ {sale.creditInfo.financedAmount.toFixed(2)}</div>
+                    </div>
+                    <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Interés ({sale.creditInfo.interestRate}%)</div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--primary-600, #2563eb)', fontFamily: 'monospace', marginTop: '2px' }}>+ S/ {sale.creditInfo.interestAmount.toFixed(2)}</div>
+                    </div>
+                    <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-surface)', textAlign: 'center' }}>
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em' }}>Total a Pagar</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--primary-600, #2563eb)', fontFamily: 'monospace', marginTop: '2px' }}>S/ {sale.creditInfo.totalCredit.toFixed(2)}</div>
+                    </div>
+                  </div>
+
+                  {/* Installments Table */}
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-app)', color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>
+                        <th style={{ padding: '8px 16px', fontWeight: 600 }}>N° Cuota</th>
+                        <th style={{ padding: '8px 16px', fontWeight: 600 }}>Fecha Vencimiento</th>
+                        <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'right' }}>Capital</th>
+                        <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'right' }}>Interés</th>
+                        <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'right' }}>Monto Cuota</th>
+                        <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'center' }}>Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sale.creditInfo.installments.map((ins, idx) => (
+                        <tr key={idx} style={{ borderBottom: idx < sale.creditInfo!.installments.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
+                          <td style={{ padding: '10px 16px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                            Cuota {ins.installmentNumber}
+                          </td>
+                          <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>
+                            {ins.dueDate}
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'monospace' }}>
+                            S/ {(ins.capitalAmount ?? (ins.totalAmount / (1 + (sale.creditInfo?.interestRate || 0)/100))).toFixed(2)}
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--primary-600)' }}>
+                            + S/ {(ins.interestAmount ?? (ins.totalAmount - (ins.capitalAmount || 0))).toFixed(2)}
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 700, fontFamily: 'monospace', color: 'var(--text-primary)' }}>
+                            S/ {ins.totalAmount.toFixed(2)}
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                            <Badge variant={ins.status === 'PAID' ? 'success' : 'warning'}>
+                              {ins.status === 'PAID' ? 'Pagado' : 'Pendiente'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* Items Breakdown Table */}
               <div style={{ background: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
@@ -507,10 +637,16 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
                   <div>Fecha Emisión: {emissionDate}</div>
                   {emissionTime && <div>Hora Emisión: {emissionTime}</div>}
                   <div>Sede / Sucursal: {sale.branch || 'Sede Principal'}</div>
-                  <div>Emitido por: <strong style={{ textTransform: 'uppercase' }}>{sale.sellerName || (typeof window !== 'undefined' ? localStorage.getItem('auth_user') : '') || 'Niver Contreras'}</strong></div>
+                  <div>Emitido por: <strong style={{ textTransform: 'uppercase' }}>{sale.sellerName || (typeof window !== 'undefined' ? localStorage.getItem('auth_user') : '') || 'Vendedor'}</strong></div>
                   <div>Cliente: <strong style={{ textTransform: 'uppercase' }}>{sale.customer || 'PÚBLICO GENERAL'}</strong></div>
-                  <div>Doc. Cliente: <strong>{sale.customerDoc || '00000000'}</strong></div>
-                  <div>Forma de Pago: {sale.paymentMethod ? (sale.paymentMethod === 'CASH' ? 'Contado (Efectivo)' : sale.paymentMethod === 'TRANSFER' ? 'Transferencia' : sale.paymentMethod === 'CARD' ? 'Tarjeta' : sale.paymentMethod) : 'Contado'}</div>
+                  <div>
+                    Forma de Pago:{' '}
+                    <strong>
+                      {sale.paymentCondition === 'CREDITO' || Boolean(sale.creditInfo)
+                        ? 'Crédito'
+                        : `Contado (${sale.paymentMethod === 'CASH' ? 'Efectivo' : sale.paymentMethod === 'TRANSFER' ? 'Transferencia' : sale.paymentMethod === 'CARD' ? 'Tarjeta' : sale.paymentMethod === 'YAPE' ? 'Yape / Plin' : sale.paymentMethod || 'Efectivo'})`}
+                    </strong>
+                  </div>
                   <div>Moneda: SOLES (PEN)</div>
                 </div>
 
@@ -563,6 +699,34 @@ export const SaleDetailModal: React.FC<SaleDetailModalProps> = ({ sale, isOpen, 
                 <div style={{ fontSize: '10px', fontStyle: 'italic', marginBottom: '10px', textTransform: 'uppercase' }}>
                   SON: {totalInWords}
                 </div>
+
+                {/* Credit Information (SUNAT UBL 2.1 Compliance for Credit Sales) */}
+                {(sale.paymentCondition === 'CREDITO' || sale.creditInfo) && sale.creditInfo && (
+                  <div style={{ margin: '8px 0', padding: '6px 0', borderTop: '1px dashed #000', borderBottom: '1px dashed #000' }}>
+                    <div style={{ fontWeight: 700, fontSize: '10px', marginBottom: '4px' }}>
+                      INFORMACIÓN DEL CRÉDITO (SUNAT UBL 2.1):
+                    </div>
+                    {sale.creditInfo.initialPayment > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px', marginBottom: '2px' }}>
+                        <span>Cuota inicial pagada:</span>
+                        <span style={{ fontWeight: 700 }}>S/ {sale.creditInfo.initialPayment.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px', marginBottom: '4px' }}>
+                      <span>Monto neto pendiente de pago:</span>
+                      <span style={{ fontWeight: 700 }}>S/ {sale.creditInfo.totalCredit.toFixed(2)}</span>
+                    </div>
+                    <div style={{ fontSize: '9.5px', fontWeight: 700, marginTop: '4px', marginBottom: '2px' }}>
+                      CUOTAS PROGRAMADAS ({sale.creditInfo.installmentsCount}):
+                    </div>
+                    {sale.creditInfo.installments.map((ins) => (
+                      <div key={ins.installmentNumber} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', padding: '1.5px 0' }}>
+                        <span>Cuota {ins.installmentNumber} ({ins.dueDate}):</span>
+                        <span style={{ fontWeight: 700 }}>S/ {ins.totalAmount.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Dashed Line */}
                 <div style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />

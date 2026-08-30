@@ -1,4 +1,17 @@
 import { supabase, DEFAULT_TENANT_ID, DEFAULT_BRANCH_ID, getActiveTenantId, getActiveBranchId } from './supabase';
+import {
+  STORES,
+  getAllRecords,
+  getRecord,
+  putRecord,
+  putManyRecords,
+  deleteRecord as deleteLocalRecord,
+  getByIndex,
+  replaceAllRecords,
+  queueMutation,
+  generateLocalId,
+} from './offline-db';
+import { isNetworkOnline, refreshPendingCount } from './sync-engine';
 
 export interface BranchStock {
   branchId: string;
@@ -47,6 +60,7 @@ export interface Category {
   id: string;
   name: string;
   active: boolean;
+  brandsCount?: number;
   brands?: { id: string; name: string }[];
 }
 
@@ -121,83 +135,131 @@ export interface UserMember {
 // ---------------- PRODUCTS ----------------
 export const productsService = {
   async getProducts(branchId?: string): Promise<Product[]> {
-    const { data: prods, error: pError } = await supabase
-      .from('products')
-      .select(`
-        id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors,
-        categories ( name ),
-        brands ( name ),
-        models ( name )
-      `)
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
-      .order('created_at', { ascending: false });
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
 
-    if (pError) {
-      console.error('Error fetching products:', pError);
-      return [];
+    // ─── OFFLINE FALLBACK: If not online, serve from IndexedDB ───
+    if (!isNetworkOnline()) {
+      return this._getProductsFromCache(branchId);
     }
 
-    const { data: branches } = await supabase
-      .from('branches')
-      .select('id, name')
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`);
+    try {
+      const { data: prods, error: pError } = await supabase
+        .from('products')
+        .select(`
+          id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors,
+          categories ( name ),
+          brands ( name ),
+          models ( name )
+        `)
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false });
 
-    const branchNameMap = new Map<string, string>();
-    branches?.forEach((b) => branchNameMap.set(b.id, b.name));
-
-    const { data: stocks } = await supabase
-      .from('branch_inventory')
-      .select('product_id, branch_id, quantity')
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`);
-
-    const productStocksMap = new Map<string, BranchStock[]>();
-    stocks?.forEach((s) => {
-      const pid = s.product_id;
-      const bId = s.branch_id;
-      const bName = branchNameMap.get(bId) || 'Sede Principal';
-      const qty = Number(s.quantity) || 0;
-
-      const list = productStocksMap.get(pid) || [];
-      list.push({ branchId: bId, branchName: bName, stock: qty });
-      productStocksMap.set(pid, list);
-    });
-
-    return (prods || []).map((p: any) => {
-      const branchStocks = productStocksMap.get(p.id) || [];
-      let calculatedStock = 0;
-
-      if (branchId && branchId !== 'ALL') {
-        const found = branchStocks.find((bs) => bs.branchId === branchId);
-        calculatedStock = found ? found.stock : 0;
-      } else {
-        calculatedStock = branchStocks.reduce((sum, bs) => sum + bs.stock, 0);
+      if (pError) {
+        console.error('Error fetching products:', pError);
+        return this._getProductsFromCache(branchId);
       }
 
-      return {
-        id: p.id,
-        code: p.code || p.sku || 'PROD',
-        sku: p.sku || p.code || '',
-        name: p.name,
-        category: p.categories?.name || 'Sin categoría',
-        categoryId: p.category_id,
-        brand: p.brands?.name || 'Sin marca',
-        brandId: p.brand_id,
-        model: p.models?.name || '',
-        modelId: p.model_id,
-        price: Number(p.price) || 0,
-        cost: Number(p.cost) || 0,
-        stock: calculatedStock,
-        minStock: Number(p.min_stock) || 5,
-        status: p.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
-        imagePath: p.image_path || '',
-        colors: Array.isArray(p.colors) ? p.colors : [],
-        branchStocks,
-      };
-    });
+      const { data: branches } = await supabase
+        .from('branches')
+        .select('id, name')
+        .eq('tenant_id', tenantId);
+
+      const branchNameMap = new Map<string, string>();
+      branches?.forEach((b) => branchNameMap.set(b.id, b.name));
+
+      const { data: stocks } = await supabase
+        .from('branch_inventory')
+        .select('product_id, branch_id, quantity')
+        .eq('tenant_id', tenantId);
+
+      const productStocksMap = new Map<string, BranchStock[]>();
+      stocks?.forEach((s) => {
+        const pid = s.product_id;
+        const bId = s.branch_id;
+        const bName = branchNameMap.get(bId) || 'Sede Principal';
+        const qty = Number(s.quantity) || 0;
+
+        const list = productStocksMap.get(pid) || [];
+        list.push({ branchId: bId, branchName: bName, stock: qty });
+        productStocksMap.set(pid, list);
+      });
+
+      const result = (prods || []).map((p: any) => {
+        const branchStocks = productStocksMap.get(p.id) || [];
+        let calculatedStock = 0;
+
+        if (branchId && branchId !== 'ALL') {
+          const found = branchStocks.find((bs) => bs.branchId === branchId);
+          calculatedStock = found ? found.stock : 0;
+        } else {
+          calculatedStock = branchStocks.reduce((sum, bs) => sum + bs.stock, 0);
+        }
+
+        const colorsList = Array.isArray(p.colors) ? p.colors : [];
+        const hasColors = colorsList.length > 0;
+        const colorsTotalStock = hasColors ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0) : null;
+
+        let finalStock = calculatedStock;
+        if (hasColors && colorsTotalStock !== null) {
+          if (!branchId || branchId === 'ALL') {
+            finalStock = colorsTotalStock;
+          } else {
+            finalStock = calculatedStock > 0 ? calculatedStock : colorsTotalStock;
+          }
+        }
+
+        return {
+          id: p.id,
+          code: p.code || p.sku || 'PROD',
+          sku: p.sku || p.code || '',
+          name: p.name,
+          category: p.categories?.name || 'Sin categoría',
+          categoryId: p.category_id,
+          brand: p.brands?.name || 'Sin marca',
+          brandId: p.brand_id,
+          model: p.models?.name || '',
+          modelId: p.model_id,
+          price: Number(p.price) || 0,
+          cost: Number(p.cost) || 0,
+          stock: finalStock,
+          minStock: Number(p.min_stock) || 5,
+          status: p.status === 'INACTIVE' ? 'INACTIVE' as const : 'ACTIVE' as const,
+          imagePath: p.image_path || '',
+          colors: colorsList,
+          branchStocks,
+        };
+      });
+
+      // ─── CACHE: Store products in IndexedDB for offline use ───
+      try { await putManyRecords(STORES.PRODUCTS, result); } catch { /* non-critical */ }
+
+      return result;
+    } catch (networkError) {
+      console.warn('[productsService] Network error, falling back to IndexedDB:', networkError);
+      return this._getProductsFromCache(branchId);
+    }
+  },
+
+  /** Read products from IndexedDB cache */
+  async _getProductsFromCache(branchId?: string): Promise<Product[]> {
+    try {
+      const cached = await getAllRecords<Product>(STORES.PRODUCTS);
+      if (branchId && branchId !== 'ALL') {
+        return cached.map(p => {
+          const bs = p.branchStocks?.find(b => b.branchId === branchId);
+          return { ...p, stock: bs ? bs.stock : p.stock };
+        });
+      }
+      return cached;
+    } catch {
+      return [];
+    }
   },
 
   async createProduct(prod: Omit<Product, 'id'>, branchId?: string): Promise<Product | null> {
     const tenantId = getActiveTenantId();
+    if (!tenantId) return null;
     const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
 
     const { data, error } = await supabase
@@ -225,13 +287,14 @@ export const productsService = {
       return null;
     }
 
-    // Insert inventory stock in the active/specified branch
-    await supabase.from('branch_inventory').insert({
-      tenant_id: tenantId,
-      branch_id: targetBranch,
-      product_id: data.id,
-      quantity: prod.stock,
-    });
+    if (targetBranch) {
+      await supabase.from('branch_inventory').insert({
+        tenant_id: tenantId,
+        branch_id: targetBranch,
+        product_id: data.id,
+        quantity: prod.stock,
+      });
+    }
 
     auditService.logAction({
       action: 'CREAR',
@@ -249,79 +312,89 @@ export const productsService = {
     });
 
     return {
-      ...prod,
       id: data.id,
+      code: data.code,
+      sku: data.sku || data.code,
+      name: data.name,
+      category: prod.category || 'Sin categoría',
+      categoryId: data.category_id,
+      brand: prod.brand || 'Sin marca',
+      brandId: data.brand_id,
+      model: prod.model || '',
+      modelId: data.model_id,
+      price: Number(data.price),
+      cost: Number(data.cost),
+      stock: prod.stock,
+      minStock: Number(data.min_stock),
+      status: data.status === 'AVAILABLE' ? 'ACTIVE' : 'INACTIVE',
+      imagePath: data.image_path || '',
+      colors: prod.colors || [],
     };
   },
 
   async updateProduct(id: string, prod: Partial<Product>, branchId?: string): Promise<boolean> {
-    const updateData: any = {};
-    if (prod.name !== undefined) updateData.name = prod.name;
-    if (prod.code !== undefined) updateData.code = prod.code;
-    if (prod.sku !== undefined) updateData.sku = prod.sku;
-    if (prod.price !== undefined) updateData.price = prod.price;
-    if (prod.cost !== undefined) updateData.cost = prod.cost;
-    if (prod.minStock !== undefined) updateData.min_stock = prod.minStock;
-    if (prod.categoryId !== undefined) updateData.category_id = prod.categoryId || null;
-    if (prod.brandId !== undefined) updateData.brand_id = prod.brandId || null;
-    if (prod.modelId !== undefined) updateData.model_id = prod.modelId || null;
-    if (prod.status !== undefined) updateData.status = prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE';
-    if (prod.imagePath !== undefined) updateData.image_path = prod.imagePath;
-    if (prod.colors !== undefined) updateData.colors = prod.colors;
+    try {
+      const updateData: any = {};
+      if (prod.code) updateData.code = prod.code;
+      if (prod.sku) updateData.sku = prod.sku;
+      if (prod.name) updateData.name = prod.name;
+      if (prod.categoryId !== undefined) updateData.category_id = prod.categoryId || null;
+      if (prod.brandId !== undefined) updateData.brand_id = prod.brandId || null;
+      if (prod.modelId !== undefined) updateData.model_id = prod.modelId || null;
+      if (prod.price !== undefined) updateData.price = prod.price;
+      if (prod.cost !== undefined) updateData.cost = prod.cost;
+      if (prod.minStock !== undefined) updateData.min_stock = prod.minStock;
+      if (prod.status) updateData.status = prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE';
+      if (prod.imagePath !== undefined) updateData.image_path = prod.imagePath || null;
+      if (prod.colors !== undefined) updateData.colors = prod.colors;
 
-    if (Object.keys(updateData).length > 0) {
       const { error } = await supabase.from('products').update(updateData).eq('id', id);
+
       if (error) {
-        console.error('Error updating product:', error);
+        console.error('Error updating product in Supabase:', error);
         return false;
       }
-    }
 
-    if (prod.stock !== undefined) {
-      const tenantId = getActiveTenantId();
-      const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
+      if (prod.stock !== undefined) {
+        const tenantId = getActiveTenantId();
+        const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
+        const { data: inv } = await supabase
+          .from('branch_inventory')
+          .select('id')
+          .eq('product_id', id)
+          .eq('branch_id', targetBranch)
+          .maybeSingle();
 
-      const { data: inv } = await supabase
-        .from('branch_inventory')
-        .select('id')
-        .eq('product_id', id)
-        .eq('branch_id', targetBranch)
-        .maybeSingle();
-
-      if (inv) {
-        await supabase.from('branch_inventory').update({ quantity: prod.stock }).eq('id', inv.id);
-      } else {
-        await supabase.from('branch_inventory').insert({
-          tenant_id: tenantId,
-          branch_id: targetBranch,
-          product_id: id,
-          quantity: prod.stock,
-        });
+        if (inv) {
+          await supabase.from('branch_inventory').update({ quantity: prod.stock }).eq('id', inv.id);
+        } else if (targetBranch) {
+          await supabase.from('branch_inventory').insert({
+            tenant_id: tenantId,
+            branch_id: targetBranch,
+            product_id: id,
+            quantity: prod.stock,
+          });
+        }
       }
+
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'products',
+        entityId: id,
+        branchId: branchId && branchId !== 'ALL' ? branchId : undefined,
+        description: `Actualización de datos del producto "${prod.name || id}"`,
+        details: { ...prod },
+      });
+
+      return true;
+    } catch (err) {
+      console.error('Exception updating product:', err);
+      return false;
     }
-
-    const priceText = prod.price !== undefined ? `Precio: S/ ${Number(prod.price).toFixed(2)}` : '';
-    const stockText = prod.stock !== undefined ? `Stock: ${prod.stock}` : '';
-    const descExtra = [priceText, stockText].filter(Boolean).join(', ');
-
-    auditService.logAction({
-      action: 'MODIFICAR',
-      entityType: 'products',
-      entityId: id,
-      branchId: branchId && branchId !== 'ALL' ? branchId : undefined,
-      description: `Actualización de producto "${prod.name || 'ID ' + id.slice(0, 8)}" ${descExtra ? `(${descExtra})` : ''}`.trim(),
-      details: {
-        name: prod.name,
-        ...prod,
-      },
-    });
-
-    return true;
   },
 
   async deleteProduct(id: string): Promise<boolean> {
     try {
-      // Find product info for rich audit log
       let prodName = 'Producto';
       let prodSku = '';
       const { data: prodData } = await supabase.from('products').select('name, sku, code').eq('id', id).maybeSingle();
@@ -337,8 +410,9 @@ export const productsService = {
       await supabase.from('physical_count_items').delete().eq('product_id', id);
       await supabase.from('branch_inventory').delete().eq('product_id', id);
       const { error } = await supabase.from('products').delete().eq('id', id);
+
       if (error) {
-        console.error('Error deleting product:', error);
+        console.error('Error deleting product from Supabase:', error);
         return false;
       }
 
@@ -346,7 +420,7 @@ export const productsService = {
         action: 'ELIMINAR',
         entityType: 'products',
         entityId: id,
-        description: `Eliminación de producto "${prodName}" ${prodSku ? `(SKU: ${prodSku})` : ''}`.trim(),
+        description: `Eliminación permanente del producto "${prodName}" (${prodSku})`,
         details: {
           name: prodName,
           sku: prodSku,
@@ -364,33 +438,50 @@ export const productsService = {
 // ---------------- BRANCHES ----------------
 export const branchesService = {
   async getBranches(): Promise<Branch[]> {
-    const { data, error } = await supabase
-      .from('branches')
-      .select('*')
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
-      .order('created_at', { ascending: true });
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
 
-    if (error) {
-      console.error('Error fetching branches:', error);
-      return [];
+    if (!isNetworkOnline()) {
+      try { return await getAllRecords<Branch>(STORES.BRANCHES); } catch { return []; }
     }
 
-    return (data || []).map((b: any) => ({
-      id: b.id,
-      name: b.name,
-      address: b.address || '',
-      phone: b.phone || '',
-      managerName: b.manager_name || 'Sin asignar',
-      status: b.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
-      isMain: b.id === DEFAULT_BRANCH_ID,
-    }));
+    try {
+      const { data, error } = await supabase
+        .from('branches')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching branches:', error);
+        try { return await getAllRecords<Branch>(STORES.BRANCHES); } catch { return []; }
+      }
+
+      const result = (data || []).map((b: any) => ({
+        id: b.id,
+        name: b.name,
+        address: b.address || '',
+        phone: b.phone || '',
+        managerName: b.manager_name || 'Sin asignar',
+        status: b.status === 'INACTIVE' ? 'INACTIVE' as const : 'ACTIVE' as const,
+        isMain: false,
+      })) as Branch[];
+
+      try { await putManyRecords(STORES.BRANCHES, result); } catch { /* non-critical */ }
+      return result;
+    } catch {
+      try { return await getAllRecords<Branch>(STORES.BRANCHES); } catch { return []; }
+    }
   },
 
   async createBranch(branch: Omit<Branch, 'id'>): Promise<Branch | null> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return null;
+
     const { data, error } = await supabase
       .from('branches')
       .insert({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         name: branch.name,
         address: branch.address,
         phone: branch.phone,
@@ -474,10 +565,13 @@ export const branchesService = {
 // ---------------- CATEGORIES & BRANDS ----------------
 export const catalogService = {
   async getCategories(): Promise<Category[]> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
+
     const { data: cats, error } = await supabase
       .from('categories')
       .select('*')
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+      .eq('tenant_id', tenantId)
       .order('name');
 
     if (error) {
@@ -488,7 +582,7 @@ export const catalogService = {
     const { data: brs } = await supabase
       .from('brands')
       .select('id, name, category_id')
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`);
+      .eq('tenant_id', tenantId);
 
     const categoryBrandsMap = new Map<string, { id: string; name: string }[]>();
     brs?.forEach((b) => {
@@ -503,14 +597,18 @@ export const catalogService = {
       id: c.id,
       name: c.name,
       active: c.active ?? true,
+      brandsCount: (categoryBrandsMap.get(c.id) || []).length,
       brands: categoryBrandsMap.get(c.id) || [],
     }));
   },
 
   async createCategory(name: string): Promise<Category | null> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return null;
+
     const { data, error } = await supabase
       .from('categories')
-      .insert({ tenant_id: DEFAULT_TENANT_ID, name })
+      .insert({ tenant_id: tenantId, name })
       .select()
       .single();
 
@@ -527,11 +625,21 @@ export const catalogService = {
       details: { name },
     });
 
-    return { id: data.id, name: data.name, active: true, brands: [] };
+    return {
+      id: data.id,
+      name: data.name,
+      active: true,
+      brandsCount: 0,
+      brands: [],
+    };
   },
 
   async updateCategory(id: string, name: string): Promise<boolean> {
-    const { error } = await supabase.from('categories').update({ name }).eq('id', id);
+    const { error } = await supabase
+      .from('categories')
+      .update({ name })
+      .eq('id', id);
+
     if (!error) {
       auditService.logAction({
         action: 'MODIFICAR',
@@ -563,13 +671,16 @@ export const catalogService = {
   },
 
   async getBrands(): Promise<Brand[]> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
+
     const { data, error } = await supabase
       .from('brands')
       .select(`
         id, name, active, category_id,
         categories ( name )
       `)
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+      .eq('tenant_id', tenantId)
       .order('name');
 
     if (error) {
@@ -589,9 +700,12 @@ export const catalogService = {
   },
 
   async createBrand(name: string, categoryId?: string): Promise<Brand | null> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return null;
+
     const { data, error } = await supabase
       .from('brands')
-      .insert({ tenant_id: DEFAULT_TENANT_ID, name, category_id: categoryId || null })
+      .insert({ tenant_id: tenantId, name, category_id: categoryId || null })
       .select(`
         id, name, active, category_id,
         categories ( name )
@@ -657,13 +771,16 @@ export const catalogService = {
   },
 
   async getModels(): Promise<Model[]> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
+
     const { data, error } = await supabase
       .from('models')
       .select(`
         id, name, active, brand_id,
         brands ( name )
       `)
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+      .eq('tenant_id', tenantId)
       .order('name');
 
     if (error) {
@@ -683,9 +800,12 @@ export const catalogService = {
   },
 
   async createModel(name: string, brandId?: string): Promise<Model | null> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return null;
+
     const { data, error } = await supabase
       .from('models')
-      .insert({ tenant_id: DEFAULT_TENANT_ID, name, brand_id: brandId || null })
+      .insert({ tenant_id: tenantId, name, brand_id: brandId || null })
       .select(`
         id, name, active, brand_id,
         brands ( name )
@@ -754,34 +874,53 @@ export const catalogService = {
 // ---------------- CUSTOMERS ----------------
 export const customersService = {
   async getCustomers(): Promise<Customer[]> {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
-      .order('created_at', { ascending: false });
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
 
-    if (error) return [];
+    if (!isNetworkOnline()) {
+      try { return await getAllRecords<Customer>(STORES.CUSTOMERS); } catch { return []; }
+    }
 
-    return (data || []).map((c: any) => ({
-      id: c.id,
-      customerType: c.customer_type || 'PERSON',
-      documentType: c.document_type || 'DNI',
-      documentNumber: c.document_number || '',
-      fullName: c.full_name || '',
-      businessName: c.business_name || '',
-      name: c.business_name || c.full_name || 'Cliente',
-      email: c.email || '',
-      phone: c.phone || '',
-      address: c.address || '',
-    }));
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        try { return await getAllRecords<Customer>(STORES.CUSTOMERS); } catch { return []; }
+      }
+
+      const result = (data || []).map((c: any) => ({
+        id: c.id,
+        customerType: c.customer_type || 'PERSON',
+        documentType: c.document_type || 'DNI',
+        documentNumber: c.document_number || '',
+        fullName: c.full_name || '',
+        businessName: c.business_name || '',
+        name: c.business_name || c.full_name || 'Cliente',
+        email: c.email || '',
+        phone: c.phone || '',
+        address: c.address || '',
+      })) as Customer[];
+
+      try { await putManyRecords(STORES.CUSTOMERS, result); } catch { /* non-critical */ }
+      return result;
+    } catch {
+      try { return await getAllRecords<Customer>(STORES.CUSTOMERS); } catch { return []; }
+    }
   },
 
   async createCustomer(cust: Omit<Customer, 'id' | 'name'>): Promise<Customer | null> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return null;
+
     const custName = cust.businessName || cust.fullName || 'Cliente';
     const { data, error } = await supabase
       .from('customers')
       .insert({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         customer_type: cust.customerType,
         document_type: cust.documentType,
         document_number: cust.documentNumber,
@@ -857,31 +996,50 @@ export const customersService = {
 // ---------------- SUPPLIERS ----------------
 export const suppliersService = {
   async getSuppliers(): Promise<Supplier[]> {
-    const { data, error } = await supabase
-      .from('suppliers')
-      .select('*')
-      .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
-      .order('created_at', { ascending: false });
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
 
-    if (error) return [];
+    if (!isNetworkOnline()) {
+      try { return await getAllRecords<Supplier>(STORES.SUPPLIERS); } catch { return []; }
+    }
 
-    return (data || []).map((s: any) => ({
-      id: s.id,
-      ruc: s.ruc || '',
-      businessName: s.business_name || '',
-      name: s.business_name || '',
-      contactName: s.contact_name || '',
-      phone: s.phone || '',
-      email: s.email || '',
-      address: s.address || '',
-    }));
+    try {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        try { return await getAllRecords<Supplier>(STORES.SUPPLIERS); } catch { return []; }
+      }
+
+      const result = (data || []).map((s: any) => ({
+        id: s.id,
+        ruc: s.ruc || '',
+        businessName: s.business_name || '',
+        name: s.business_name || '',
+        contactName: s.contact_name || '',
+        phone: s.phone || '',
+        email: s.email || '',
+        address: s.address || '',
+      })) as Supplier[];
+
+      try { await putManyRecords(STORES.SUPPLIERS, result); } catch { /* non-critical */ }
+      return result;
+    } catch {
+      try { return await getAllRecords<Supplier>(STORES.SUPPLIERS); } catch { return []; }
+    }
   },
 
   async createSupplier(sup: Omit<Supplier, 'id' | 'name'>): Promise<Supplier | null> {
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return null;
+
     const { data, error } = await supabase
       .from('suppliers')
       .insert({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: tenantId,
         ruc: sup.ruc,
         business_name: sup.businessName,
         contact_name: sup.contactName,
@@ -962,13 +1120,15 @@ export const suppliersService = {
 export const rolesService = {
   async getRoles(): Promise<Role[]> {
     const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
+
     const { data, error } = await supabase
       .from('roles')
       .select(`
         id, name, description, is_system,
         role_permissions ( permission_code )
       `)
-      .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+      .or(`tenant_id.eq.${tenantId},is_system.eq.true`)
       .order('name');
 
     if (error) {
@@ -997,6 +1157,7 @@ export const rolesService = {
     try {
       const roleId = generateUUID();
       const tenantId = getActiveTenantId();
+      if (!tenantId) return null;
       
       // 1. Insert Role
       const { error: rError } = await supabase
@@ -1090,6 +1251,7 @@ export const rolesService = {
   async updateRolePermissions(roleId: string, permissions: string[]): Promise<boolean> {
     try {
       const tenantId = getActiveTenantId();
+      if (!tenantId) return false;
 
       // Find role name for clean audit log
       let roleName = 'Rol';
@@ -1184,9 +1346,10 @@ export const rolesService = {
   },
 };
 
-// Helper to map default system role name to UUID
 const ROLE_MAP: Record<string, string> = {
   'Super Admin': 'a1000000-0000-4000-a000-000000000001',
+  'Administrador': 'a1000000-0000-4000-a000-000000000001',
+  'Vendedor': 'a2000000-0000-4000-a000-000000000002',
 };
 
 const isValidUuid = (val: string): boolean => {
@@ -1200,31 +1363,15 @@ const resolveBranchUuids = async (branches: string[] | undefined, branch: string
   // If all inputs are valid UUIDs, return them directly
   if (inputs.every(isValidUuid)) return inputs;
 
-  try {
-    const branchList = await branchesService.getBranches();
-    const branchMap = new Map<string, string>();
-    branchList.forEach(b => {
-      branchMap.set(b.name.toLowerCase().trim(), b.id);
-      branchMap.set(b.id, b.id);
-    });
+  // Otherwise, lookup from DB
+  const { data: dbBranches } = await supabase.from('branches').select('id, name');
+  if (!dbBranches || dbBranches.length === 0) return [DEFAULT_BRANCH_ID];
 
-    const resolved: string[] = [];
-    inputs.forEach(inp => {
-      if (isValidUuid(inp)) {
-        resolved.push(inp);
-      } else {
-        const matchId = branchMap.get(inp.toLowerCase().trim());
-        if (matchId) resolved.push(matchId);
-      }
-    });
+  const matched = dbBranches
+    .filter((b) => inputs.some((inp) => inp.toLowerCase().trim() === b.name.toLowerCase().trim() || inp === b.id))
+    .map((b) => b.id);
 
-    if (resolved.length === 0) {
-      return branchList.length > 0 ? [branchList[0].id] : [DEFAULT_BRANCH_ID];
-    }
-    return resolved;
-  } catch {
-    return [DEFAULT_BRANCH_ID];
-  }
+  return matched.length > 0 ? matched : [dbBranches[0].id];
 };
 
 const generateUUID = (): string => {
@@ -1238,8 +1385,35 @@ const generateUUID = (): string => {
   });
 };
 
-// ---------------- USERS / MEMBERS ----------------
+// ---------------- USERS & AUTH ----------------
 export const usersService = {
+  async authenticateSuperadmin(email: string): Promise<boolean> {
+    const cleanEmail = email.trim().toLowerCase();
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, full_name, email')
+      .ilike('email', cleanEmail)
+      .maybeSingle();
+
+    if (!profile) return false;
+
+    // Check if user has Super Admin membership
+    const { data: memberships } = await supabase
+      .from('tenant_memberships')
+      .select(`
+        role_id,
+        roles ( name )
+      `)
+      .eq('user_id', profile.id);
+
+    const isSuper = (memberships || []).some((m: any) => {
+      const rName = m.roles?.name?.toLowerCase() || '';
+      return rName.includes('super') || rName.includes('admin');
+    });
+
+    return isSuper;
+  },
+
   async authenticatePersonal(usernameOrEmail: string, password?: string, taxId?: string): Promise<{
     success: boolean;
     tenant?: {
@@ -1276,7 +1450,15 @@ export const usersService = {
       if (ruc) {
         tenantQuery = tenantQuery.eq('ruc', ruc);
       } else {
-        tenantQuery = tenantQuery.eq('id', DEFAULT_TENANT_ID);
+        const activeTId = getActiveTenantId();
+        if (activeTId) {
+          tenantQuery = tenantQuery.eq('id', activeTId);
+        } else {
+          return {
+            success: false,
+            error: 'Debe ingresar el RUC de la empresa para iniciar sesión.',
+          };
+        }
       }
 
       const { data: tenantData, error: tError } = await tenantQuery.maybeSingle();
@@ -1338,69 +1520,36 @@ export const usersService = {
       if (match.status === 'DISABLED') {
         return {
           success: false,
-          error: `El usuario "${usernameOrEmail}" se encuentra deshabilitado en esta empresa.`,
+          error: `El usuario "${usernameOrEmail}" se encuentra inactivo o deshabilitado en ${tenantData.name || 'la empresa'}. Contacte al administrador.`,
         };
       }
 
-      // 3. Validate Password if user has a password registered
-      if (match.password && password && match.password !== password) {
-        return {
-          success: false,
-          error: 'La contraseña ingresada es incorrecta.',
-        };
+      // Validate password if configured on membership record
+      if (password && match.password && match.password.trim() !== '') {
+        if (match.password !== password) {
+          return { success: false, error: 'La contraseña ingresada es incorrecta.' };
+        }
       }
 
-      // 4. Validate Branch & Status
-      const { data: branchesData } = await supabase
+      // 3. Resolve user's branches in this tenant
+      const { data: branches } = await supabase
         .from('branches')
-        .select('id, name, status')
+        .select('id, name')
         .eq('tenant_id', tenantId);
 
-      const allBranches = branchesData || [];
-      const activeBranches = allBranches.filter((b) => b.status === 'ACTIVE');
+      const branchMap = new Map<string, string>();
+      (branches || []).forEach(b => branchMap.set(b.id, b.name));
 
-      if (allBranches.length > 0 && activeBranches.length === 0) {
-        return {
-          success: false,
-          error: `Todas las sucursales de la empresa "${tenantData.name}" se encuentran inactivas.`,
-        };
-      }
+      const branchIds: string[] = Array.isArray(match.branch_ids) && match.branch_ids.length > 0
+        ? match.branch_ids
+        : (branches && branches.length > 0 ? [branches[0].id] : []);
 
-      // Determine user's active branch
-      let targetBranch = activeBranches[0];
-      if (match.branch_ids && match.branch_ids.length > 0) {
-        const assignedBranchNameOrId = match.branch_ids[0];
-        const found = allBranches.find(
-          (b) => b.id === assignedBranchNameOrId || b.name.toLowerCase() === assignedBranchNameOrId.toLowerCase()
-        );
-        if (found) {
-          if (found.status === 'DISABLED') {
-            return {
-              success: false,
-              error: `La sucursal asignada "${found.name}" se encuentra inactiva. Contacte al administrador.`,
-            };
-          }
-          targetBranch = found;
-        }
-      }
+      const branchNames: string[] = branchIds.map((bid) => branchMap.get(bid) || 'Sede Principal');
+      const primaryBranchId = branchIds[0] || '';
+      const primaryBranchName = branchNames[0] || (branches && branches[0]?.name) || 'Sede Principal';
 
-      const roleObj = Array.isArray(match.roles) ? match.roles[0] : match.roles;
-      const profileObj = Array.isArray(match.profiles) ? match.profiles[0] : match.profiles;
-      const roleName = roleObj?.name || 'Vendedor';
-      const fullName = profileObj?.full_name || match.username || usernameOrEmail;
-      const userEmail = profileObj?.email || '';
-      const isSuper = (roleName.toLowerCase().includes('super') || roleName.toLowerCase().includes('platform'));
-
-      // Filter branches assigned to this specific user
-      let userBranches = activeBranches;
-      if (!isSuper && match.branch_ids && match.branch_ids.length > 0) {
-        userBranches = activeBranches.filter(b => 
-          match.branch_ids.includes(b.id) || match.branch_ids.map((x: string) => x.toLowerCase()).includes(b.name.toLowerCase())
-        );
-        if (userBranches.length === 0 && targetBranch) {
-          userBranches = [targetBranch];
-        }
-      }
+      const pObj = Array.isArray(match.profiles) ? match.profiles[0] : match.profiles;
+      const rObj = Array.isArray(match.roles) ? match.roles[0] : match.roles;
 
       return {
         success: true,
@@ -1416,16 +1565,16 @@ export const usersService = {
           id: match.id,
           userId: match.user_id,
           tenantId: tenantData.id,
-          username: match.username || usernameOrEmail,
-          name: fullName,
-          email: userEmail,
-          role: roleName,
-          roleId: match.role_id,
+          username: match.username || pObj?.email?.split('@')[0] || 'usuario',
+          name: pObj?.full_name || match.username || 'Usuario',
+          email: pObj?.email || '',
+          role: rObj?.name || 'Vendedor',
+          roleId: rObj?.id || match.role_id,
           status: match.status || 'ACTIVE',
-          branchId: targetBranch?.id || DEFAULT_BRANCH_ID,
-          branchName: targetBranch?.name || 'Sede Principal',
-          branches: userBranches.map((b) => b.name),
-          branchIds: userBranches.map((b) => b.id),
+          branchId: primaryBranchId,
+          branchName: primaryBranchName,
+          branches: branchNames,
+          branchIds: branchIds,
         },
       };
     } catch (err: any) {
@@ -1436,6 +1585,8 @@ export const usersService = {
 
   async getUsers(): Promise<UserMember[]> {
     const tenantId = getActiveTenantId();
+    if (!tenantId) return [];
+
     const [membersRes, branchesRes] = await Promise.all([
       supabase
         .from('tenant_memberships')
@@ -1444,7 +1595,7 @@ export const usersService = {
           profiles ( full_name, email ),
           roles ( id, name )
         `)
-        .or(`tenant_id.eq.${tenantId},tenant_id.is.null`),
+        .eq('tenant_id', tenantId),
       branchesService.getBranches(),
     ]);
 
@@ -1452,9 +1603,7 @@ export const usersService = {
     branchesRes.forEach(b => branchNameMap.set(b.id, b.name));
 
     if (membersRes.error || !membersRes.data || membersRes.data.length === 0) {
-      return [
-        { id: 'u1', name: 'Admin Principal', email: 'admin@ventasbv.com', username: 'admin', role: 'Super Admin', branch: 'Yacuabamba', branches: ['Yacuabamba'], status: 'ACTIVE' },
-      ];
+      return [];
     }
 
     return (membersRes.data || []).map((m: any) => {
@@ -1780,11 +1929,12 @@ export interface InventoryTransfer {
   status: 'COMPLETED' | 'PENDING' | 'CANCELLED';
 }
 
-let memoryMovements: InventoryMovement[] = [];
-
 export const inventoryService = {
   async getMovements(branchId?: string): Promise<InventoryMovement[]> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
+
       let query = supabase
         .from('inventory_movements')
         .select(`
@@ -1793,7 +1943,7 @@ export const inventoryService = {
           products ( name, code, sku ),
           branches!inventory_movements_branch_id_fkey ( name )
         `)
-        .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (branchId && branchId !== 'ALL') {
@@ -1802,11 +1952,8 @@ export const inventoryService = {
 
       const { data, error } = await query;
 
-      if (error || !data || data.length === 0) {
-        if (branchId && branchId !== 'ALL') {
-          return memoryMovements.filter(m => m.branchId === branchId || m.sourceBranchId === branchId || m.targetBranchId === branchId);
-        }
-        return memoryMovements;
+      if (error || !data) {
+        return [];
       }
 
       return data.map((m: any) => ({
@@ -1827,13 +1974,14 @@ export const inventoryService = {
       }));
     } catch (err) {
       console.error('Error fetching inventory movements:', err);
-      return memoryMovements;
+      return [];
     }
   },
 
   async registerMovement(params: {
     productId: string;
     productName: string;
+    colorVariant?: string;
     branchId: string;
     branchName: string;
     type: 'IN' | 'OUT' | 'ADJUSTMENT';
@@ -1841,95 +1989,293 @@ export const inventoryService = {
     reason: string;
     referenceType?: string;
   }): Promise<boolean> {
-    const { productId, productName, branchId, branchName, type, qty, reason } = params;
+    let { productId, productName, colorVariant, branchId, branchName, type, qty, reason } = params;
 
-    const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
     const tenantId = getActiveTenantId();
-    let currentStock = 0;
-    const { data: inv } = await supabase
-      .from('branch_inventory')
-      .select('id, quantity')
-      .eq('product_id', productId)
-      .eq('branch_id', targetBranch)
-      .maybeSingle();
+    if (!tenantId) return false;
 
-    if (inv) {
-      currentStock = Number(inv.quantity) || 0;
+    // Ensure clean 36-character UUID
+    if (productId && productId.includes('-') && productId.length > 36) {
+      productId = productId.substring(0, 36);
+    }
+    if (!isValidUuid(productId)) {
+      console.error('registerMovement received non-UUID productId:', productId);
+      return false;
+    }
+
+    let targetBranch = branchId && branchId !== 'ALL' && branchId !== DEFAULT_BRANCH_ID ? branchId : getActiveBranchId();
+    if (!targetBranch || targetBranch === 'ALL' || targetBranch === DEFAULT_BRANCH_ID) {
+      const { data: firstBranch } = await supabase
+        .from('branches')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (firstBranch) targetBranch = firstBranch.id;
+    }
+
+    let currentStock = 0;
+    let invRecordId: string | null = null;
+    let effectiveBranchId = targetBranch;
+
+    // 1. Try finding inventory for this specific branch
+    if (targetBranch && targetBranch !== 'ALL' && targetBranch !== DEFAULT_BRANCH_ID) {
+      const { data: inv } = await supabase
+        .from('branch_inventory')
+        .select('id, branch_id, quantity')
+        .eq('product_id', productId)
+        .eq('branch_id', targetBranch)
+        .maybeSingle();
+
+      if (inv) {
+        invRecordId = inv.id;
+        effectiveBranchId = inv.branch_id;
+        currentStock = Number(inv.quantity) || 0;
+      }
+    }
+
+    // 2. If not found in target branch, find any branch inventory record for this product with stock
+    if (!invRecordId) {
+      const { data: anyInv } = await supabase
+        .from('branch_inventory')
+        .select('id, branch_id, quantity')
+        .eq('tenant_id', tenantId)
+        .eq('product_id', productId)
+        .order('quantity', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (anyInv) {
+        invRecordId = anyInv.id;
+        effectiveBranchId = anyInv.branch_id;
+        currentStock = Number(anyInv.quantity) || 0;
+      }
     }
 
     let resultingStock = currentStock;
-    let qtyChange = qty;
+    let qtyChange = Math.abs(qty);
 
     if (type === 'IN') {
-      qtyChange = Math.abs(qty);
       resultingStock = currentStock + qtyChange;
     } else if (type === 'OUT') {
-      qtyChange = -Math.abs(qty);
-      resultingStock = Math.max(0, currentStock - Math.abs(qty));
+      resultingStock = Math.max(0, currentStock - qtyChange);
     } else if (type === 'ADJUSTMENT') {
-      qtyChange = qty;
-      resultingStock = Math.max(0, currentStock + qty);
+      resultingStock = qty;
+      qtyChange = Math.abs(resultingStock - currentStock);
     }
 
-    if (inv) {
-      await supabase.from('branch_inventory').update({ quantity: resultingStock }).eq('id', inv.id);
-    } else {
-      await supabase.from('branch_inventory').insert({
+    // Update branch_inventory
+    if (invRecordId) {
+      const { error: updateErr } = await supabase
+        .from('branch_inventory')
+        .update({ quantity: resultingStock })
+        .eq('id', invRecordId);
+
+      if (updateErr) {
+        console.error('Error updating branch_inventory quantity:', updateErr);
+      }
+    } else if (effectiveBranchId && effectiveBranchId !== 'ALL' && effectiveBranchId !== DEFAULT_BRANCH_ID) {
+      const { error: insertErr } = await supabase.from('branch_inventory').insert({
         tenant_id: tenantId,
-        branch_id: targetBranch,
+        branch_id: effectiveBranchId,
         product_id: productId,
         quantity: resultingStock,
       });
+
+      if (insertErr) {
+        console.error('Error inserting branch_inventory:', insertErr);
+      }
+    }
+
+    // 3. Update products.colors JSON variant stock if the product has color variants
+    try {
+      const { data: prodRow } = await supabase
+        .from('products')
+        .select('id, colors')
+        .eq('id', productId)
+        .maybeSingle();
+
+      if (prodRow && Array.isArray(prodRow.colors) && prodRow.colors.length > 0) {
+        let targetColorName = colorVariant?.trim();
+        if (!targetColorName) {
+          const colorMatch = productName.match(/\(([^)]+)\)$/);
+          if (colorMatch && colorMatch[1]) {
+            targetColorName = colorMatch[1].trim();
+          }
+        }
+
+        let variantUpdated = false;
+        const updatedColors = prodRow.colors.map((c: any) => {
+          if (!c) return c;
+          const cName = (c.color || '').trim().toLowerCase();
+          const isMatch = targetColorName
+            ? cName === targetColorName.toLowerCase()
+            : true;
+
+          if (isMatch && !variantUpdated) {
+            const currentVariantStock = Number(c.stock) || 0;
+            let newVariantStock = currentVariantStock;
+            if (type === 'OUT') {
+              newVariantStock = Math.max(0, currentVariantStock - qtyChange);
+            } else if (type === 'IN') {
+              newVariantStock = currentVariantStock + qtyChange;
+            } else if (type === 'ADJUSTMENT') {
+              newVariantStock = qtyChange;
+            }
+            variantUpdated = true;
+            return { ...c, stock: newVariantStock };
+          }
+          return c;
+        });
+
+        if (variantUpdated) {
+          await supabase
+            .from('products')
+            .update({ colors: updatedColors })
+            .eq('id', productId);
+        }
+      }
+    } catch (colorErr) {
+      console.error('Error updating color variant stock on product:', colorErr);
     }
 
     const { error: movErr } = await supabase.from('inventory_movements').insert({
       tenant_id: tenantId,
-      branch_id: targetBranch,
+      branch_id: (effectiveBranchId && effectiveBranchId !== 'ALL' && effectiveBranchId !== DEFAULT_BRANCH_ID) ? effectiveBranchId : null,
       product_id: productId,
       movement_type: type,
-      quantity: Math.abs(qtyChange),
+      quantity: qtyChange,
       previous_stock: currentStock,
       resulting_stock: resultingStock,
-      reason: reason || `${type === 'IN' ? 'Ingreso' : type === 'OUT' ? 'Salida' : 'Ajuste'} manual`,
+      reason: reason || 'Movimiento de inventario',
       reference_type: params.referenceType || 'MANUAL',
     });
 
     if (movErr) {
-      console.warn('Could not persist movement to Supabase DB, updating local memory state:', movErr);
+      console.error('Error recording inventory movement:', movErr);
+      return false;
     }
 
-    if (params.referenceType !== 'SALE') {
-      const typeLabel = type === 'IN' ? 'Entrada +' : type === 'OUT' ? 'Salida -' : 'Ajuste ';
-      auditService.logAction({
-        action: 'AJUSTE STOCK',
-        entityType: 'inventory',
-        branchId: targetBranch,
-        description: `Ajuste de inventario (${typeLabel}${Math.abs(qtyChange)} und) para "${productName}". Motivo: ${reason || 'Ajuste manual'}`,
-        details: {
-          product_name: productName,
-          quantity: qtyChange,
-          movement_type: type,
-          resulting_stock: resultingStock,
-          reason,
-        },
+    auditService.logAction({
+      action: type === 'IN' ? 'ENTRADA STOCK' : type === 'OUT' ? 'SALIDA STOCK' : 'AJUSTE STOCK',
+      entityType: 'inventory',
+      entityId: productId,
+      branchId: targetBranch || undefined,
+      description: `${type === 'IN' ? 'Entrada' : type === 'OUT' ? 'Salida' : 'Ajuste'} de ${qtyChange} unidades para "${productName}". Motivo: ${reason}`,
+      details: {
+        product_name: productName,
+        movement_type: type,
+        quantity: qtyChange,
+        previous_stock: currentStock,
+        resulting_stock: resultingStock,
+        reason,
+        branch_name: branchName,
+      },
+    });
+
+    return true;
+  },
+
+  async transferStock(params: {
+    productId: string;
+    productName: string;
+    sourceBranchId: string;
+    sourceBranchName: string;
+    targetBranchId: string;
+    targetBranchName: string;
+    qty: number;
+    reason: string;
+  }): Promise<boolean> {
+    const { productId, productName, sourceBranchId, sourceBranchName, targetBranchId, targetBranchName, qty, reason } = params;
+    const tenantId = getActiveTenantId();
+    if (!tenantId) return false;
+
+    // 1. Check & reduce source branch
+    let sourceStock = 0;
+    const { data: sourceInv } = await supabase
+      .from('branch_inventory')
+      .select('id, quantity')
+      .eq('product_id', productId)
+      .eq('branch_id', sourceBranchId)
+      .maybeSingle();
+
+    if (sourceInv) {
+      sourceStock = Number(sourceInv.quantity) || 0;
+    }
+
+    if (sourceStock < qty) {
+      console.error('Stock insuficiente en sucursal origen');
+      return false;
+    }
+
+    const newSourceStock = sourceStock - qty;
+    if (sourceInv) {
+      await supabase.from('branch_inventory').update({ quantity: newSourceStock }).eq('id', sourceInv.id);
+    } else {
+      await supabase.from('branch_inventory').insert({
+        tenant_id: tenantId,
+        branch_id: sourceBranchId,
+        product_id: productId,
+        quantity: newSourceStock,
       });
     }
 
-    const newMovement: InventoryMovement = {
-      id: `mov-${Date.now()}`,
-      date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
-      productId,
-      product: productName,
-      branchId: targetBranch,
-      branchName: branchName || 'Sucursal',
-      type,
-      qty: type === 'OUT' ? -Math.abs(qty) : qtyChange,
-      prevStock: currentStock,
-      newStock: resultingStock,
-      reason: reason || `${type === 'IN' ? 'Ingreso' : type === 'OUT' ? 'Salida' : 'Ajuste'} manual`,
-    };
+    // 2. Increase target branch
+    let targetStock = 0;
+    const { data: targetInv } = await supabase
+      .from('branch_inventory')
+      .select('id, quantity')
+      .eq('product_id', productId)
+      .eq('branch_id', targetBranchId)
+      .maybeSingle();
 
-    memoryMovements = [newMovement, ...memoryMovements];
+    if (targetInv) {
+      targetStock = Number(targetInv.quantity) || 0;
+    }
+
+    const newTargetStock = targetStock + qty;
+    if (targetInv) {
+      await supabase.from('branch_inventory').update({ quantity: newTargetStock }).eq('id', targetInv.id);
+    } else {
+      await supabase.from('branch_inventory').insert({
+        tenant_id: tenantId,
+        branch_id: targetBranchId,
+        product_id: productId,
+        quantity: newTargetStock,
+      });
+    }
+
+    // 3. Register transfer movement log
+    await supabase.from('inventory_movements').insert({
+      tenant_id: tenantId,
+      branch_id: sourceBranchId,
+      source_branch_id: sourceBranchId,
+      target_branch_id: targetBranchId,
+      product_id: productId,
+      movement_type: 'TRANSFER',
+      quantity: qty,
+      previous_stock: sourceStock,
+      resulting_stock: newSourceStock,
+      reason: reason || `Traslado de ${sourceBranchName} a ${targetBranchName}`,
+      reference_type: 'TRANSFER',
+    });
+
+    auditService.logAction({
+      action: 'TRANSFERENCIA STOCK',
+      entityType: 'inventory',
+      entityId: productId,
+      branchId: sourceBranchId,
+      description: `Traslado de ${qty} und. de "${productName}" desde ${sourceBranchName} hacia ${targetBranchName}`,
+      details: {
+        product_name: productName,
+        quantity: qty,
+        source_branch: sourceBranchName,
+        target_branch: targetBranchName,
+        reason,
+      },
+    });
+
     return true;
   },
 
@@ -1944,102 +2290,7 @@ export const inventoryService = {
     estimatedDays?: number;
     reason: string;
   }): Promise<boolean> {
-    const { productId, productName, sourceBranchId, sourceBranchName, targetBranchId, targetBranchName, qty, estimatedDays, reason } = params;
-    const tenantId = getActiveTenantId();
-
-    // 1. Decrement Source Branch
-    const { data: sourceInv } = await supabase
-      .from('branch_inventory')
-      .select('id, quantity')
-      .eq('product_id', productId)
-      .eq('branch_id', sourceBranchId)
-      .maybeSingle();
-
-    const currentSourceStock = Number(sourceInv?.quantity) || 0;
-    const newSourceStock = Math.max(0, currentSourceStock - qty);
-
-    if (sourceInv) {
-      await supabase.from('branch_inventory').update({ quantity: newSourceStock }).eq('id', sourceInv.id);
-    } else {
-      await supabase.from('branch_inventory').insert({
-        tenant_id: tenantId,
-        branch_id: sourceBranchId,
-        product_id: productId,
-        quantity: newSourceStock,
-      });
-    }
-
-    // 2. Increment Target Branch
-    const { data: targetInv } = await supabase
-      .from('branch_inventory')
-      .select('id, quantity')
-      .eq('product_id', productId)
-      .eq('branch_id', targetBranchId)
-      .maybeSingle();
-
-    const currentTargetStock = Number(targetInv?.quantity) || 0;
-    const newTargetStock = currentTargetStock + qty;
-
-    if (targetInv) {
-      await supabase.from('branch_inventory').update({ quantity: newTargetStock }).eq('id', targetInv.id);
-    } else {
-      await supabase.from('branch_inventory').insert({
-        tenant_id: tenantId,
-        branch_id: targetBranchId,
-        product_id: productId,
-        quantity: newTargetStock,
-      });
-    }
-
-    const transferNote = `${reason || 'Traspaso de reabastecimiento entre sedes'}${estimatedDays ? ` • (Tiempo est.: ${estimatedDays} día${estimatedDays > 1 ? 's' : ''})` : ''}`;
-
-    await supabase.from('inventory_movements').insert({
-      tenant_id: tenantId,
-      branch_id: targetBranchId,
-      product_id: productId,
-      movement_type: 'TRANSFER',
-      quantity: qty,
-      previous_stock: currentTargetStock,
-      resulting_stock: newTargetStock,
-      reason: transferNote,
-      source_branch_id: sourceBranchId,
-      target_branch_id: targetBranchId,
-    });
-
-    auditService.logAction({
-      action: 'TRASPASO',
-      entityType: 'inventory',
-      branchId: sourceBranchId,
-      description: `Traspaso de ${qty} und de "${productName}" desde ${sourceBranchName} hacia ${targetBranchName}. Motivo: ${reason || 'Traspaso entre sedes'}`,
-      details: {
-        product_name: productName,
-        quantity: qty,
-        source_branch: sourceBranchName,
-        target_branch: targetBranchName,
-        reason,
-      },
-    });
-
-    const newMovement: InventoryMovement = {
-      id: `tr-${Date.now()}`,
-      date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
-      productId,
-      product: productName,
-      branchId: sourceBranchId,
-      branchName: sourceBranchName,
-      sourceBranchId,
-      sourceBranchName,
-      targetBranchId,
-      targetBranchName,
-      type: 'TRANSFER',
-      qty: qty,
-      prevStock: currentSourceStock,
-      newStock: newSourceStock,
-      reason: reason || `Transferencia a ${targetBranchName}`,
-    };
-
-    memoryMovements = [newMovement, ...memoryMovements];
-    return true;
+    return this.transferStock(params);
   },
 };
 
@@ -2059,6 +2310,29 @@ export interface Sale {
   subtotal: number;
   tax: number;
   paymentMethod: 'CASH' | 'TRANSFER' | 'CARD' | 'YAPE' | 'PLIN' | 'OTHER';
+  paymentCondition?: 'CONTADO' | 'CREDITO';
+  creditInfo?: {
+    id: string;
+    installmentsCount: number;
+    initialPayment: number;
+    financedAmount: number;
+    interestRate: number;
+    interestAmount: number;
+    totalCredit: number;
+    installmentFrequency: string;
+    amountPaid: number;
+    balancePending: number;
+    status: string;
+    installments: {
+      installmentNumber: number;
+      dueDate: string;
+      totalAmount: number;
+      capitalAmount?: number;
+      interestAmount?: number;
+      paidAmount?: number;
+      status: string;
+    }[];
+  };
   documentType?: 'BOLETA' | 'FACTURA';
   status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED';
   sunatStatus?: 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO' | 'CANCELLED';
@@ -2067,95 +2341,114 @@ export interface Sale {
   items?: { productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }[];
 }
 
-const getPastDateStr = (daysAgo: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().split('T')[0];
-};
-
-let memorySales: Sale[] = [];
-const sunatStatusMemoryMap = new Map<string, 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO' | 'NOTA_CREDITO' | 'CANCELLED'>();
-const creditNoteMemoryMap = new Map<string, string>();
-
 export const salesService = {
   async getSales(): Promise<Sale[]> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
+
+      // ─── OFFLINE FALLBACK ───
+      if (!isNetworkOnline()) {
+        try { return await getAllRecords<Sale>(STORES.SALES); } catch { return []; }
+      }
+
       const { data, error } = await supabase
         .from('sales')
         .select(`
           id, sale_number, total, subtotal, tax, payment_method, document_type, seller_name, status, created_at,
           branch_id, customer_id, customer_name, customer_document,
           customers ( full_name, business_name, document_number ),
-          branches ( name )
+          branches ( name ),
+          credits (
+            id, total_amount, initial_payment, financed_amount, interest_rate, interest_amount,
+            total_credit, installments_count, installment_frequency, amount_paid, balance_pending, status,
+            credit_installments (
+              id, installment_number, due_date, capital_amount, interest_amount, total_amount, paid_amount, status
+            )
+          )
         `)
-        .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('Error fetching sales from supabase:', error);
+      if (error || !data) {
+        try { return await getAllRecords<Sale>(STORES.SALES); } catch { return []; }
       }
 
-      const dbSalesMap = new Map<string, Sale>();
-      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Niver Contreras') : 'Niver Contreras';
+      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Vendedor') : 'Vendedor';
 
-      if (data && data.length > 0) {
-        data.forEach((s: any) => {
-          const rememberedStatus = sunatStatusMemoryMap.get(s.id);
-          const rememberedNc = creditNoteMemoryMap.get(s.id);
-          const isCancelled = s.status === 'CANCELLED' || rememberedStatus === 'NOTA_CREDITO';
+      const result = data.map((s: any) => {
+        const custName = s.customer_name || (s.customers ? (s.customers.business_name || s.customers.full_name) : 'Público General') || 'Público General';
+        const custDoc = s.customer_document || s.customers?.document_number || '00000000';
 
-          const finalSunatStatus = rememberedStatus || (isCancelled ? 'NOTA_CREDITO' : (s.sunat_status || 'PENDIENTE'));
-          const finalStatus = (rememberedStatus === 'ACEPTADO') ? 'COMPLETED' : (isCancelled ? 'CANCELLED' : s.status);
-
-          const custName = s.customer_name || (s.customers ? (s.customers.business_name || s.customers.full_name) : 'Público General') || 'Público General';
-          const custDoc = s.customer_document || s.customers?.document_number || '00000000';
-
-          dbSalesMap.set(s.id, {
-            id: s.id,
-            saleNumber: s.sale_number,
-            customer: custName,
-            customerDoc: custDoc,
-            customerId: s.customer_id,
-            sellerName: s.seller_name || currentUserName,
-            branch: s.branches?.name || 'Sede Principal',
-            branchId: s.branch_id,
-            date: new Date(s.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
-            rawDate: s.created_at,
-            total: Number(s.total) || 0,
-            subtotal: Number(s.subtotal) || 0,
-            tax: Number(s.tax) || 0,
-            paymentMethod: s.payment_method as any,
-            documentType: s.document_type || (s.sale_number?.startsWith('F') ? 'FACTURA' : 'BOLETA'),
-            status: finalStatus as any,
-            sunatStatus: finalSunatStatus,
-            creditNoteNumber: rememberedNc,
-          });
-        });
-      }
-
-      // Merge memorySales that are not yet in dbSalesMap
-      memorySales.forEach((ms) => {
-        if (!dbSalesMap.has(ms.id)) {
-          const rememberedStatus = sunatStatusMemoryMap.get(ms.id);
-          const rememberedNc = creditNoteMemoryMap.get(ms.id);
-          if (rememberedStatus) {
-            ms.sunatStatus = rememberedStatus;
-            if (rememberedStatus === 'ACEPTADO') ms.status = 'COMPLETED';
-            if (rememberedStatus === 'NOTA_CREDITO') ms.status = 'CANCELLED';
-          }
-          if (rememberedNc) ms.creditNoteNumber = rememberedNc;
-          dbSalesMap.set(ms.id, ms);
+        let creditRecord: any = null;
+        if (Array.isArray(s.credits) && s.credits.length > 0 && s.credits[0]?.id) {
+          creditRecord = s.credits[0];
+        } else if (s.credits && typeof s.credits === 'object' && !Array.isArray(s.credits) && s.credits.id) {
+          creditRecord = s.credits;
         }
-      });
 
-      const allSales = Array.from(dbSalesMap.values()).sort(
-        (a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime()
-      );
+        const isCredit = Boolean(creditRecord && creditRecord.id);
 
-      return allSales.length > 0 ? allSales : memorySales;
+        let creditInfo = undefined;
+        if (creditRecord && isCredit) {
+          const rawInst = Array.isArray(creditRecord.credit_installments)
+            ? creditRecord.credit_installments.sort((a: any, b: any) => a.installment_number - b.installment_number)
+            : [];
+
+          creditInfo = {
+            id: creditRecord.id,
+            installmentsCount: Number(creditRecord.installments_count) || rawInst.length || 1,
+            initialPayment: Number(creditRecord.initial_payment) || 0,
+            financedAmount: Number(creditRecord.financed_amount) || 0,
+            interestRate: Number(creditRecord.interest_rate) || 0,
+            interestAmount: Number(creditRecord.interest_amount) || 0,
+            totalCredit: Number(creditRecord.total_credit) || 0,
+            installmentFrequency: creditRecord.installment_frequency || 'MENSUAL',
+            amountPaid: Number(creditRecord.amount_paid) || 0,
+            balancePending: Number(creditRecord.balance_pending) || 0,
+            status: creditRecord.status || 'PENDING',
+            installments: rawInst.map((ins: any) => ({
+              installmentNumber: ins.installment_number,
+              dueDate: ins.due_date,
+              totalAmount: Number(ins.total_amount) || 0,
+              capitalAmount: Number(ins.capital_amount) || 0,
+              interestAmount: Number(ins.interest_amount) || 0,
+              paidAmount: Number(ins.paid_amount) || 0,
+              status: ins.status || 'PENDING',
+            })),
+          };
+        }
+
+        return {
+          id: s.id,
+          saleNumber: s.sale_number,
+          customer: custName,
+          customerDoc: custDoc,
+          customerId: s.customer_id,
+          sellerName: s.seller_name || currentUserName,
+          branch: s.branches?.name || 'Sede Principal',
+          branchId: s.branch_id,
+          date: new Date(s.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
+          rawDate: s.created_at,
+          total: Number(s.total) || 0,
+          subtotal: Number(s.subtotal) || 0,
+          tax: Number(s.tax) || 0,
+          paymentMethod: s.payment_method as any,
+          paymentCondition: isCredit ? 'CREDITO' as const : 'CONTADO' as const,
+          creditInfo,
+          documentType: s.document_type || (s.sale_number?.startsWith('F') ? 'FACTURA' : 'BOLETA'),
+          status: s.status || 'COMPLETED',
+          sunatStatus: s.sunat_status || 'PENDIENTE',
+        };
+      }) as Sale[];
+
+      // ─── CACHE sales in IndexedDB ───
+      try { await putManyRecords(STORES.SALES, result); } catch { /* non-critical */ }
+
+      return result;
     } catch (err) {
       console.error('Error fetching sales from database:', err);
-      return memorySales;
+      try { return await getAllRecords<Sale>(STORES.SALES); } catch { return []; }
     }
   },
 
@@ -2171,9 +2464,12 @@ export const salesService = {
     tax: number;
     paymentMethod: 'CASH' | 'TRANSFER' | 'CARD' | 'YAPE' | 'PLIN' | 'OTHER';
     documentType?: 'BOLETA' | 'FACTURA';
-    items: { productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }[];
+    items: { productId: string; productName: string; selectedColor?: string; quantity: number; unitPrice: number; subtotal: number }[];
   }): Promise<string | null> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return null;
+
       const prefix = sale.documentType === 'FACTURA' ? 'F001-' : 'B001-';
       const randNum = Math.floor(10000 + Math.random() * 90000);
       const saleNumber = `${prefix}${randNum}`;
@@ -2194,14 +2490,14 @@ export const salesService = {
         }
       }
 
-      let saleId: string;
-      let finalSaleNumber = saleNumber;
+      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Vendedor') : 'Vendedor';
+      const targetBranch = isValidUuid(sale.branchId) ? sale.branchId : (getActiveBranchId() || null);
 
       const { data: saleData, error: saleError } = await supabase
         .from('sales')
         .insert({
-          tenant_id: DEFAULT_TENANT_ID,
-          branch_id: isValidUuid(sale.branchId) ? sale.branchId : DEFAULT_BRANCH_ID,
+          tenant_id: tenantId,
+          branch_id: targetBranch,
           customer_id: isValidUuid(sale.customerId) ? sale.customerId : null,
           customer_name: customerName,
           customer_document: customerDoc,
@@ -2212,7 +2508,7 @@ export const salesService = {
           total: sale.total,
           payment_method: sale.paymentMethod,
           document_type: sale.documentType || 'BOLETA',
-          seller_name: sale.sellerName || 'Niver Contreras',
+          seller_name: sale.sellerName || currentUserName,
         })
         .select()
         .single();
@@ -2222,17 +2518,23 @@ export const salesService = {
         return null;
       }
 
-      saleId = saleData.id;
-      finalSaleNumber = saleData.sale_number || saleNumber;
+      const saleId = saleData.id;
+      const finalSaleNumber = saleData.sale_number || saleNumber;
 
-      const itemsToInsert = sale.items.map((item) => ({
-        tenant_id: DEFAULT_TENANT_ID,
-        sale_id: saleId,
-        product_id: item.productId,
-        quantity: item.quantity,
-        unit_price: item.unitPrice,
-        subtotal: item.subtotal,
-      }));
+      const itemsToInsert = sale.items.map((item) => {
+        let cleanProdId = item.productId;
+        if (cleanProdId.includes('-') && cleanProdId.length > 36) {
+          cleanProdId = cleanProdId.substring(0, 36);
+        }
+        return {
+          tenant_id: tenantId,
+          sale_id: saleId,
+          product_id: cleanProdId,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          subtotal: item.subtotal,
+        };
+      });
 
       const { error: itemsError } = await supabase.from('sale_items').insert(itemsToInsert);
       if (itemsError) {
@@ -2240,10 +2542,16 @@ export const salesService = {
       }
 
       for (const item of sale.items) {
+        let cleanProdId = item.productId;
+        if (cleanProdId.includes('-') && cleanProdId.length > 36) {
+          cleanProdId = cleanProdId.substring(0, 36);
+        }
+
         await inventoryService.registerMovement({
-          productId: item.productId,
+          productId: cleanProdId,
           productName: item.productName,
-          branchId: isValidUuid(sale.branchId) ? sale.branchId : DEFAULT_BRANCH_ID,
+          colorVariant: item.selectedColor,
+          branchId: targetBranch || '',
           branchName: sale.branchName || 'Sede Principal',
           type: 'OUT',
           qty: item.quantity,
@@ -2252,42 +2560,17 @@ export const salesService = {
         });
       }
 
-      const newMemorySale: Sale = {
-        id: saleId,
-        saleNumber: finalSaleNumber,
-        customer: customerName,
-        customerDoc: customerDoc,
-        customerId: sale.customerId,
-        sellerName: sale.sellerName || 'Admin Principal',
-        branch: sale.branchName || 'Sede Principal',
-        branchId: sale.branchId,
-        date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
-        rawDate: new Date().toISOString(),
-        total: sale.total,
-        subtotal: sale.subtotal,
-        tax: sale.tax,
-        paymentMethod: sale.paymentMethod,
-        documentType: sale.documentType || 'BOLETA',
-        status: 'COMPLETED',
-        sunatStatus: 'PENDIENTE',
-        items: sale.items,
-      };
-
-      memorySales = [newMemorySale, ...memorySales.filter(s => s.id !== saleId)];
-
-      // Trace in Audit Logs
       auditService.logAction({
         action: 'VENTA POS',
         entityType: 'sales',
         entityId: saleId,
-        branchId: isValidUuid(sale.branchId) ? sale.branchId : undefined,
+        branchId: targetBranch || undefined,
         description: `Emisión de ${sale.documentType || 'BOLETA'} ${finalSaleNumber} por S/ ${sale.total.toFixed(2)} (${sale.paymentMethod}) al cliente "${customerName}" (${sale.items.length} ítems)`,
         details: {
-          doc_number: finalSaleNumber,
+          sale_number: finalSaleNumber,
           total: sale.total,
-          customer_name: customerName,
+          customer: customerName,
           payment_method: sale.paymentMethod,
-          document_type: sale.documentType || 'BOLETA',
           items_count: sale.items.length,
         },
       });
@@ -2303,23 +2586,16 @@ export const salesService = {
     try {
       const cdrCode = `CDR-SUNAT-${Math.floor(100000 + Math.random() * 900000)}`;
 
-      // Update memory state maps for immediate UI reflection across all services
-      sunatStatusMemoryMap.set(saleId, 'ACEPTADO');
+      await supabase.from('sales').update({ status: 'COMPLETED', sunat_status: 'ACEPTADO' }).eq('id', saleId);
 
-      const s = memorySales.find((x) => x.id === saleId);
-      if (s) {
-        s.sunatStatus = 'ACEPTADO';
-        s.status = 'COMPLETED';
-      }
-
-      await supabase.from('sales').update({ status: 'COMPLETED' }).eq('id', saleId);
+      const { data: s } = await supabase.from('sales').select('sale_number').eq('id', saleId).maybeSingle();
 
       auditService.logAction({
         action: 'ENVÍO SUNAT',
         entityType: 'sales',
         entityId: saleId,
-        description: `Envío y validación en SUNAT del comprobante ${s?.saleNumber || 'Venta'} (Constancia CDR: ${cdrCode})`,
-        details: { sale_id: saleId, cdr_code: cdrCode, sale_number: s?.saleNumber },
+        description: `Envío y validación en SUNAT del comprobante ${s?.sale_number || 'Venta'} (Constancia CDR: ${cdrCode})`,
+        details: { sale_id: saleId, cdr_code: cdrCode, sale_number: s?.sale_number },
       });
 
       return {
@@ -2335,31 +2611,20 @@ export const salesService = {
 
   async createCreditNote(saleId: string, reason: string): Promise<{ success: boolean; creditNoteNumber?: string; message: string }> {
     try {
-      const s = memorySales.find((x) => x.id === saleId);
-      const isFactura = s?.documentType === 'FACTURA' || s?.saleNumber?.startsWith('F');
+      const { data: s } = await supabase.from('sales').select('*').eq('id', saleId).maybeSingle();
+      const isFactura = s?.document_type === 'FACTURA' || s?.sale_number?.startsWith('F');
       const prefix = isFactura ? 'FC01-' : 'BC01-';
       const ncNumber = `${prefix}${String(Math.floor(10000 + Math.random() * 90000))}`;
 
-      // Update memory state maps
-      sunatStatusMemoryMap.set(saleId, 'NOTA_CREDITO');
-      creditNoteMemoryMap.set(saleId, ncNumber);
-
-      await supabase.from('sales').update({ status: 'CANCELLED' }).eq('id', saleId);
-
-      if (s) {
-        s.status = 'CANCELLED';
-        s.sunatStatus = 'NOTA_CREDITO';
-        s.creditNoteNumber = ncNumber;
-        s.creditNoteReason = reason;
-      }
+      await supabase.from('sales').update({ status: 'CANCELLED', sunat_status: 'NOTA_CREDITO' }).eq('id', saleId);
 
       const items = await this.getSaleItems(saleId);
       for (const item of items) {
         await inventoryService.registerMovement({
           productId: item.productId,
           productName: item.productName,
-          branchId: s?.branchId || DEFAULT_BRANCH_ID,
-          branchName: s?.branch || 'Sede Principal',
+          branchId: s?.branch_id || getActiveBranchId(),
+          branchName: 'Sede Principal',
           type: 'IN',
           qty: item.quantity,
           reason: `Devolución por Nota de Crédito ${ncNumber}: ${reason}`,
@@ -2371,8 +2636,8 @@ export const salesService = {
         action: 'NOTA_CREDITO',
         entityType: 'sales',
         entityId: saleId,
-        description: `Emisión de Nota de Crédito ${ncNumber} para anulación de comprobante ${s?.saleNumber || 'Venta'}. Motivo: ${reason}`,
-        details: { credit_note: ncNumber, reason, sale_id: saleId, sale_number: s?.saleNumber },
+        description: `Emisión de Nota de Crédito ${ncNumber} para anulación de comprobante ${s?.sale_number || 'Venta'}. Motivo: ${reason}`,
+        details: { credit_note: ncNumber, reason, sale_id: saleId, sale_number: s?.sale_number },
       });
 
       return {
@@ -2388,26 +2653,18 @@ export const salesService = {
 
   async annulInvoice(saleId: string, reason: string): Promise<{ success: boolean; message: string }> {
     try {
-      const s = memorySales.find((x) => x.id === saleId);
-      const docStr = s?.saleNumber || `V-${saleId.slice(0, 8).toUpperCase()}`;
+      const { data: s } = await supabase.from('sales').select('*').eq('id', saleId).maybeSingle();
+      const docStr = s?.sale_number || `V-${saleId.slice(0, 8).toUpperCase()}`;
 
-      // Update memory state maps
-      sunatStatusMemoryMap.set(saleId, 'CANCELLED');
-
-      await supabase.from('sales').update({ status: 'CANCELLED' }).eq('id', saleId);
-
-      if (s) {
-        s.status = 'CANCELLED';
-        s.sunatStatus = 'CANCELLED';
-      }
+      await supabase.from('sales').update({ status: 'CANCELLED', sunat_status: 'CANCELLED' }).eq('id', saleId);
 
       const items = await this.getSaleItems(saleId);
       for (const item of items) {
         await inventoryService.registerMovement({
           productId: item.productId,
           productName: item.productName,
-          branchId: s?.branchId || DEFAULT_BRANCH_ID,
-          branchName: s?.branch || 'Sede Principal',
+          branchId: s?.branch_id || getActiveBranchId(),
+          branchName: 'Sede Principal',
           type: 'IN',
           qty: item.quantity,
           reason: `Anulación de Comprobante ${docStr}: ${reason}`,
@@ -2444,8 +2701,7 @@ export const salesService = {
         .eq('sale_id', saleId);
 
       if (error || !data || data.length === 0) {
-        const mem = memorySales.find(s => s.id === saleId);
-        return mem?.items || [];
+        return [];
       }
 
       return data.map((item: any) => ({
@@ -2457,8 +2713,7 @@ export const salesService = {
       }));
     } catch (err) {
       console.error('Error in getSaleItems:', err);
-      const mem = memorySales.find(s => s.id === saleId);
-      return mem?.items || [];
+      return [];
     }
   }
 };
@@ -2475,19 +2730,22 @@ export interface BillingInvoice {
   subtotal: number;
   tax: number;
   status: 'ISSUED' | 'ACCEPTED' | 'PENDING' | 'REJECTED' | 'NOTA_CREDITO' | 'CANCELLED';
-  creditNoteNumber?: string;
   date: string;
-  rawDate?: string;
+  rawDate: string;
+  saleId: string;
+  creditNoteNumber?: string;
   sellerName?: string;
   branchName?: string;
   paymentMethod?: string;
+  paymentCondition?: 'CONTADO' | 'CREDITO';
+  creditInfo?: Sale['creditInfo'];
 }
 
 export const billingService = {
   async getInvoices(): Promise<BillingInvoice[]> {
     try {
       const sales = await salesService.getSales();
-      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Niver Contreras') : 'Niver Contreras';
+      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Vendedor') : 'Vendedor';
 
       return sales.map((s) => {
         const parts = (s.saleNumber || '').split('-');
@@ -2505,32 +2763,35 @@ export const billingService = {
         }
 
         return {
-          id: s.id,
-          docType: isCancelled ? 'NOTA_CREDITO' : (s.documentType || (s.saleNumber?.startsWith('F') ? 'FACTURA' : 'BOLETA')),
+          id: `inv-${s.id}`,
+          saleId: s.id,
+          docType: (s.documentType as any) || (series.startsWith('F') ? 'FACTURA' : 'BOLETA'),
           series,
           sequence,
-          customerName: s.customer || 'Público General',
+          customerName: s.customer,
           customerDoc: s.customerDoc || '00000000',
           total: s.total,
           subtotal: s.subtotal,
           tax: s.tax,
           status: mappedStatus,
-          creditNoteNumber: s.creditNoteNumber,
           date: s.date,
-          rawDate: s.rawDate,
+          rawDate: s.rawDate || new Date().toISOString(),
+          creditNoteNumber: s.creditNoteNumber,
           sellerName: s.sellerName || currentUserName,
           branchName: s.branch || 'Sede Principal',
-          paymentMethod: s.paymentMethod || 'Contado',
+          paymentMethod: s.paymentMethod,
+          paymentCondition: s.paymentCondition,
+          creditInfo: s.creditInfo,
         };
       });
     } catch (err) {
-      console.error('Error fetching invoices for billing:', err);
+      console.error('Error fetching invoices:', err);
       return [];
     }
-  }
+  },
 };
 
-// ---------------- REPORTS ----------------
+// ---------------- REPORTS & KPIS ----------------
 export interface ReportSummary {
   ventasMes: number;      // Month Sales Total
   gananciasBrutas: number; // Gross Profit (Sales - COGS)
@@ -2551,6 +2812,24 @@ export interface ReportSummary {
 export const reportsService = {
   async getReportSummary(): Promise<ReportSummary> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) {
+        return {
+          ventasMes: 0,
+          gananciasBrutas: 0,
+          gananciasNetas: 0,
+          gastosMes: 0,
+          valorizacionAlmacen: 0,
+          topProducts: [],
+          salesByPayment: [],
+          salesList: [],
+          grossProfitList: [],
+          purchasesList: [],
+          expensesList: [],
+          inventoryList: [],
+        };
+      }
+
       const sales = await salesService.getSales();
 
       // Labels mapping
@@ -2569,7 +2848,8 @@ export const reportsService = {
         .select(`
           sale_id, quantity, unit_price, subtotal, product_id,
           products ( cost, name )
-        `);
+        `)
+        .eq('tenant_id', tenantId);
 
       const saleItemsBySaleId = new Map<string, any[]>();
       dbItems?.forEach((item: any) => {
@@ -2653,7 +2933,7 @@ export const reportsService = {
         }
       });
 
-      // 2. Fetch Expenses/Purchases in current month
+      // 2. Fetch Expenses/Purchases in current month for this tenant
       const currentYear = new Date().getFullYear();
       const currentMonth = new Date().getMonth() + 1;
       const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString();
@@ -2664,6 +2944,7 @@ export const reportsService = {
           document_number, document_date, total,
           suppliers ( business_name )
         `)
+        .eq('tenant_id', tenantId)
         .gte('created_at', startOfMonth);
 
       if (pError) {
@@ -2673,6 +2954,7 @@ export const reportsService = {
       const { data: expenses, error: exError } = await supabase
         .from('expenses')
         .select('*')
+        .eq('tenant_id', tenantId)
         .gte('expense_date', startOfMonth.split('T')[0]);
 
       if (exError) {
@@ -2697,13 +2979,14 @@ export const reportsService = {
         amount: Number(e.amount) || 0,
       }));
 
-      // 3. Fetch Stock and calculate Valuation
+      // 3. Fetch Stock and calculate Valuation for this tenant
       const { data: inventory, error: iError } = await supabase
         .from('branch_inventory')
         .select(`
           quantity,
           products ( code, name, cost )
-        `);
+        `)
+        .eq('tenant_id', tenantId);
 
       if (iError) {
         console.error('Error fetching inventory for reports:', iError);
@@ -2757,8 +3040,6 @@ export const reportsService = {
         pct: Math.round((amount / totalPaymentsSum) * 100),
       })).sort((a, b) => b.amount - a.amount);
 
-
-
       return {
         ventasMes: salesTotal,
         gananciasBrutas: grossProfit,
@@ -2776,33 +3057,18 @@ export const reportsService = {
     } catch (err) {
       console.error('Exception in reportsService:', err);
       return {
-        ventasMes: 48250,
-        gananciasBrutas: 25480,
-        gananciasNetas: 12480,
-        gastosMes: 9550,
-        valorizacionAlmacen: 185400,
-        topProducts: [
-          { name: 'Monitor LG 24"', sales: 42, total: 27300 },
-          { name: 'Mouse Logitech G203', sales: 68, total: 6460 },
-          { name: 'Teclado Mecánico RGB', sales: 31, total: 5580 },
-          { name: 'SSD Kingston 480GB', sales: 25, total: 4250 },
-        ],
-        salesByPayment: [
-          { method: 'Tarjeta de Crédito / Débito', amount: 21712, pct: 45 },
-          { method: 'Efectivo en Caja', amount: 14475, pct: 30 },
-          { method: 'Billeteras (Yape / Plin)', amount: 7237, pct: 15 },
-          { method: 'Transferencia Bancaria', amount: 4825, pct: 10 },
-        ],
-        salesList: [
-          { date: '2026-08-01', docNumber: 'V-000104', customer: 'Juan Carlos Pérez', method: 'Tarjeta de Crédito / Débito', total: 27300 },
-          { date: '2026-08-05', docNumber: 'V-000103', customer: 'Corporación Inmobiliaria ABC', method: 'Transferencia Bancaria', total: 12000 },
-        ],
-        grossProfitList: [
-          { docNumber: 'V-000104', product: 'Motor LG 24"', qty: 42, price: 650, subtotal: 27300, cost: 400, totalCost: 16800, profit: 10500 },
-        ],
+        ventasMes: 0,
+        gananciasBrutas: 0,
+        gananciasNetas: 0,
+        gastosMes: 0,
+        valorizacionAlmacen: 0,
+        topProducts: [],
+        salesByPayment: [],
+        salesList: [],
+        grossProfitList: [],
         purchasesList: [],
         expensesList: [],
-        inventoryList: []
+        inventoryList: [],
       };
     }
   }
@@ -2836,18 +3102,25 @@ export const expensesService = {
 
   async getExpenses(): Promise<Expense[]> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
+
+      if (!isNetworkOnline()) {
+        try { return await getAllRecords<Expense>(STORES.EXPENSES); } catch { return []; }
+      }
+
       const { data, error } = await supabase
         .from('expenses')
         .select('*')
-        .or(`tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+        .eq('tenant_id', tenantId)
         .order('expense_date', { ascending: false });
 
       if (error) {
         console.error('Error fetching expenses:', error);
-        return [];
+        try { return await getAllRecords<Expense>(STORES.EXPENSES); } catch { return []; }
       }
 
-      return (data || []).map((e: any) => ({
+      const result = (data || []).map((e: any) => ({
         id: e.id,
         description: e.description,
         expenseType: e.expense_type,
@@ -2856,19 +3129,25 @@ export const expensesService = {
         expenseDate: e.expense_date,
         voucherUrl: e.voucher_url || e.voucherUrl || undefined,
         voucherName: e.voucher_name || e.voucherName || undefined,
-      }));
+      })) as Expense[];
+
+      try { await putManyRecords(STORES.EXPENSES, result); } catch { /* non-critical */ }
+      return result;
     } catch (err) {
       console.error(err);
-      return [];
+      try { return await getAllRecords<Expense>(STORES.EXPENSES); } catch { return []; }
     }
   },
 
   async createExpense(expense: Omit<Expense, 'id'>): Promise<Expense | null> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return null;
+
       const { data, error } = await supabase
         .from('expenses')
         .insert({
-          tenant_id: DEFAULT_TENANT_ID,
+          tenant_id: tenantId,
           description: expense.description,
           expense_type: expense.expenseType,
           frequency: expense.frequency || 'ONCE',
@@ -2985,6 +3264,8 @@ export const settingsService = {
   async getTenantInfo(): Promise<Record<string, any>> {
     try {
       const tenantId = getActiveTenantId();
+      if (!tenantId) return {};
+
       const { data, error } = await supabase
         .from('tenants')
         .select('*')
@@ -2992,23 +3273,7 @@ export const settingsService = {
         .maybeSingle();
 
       if (data && Object.keys(data).length > 0) return data;
-
-      // Fallback query to default tenant or first tenant
-      const { data: defaultData } = await supabase
-        .from('tenants')
-        .select('*')
-        .eq('id', DEFAULT_TENANT_ID)
-        .maybeSingle();
-
-      if (defaultData) return defaultData;
-
-      const { data: firstTenant } = await supabase
-        .from('tenants')
-        .select('*')
-        .limit(1)
-        .maybeSingle();
-
-      return firstTenant || {};
+      return {};
     } catch (err) {
       console.error('Error fetching tenant info:', err);
       return {};
@@ -3017,10 +3282,13 @@ export const settingsService = {
 
   async updateTenantInfo(updates: Record<string, any>): Promise<boolean> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return false;
+
       const { error } = await supabase
         .from('tenants')
         .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq('id', DEFAULT_TENANT_ID);
+        .eq('id', tenantId);
       if (error) {
         console.error('Error updating tenant info:', error);
         return false;
@@ -3042,11 +3310,22 @@ export const settingsService = {
 
   async getInvoiceSeries(): Promise<{ document_type: string; series: string; next_number: number }[]> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
+
       const { data, error } = await supabase
         .from('invoice_series')
         .select('document_type, series, next_number')
-        .eq('tenant_id', DEFAULT_TENANT_ID);
-      if (error || !data) return [];
+        .eq('tenant_id', tenantId);
+
+      if (error || !data || data.length === 0) {
+        const defaultSeries = [
+          { tenant_id: tenantId, document_type: 'BOLETA', series: 'B001', next_number: 1 },
+          { tenant_id: tenantId, document_type: 'FACTURA', series: 'F001', next_number: 1 },
+        ];
+        await supabase.from('invoice_series').insert(defaultSeries);
+        return defaultSeries;
+      }
       return data;
     } catch (err) {
       console.error('Error fetching invoice series:', err);
@@ -3056,13 +3335,26 @@ export const settingsService = {
 
   async getNextSeriesNumber(docType: 'BOLETA' | 'FACTURA'): Promise<{ series: string; number: number } | null> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return null;
+
       const { data, error } = await supabase
         .from('invoice_series')
         .select('series, next_number')
-        .eq('tenant_id', DEFAULT_TENANT_ID)
+        .eq('tenant_id', tenantId)
         .eq('document_type', docType)
-        .single();
-      if (error || !data) return null;
+        .maybeSingle();
+
+      if (error || !data) {
+        const defaultSeries = docType === 'FACTURA' ? 'F001' : 'B001';
+        await supabase.from('invoice_series').insert({
+          tenant_id: tenantId,
+          document_type: docType,
+          series: defaultSeries,
+          next_number: 1,
+        });
+        return { series: defaultSeries, number: 1 };
+      }
       return { series: data.series, number: data.next_number };
     } catch (err) {
       console.error('Error fetching next series number:', err);
@@ -3072,8 +3364,11 @@ export const settingsService = {
 
   async incrementSeriesNumber(docType: 'BOLETA' | 'FACTURA', series: string): Promise<boolean> {
     try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return false;
+
       const { error } = await supabase.rpc('increment_series_number', {
-        p_tenant_id: DEFAULT_TENANT_ID,
+        p_tenant_id: tenantId,
         p_document_type: docType,
         p_series: series,
       });
@@ -3084,7 +3379,7 @@ export const settingsService = {
           const { error: updateErr } = await supabase
             .from('invoice_series')
             .update({ next_number: current.number + 1 })
-            .eq('tenant_id', DEFAULT_TENANT_ID)
+            .eq('tenant_id', tenantId)
             .eq('document_type', docType)
             .eq('series', series);
           return !updateErr;
@@ -3094,6 +3389,455 @@ export const settingsService = {
       return true;
     } catch (err) {
       console.error('Error incrementing series number:', err);
+      return false;
+    }
+  },
+};
+
+// ---------------- PLATFORM TENANTS / ORGANIZATIONS ----------------
+export interface TenantCompany {
+  id: string;
+  name: string;
+  legalName?: string;
+  ruc: string;
+  address?: string;
+  phone?: string;
+  adminEmail: string;
+  adminName: string;
+  plan: 'ENTERPRISE' | 'PRO' | 'BASIC';
+  active: boolean;
+  createdAt: string;
+
+  // SUNAT Electronic Invoicing (CPE) Configuration
+  sunatEnv: 'BETA' | 'PRODUCTION';
+  solUser?: string;
+  solPassword?: string;
+  certPassword?: string;
+  certFileName?: string;
+  clientId?: string;
+  clientSecret?: string;
+  establishmentCode?: string;
+  invoiceSeries?: string;
+  receiptSeries?: string;
+  creditNoteSeries?: string;
+  debitNoteSeries?: string;
+  guiaSeries?: string;
+  ubigeo?: string;
+  urbanization?: string;
+  department?: string;
+  province?: string;
+  district?: string;
+}
+
+export interface TenantFormValues {
+  name: string;
+  legalName: string;
+  ruc: string;
+  plan: 'ENTERPRISE' | 'PRO' | 'BASIC';
+  address: string;
+  phone: string;
+  adminName: string;
+  adminEmail: string;
+  adminPassword?: string;
+
+  // SUNAT fields
+  sunatEnv: 'BETA' | 'PRODUCTION';
+  solUser: string;
+  solPassword: string;
+  certPassword: string;
+  certFileName: string;
+  clientId: string;
+  clientSecret: string;
+  establishmentCode: string;
+  invoiceSeries: string;
+  receiptSeries: string;
+  creditNoteSeries: string;
+  debitNoteSeries: string;
+  guiaSeries: string;
+  ubigeo: string;
+  urbanization: string;
+  department: string;
+  province: string;
+  district: string;
+}
+
+export const tenantsService = {
+  async getTenants(): Promise<TenantCompany[]> {
+    try {
+      const { data: tenantRows, error: tError } = await supabase
+        .from('tenants')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (tError) {
+        console.error('Error fetching tenants from Supabase:', tError);
+        const cached = localStorage.getItem('cached_platform_tenants');
+        if (cached) {
+          try {
+            return JSON.parse(cached);
+          } catch {
+            // ignore
+          }
+        }
+        return [];
+      }
+
+      const { data: memberships } = await supabase
+        .from('tenant_memberships')
+        .select(`
+          id,
+          tenant_id,
+          username,
+          password,
+          status,
+          profiles ( id, full_name, email ),
+          roles ( id, name, is_system )
+        `);
+
+      const membershipMap = new Map<string, any>();
+      (memberships || []).forEach((m: any) => {
+        if (!membershipMap.has(m.tenant_id) || m.roles?.name?.toLowerCase().includes('admin')) {
+          membershipMap.set(m.tenant_id, m);
+        }
+      });
+
+      const list: TenantCompany[] = (tenantRows || []).map((t: any) => {
+        const mem = membershipMap.get(t.id);
+        const pObj = Array.isArray(mem?.profiles) ? mem.profiles[0] : mem?.profiles;
+        const fc = t.fiscal_config || {};
+
+        return {
+          id: t.id,
+          name: t.name || 'Organización',
+          legalName: t.trade_name || fc.legal_name || t.name || '',
+          ruc: t.ruc || '',
+          address: t.address || '',
+          phone: t.phone || '',
+          adminEmail: pObj?.email || t.email || 'admin@ventasbv.pe',
+          adminName: pObj?.full_name || fc.admin_name || mem?.username || 'Super Admin',
+          plan: fc.plan || 'ENTERPRISE',
+          active: t.active !== false,
+          createdAt: t.created_at ? t.created_at.split('T')[0] : '2026-08-01',
+          sunatEnv: fc.sunat_env || 'BETA',
+          solUser: fc.sol_user || '',
+          solPassword: fc.sol_password || (mem?.password ? '••••••••' : ''),
+          certPassword: fc.cert_password || '',
+          certFileName: fc.cert_file_name || '',
+          clientId: fc.client_id || '',
+          clientSecret: fc.client_secret || '',
+          establishmentCode: fc.establishment_code || t.fiscal_config?.establishment_code || '0000',
+          invoiceSeries: t.invoice_series || fc.invoice_series || 'F001',
+          receiptSeries: t.receipt_series || fc.receipt_series || 'B001',
+          creditNoteSeries: fc.credit_note_series || 'FC01',
+          debitNoteSeries: fc.debit_note_series || 'FD01',
+          guiaSeries: fc.guia_series || 'T001',
+          ubigeo: fc.ubigeo || '150101',
+          urbanization: fc.urbanization || '',
+          department: fc.department || 'Lima',
+          province: fc.province || 'Lima',
+          district: fc.district || 'Lima',
+        };
+      });
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('cached_platform_tenants', JSON.stringify(list));
+      }
+
+      return list;
+    } catch (err) {
+      console.error('Exception in getTenants:', err);
+      const cached = localStorage.getItem('cached_platform_tenants');
+      if (cached) {
+        try {
+          return JSON.parse(cached);
+        } catch {
+          // ignore
+        }
+      }
+      return [];
+    }
+  },
+
+  async createTenant(values: TenantFormValues): Promise<TenantCompany | null> {
+    try {
+      const newTenantId = generateUUID();
+      const newBranchId = generateUUID();
+      const newRoleId = generateUUID();
+      const newProfileId = generateUUID();
+      const newMembershipId = generateUUID();
+
+      const fiscalConfig = {
+        plan: values.plan || 'ENTERPRISE',
+        legal_name: values.legalName || values.name,
+        admin_name: values.adminName,
+        sunat_env: values.sunatEnv || 'BETA',
+        sol_user: values.solUser || '',
+        sol_password: values.solPassword || '',
+        cert_password: values.certPassword || '',
+        cert_file_name: values.certFileName || '',
+        client_id: values.clientId || '',
+        client_secret: values.clientSecret || '',
+        establishment_code: values.establishmentCode || '0000',
+        invoice_series: values.invoiceSeries || 'F001',
+        receipt_series: values.receiptSeries || 'B001',
+        credit_note_series: values.creditNoteSeries || 'FC01',
+        debit_note_series: values.debitNoteSeries || 'FD01',
+        guia_series: values.guiaSeries || 'T001',
+        ubigeo: values.ubigeo || '150101',
+        urbanization: values.urbanization || '',
+        department: values.department || 'Lima',
+        province: values.province || 'Lima',
+        district: values.district || 'Lima',
+      };
+
+      // 1. Insert into tenants
+      const { data: tenantData, error: tErr } = await supabase
+        .from('tenants')
+        .insert({
+          id: newTenantId,
+          name: values.name,
+          trade_name: values.legalName || values.name,
+          ruc: values.ruc,
+          address: values.address || '',
+          phone: values.phone || '',
+          email: values.adminEmail,
+          receipt_series: values.receiptSeries || 'B001',
+          invoice_series: values.invoiceSeries || 'F001',
+          active: true,
+          fiscal_config: fiscalConfig,
+        })
+        .select()
+        .single();
+
+      if (tErr || !tenantData) {
+        console.error('Error inserting tenant in Supabase:', tErr);
+        return null;
+      }
+
+      // 2. Insert main branch
+      await supabase.from('branches').insert({
+        id: newBranchId,
+        tenant_id: newTenantId,
+        name: 'Sede Principal',
+        address: values.address || '',
+        phone: values.phone || '',
+        manager_name: values.adminName || 'Admin',
+        status: 'ACTIVE',
+      });
+
+      // 3. Insert system roles for new tenant
+      await supabase.from('roles').insert([
+        { id: newRoleId, tenant_id: newTenantId, name: 'Super Admin', is_system: true },
+        { id: generateUUID(), tenant_id: newTenantId, name: 'Administrador', is_system: true },
+        { id: generateUUID(), tenant_id: newTenantId, name: 'Vendedor', is_system: false },
+        { id: generateUUID(), tenant_id: newTenantId, name: 'Cajero', is_system: false },
+      ]);
+
+      // 4. Create or reuse Profile
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', values.adminEmail.trim().toLowerCase())
+        .maybeSingle();
+
+      const profileId = existingProfile?.id || newProfileId;
+      if (!existingProfile) {
+        await supabase.from('profiles').insert({
+          id: profileId,
+          full_name: values.adminName,
+          email: values.adminEmail.trim().toLowerCase(),
+        });
+      }
+
+      // 5. Insert Membership
+      const rawUsername = values.adminEmail.split('@')[0] || values.adminName.toLowerCase().replace(/\s+/g, '');
+      await supabase.from('tenant_memberships').insert({
+        id: newMembershipId,
+        tenant_id: newTenantId,
+        user_id: profileId,
+        role_id: newRoleId,
+        username: rawUsername,
+        password: values.adminPassword || '123',
+        branch_ids: [newBranchId],
+        status: 'ACTIVE',
+      });
+
+      // 6. Insert initial invoice series
+      await supabase.from('invoice_series').insert([
+        { tenant_id: newTenantId, document_type: 'FACTURA', series: values.invoiceSeries || 'F001', next_number: 1 },
+        { tenant_id: newTenantId, document_type: 'BOLETA', series: values.receiptSeries || 'B001', next_number: 1 },
+        { tenant_id: newTenantId, document_type: 'NOTA_CREDITO', series: values.creditNoteSeries || 'FC01', next_number: 1 },
+        { tenant_id: newTenantId, document_type: 'NOTA_DEBITO', series: values.debitNoteSeries || 'FD01', next_number: 1 },
+      ]);
+
+      // 7. Audit log
+      auditService.logAction({
+        action: 'CREAR',
+        entityType: 'tenants',
+        entityId: newTenantId,
+        description: `Creación de nueva empresa/tenant "${values.name}" (RUC: ${values.ruc}, Plan: ${values.plan}) con admin ${values.adminEmail}`,
+        details: {
+          name: values.name,
+          ruc: values.ruc,
+          plan: values.plan,
+          adminEmail: values.adminEmail,
+          sunatEnv: values.sunatEnv,
+        },
+      });
+
+      return {
+        id: newTenantId,
+        name: values.name,
+        legalName: values.legalName || values.name,
+        ruc: values.ruc,
+        address: values.address || '',
+        phone: values.phone || '',
+        adminEmail: values.adminEmail,
+        adminName: values.adminName,
+        plan: values.plan,
+        active: true,
+        createdAt: new Date().toISOString().split('T')[0],
+        sunatEnv: values.sunatEnv,
+        solUser: values.solUser,
+        solPassword: values.solPassword,
+        certPassword: values.certPassword,
+        certFileName: values.certFileName,
+        clientId: values.clientId,
+        clientSecret: values.clientSecret,
+        establishmentCode: values.establishmentCode,
+        invoiceSeries: values.invoiceSeries,
+        receiptSeries: values.receiptSeries,
+        creditNoteSeries: values.creditNoteSeries,
+        debitNoteSeries: values.debitNoteSeries,
+        guiaSeries: values.guiaSeries,
+        ubigeo: values.ubigeo,
+        urbanization: values.urbanization,
+        department: values.department,
+        province: values.province,
+        district: values.district,
+      };
+    } catch (err) {
+      console.error('Exception in createTenant:', err);
+      return null;
+    }
+  },
+
+  async updateTenant(id: string, values: TenantFormValues): Promise<boolean> {
+    try {
+      const { data: existing } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      const existingFc = existing?.fiscal_config || {};
+      const updatedFc = {
+        ...existingFc,
+        plan: values.plan,
+        legal_name: values.legalName || values.name,
+        admin_name: values.adminName,
+        sunat_env: values.sunatEnv,
+        sol_user: values.solUser,
+        sol_password: values.solPassword || existingFc.sol_password,
+        cert_password: values.certPassword || existingFc.cert_password,
+        cert_file_name: values.certFileName || existingFc.cert_file_name,
+        client_id: values.clientId || existingFc.client_id,
+        client_secret: values.clientSecret || existingFc.client_secret,
+        establishment_code: values.establishmentCode || existingFc.establishment_code || '0000',
+        invoice_series: values.invoiceSeries || existingFc.invoice_series || 'F001',
+        receipt_series: values.receiptSeries || existingFc.receipt_series || 'B001',
+        credit_note_series: values.creditNoteSeries || existingFc.credit_note_series || 'FC01',
+        debit_note_series: values.debitNoteSeries || existingFc.debit_note_series || 'FD01',
+        guia_series: values.guiaSeries || existingFc.guia_series || 'T001',
+        ubigeo: values.ubigeo || existingFc.ubigeo || '150101',
+        urbanization: values.urbanization || existingFc.urbanization || '',
+        department: values.department || existingFc.department || 'Lima',
+        province: values.province || existingFc.province || 'Lima',
+        district: values.district || existingFc.district || 'Lima',
+      };
+
+      const { error: tErr } = await supabase
+        .from('tenants')
+        .update({
+          name: values.name,
+          trade_name: values.legalName || values.name,
+          address: values.address,
+          phone: values.phone,
+          email: values.adminEmail,
+          receipt_series: values.receiptSeries,
+          invoice_series: values.invoiceSeries,
+          fiscal_config: updatedFc,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id);
+
+      if (tErr) {
+        console.error('Error updating tenant in Supabase:', tErr);
+        return false;
+      }
+
+      // Update admin user profile & password
+      const { data: member } = await supabase
+        .from('tenant_memberships')
+        .select('id, user_id')
+        .eq('tenant_id', id)
+        .maybeSingle();
+
+      if (member) {
+        if (values.adminName || values.adminEmail) {
+          await supabase.from('profiles').update({
+            ...(values.adminName ? { full_name: values.adminName } : {}),
+            ...(values.adminEmail ? { email: values.adminEmail } : {}),
+          }).eq('id', member.user_id);
+        }
+        if (values.adminPassword) {
+          await supabase.from('tenant_memberships').update({
+            password: values.adminPassword,
+          }).eq('id', member.id);
+        }
+      }
+
+      auditService.logAction({
+        action: 'MODIFICAR',
+        entityType: 'tenants',
+        entityId: id,
+        description: `Actualización de datos y configuración SUNAT de "${values.name}" (RUC: ${values.ruc})`,
+        details: { name: values.name, ruc: values.ruc, plan: values.plan },
+      });
+
+      return true;
+    } catch (err) {
+      console.error('Exception in updateTenant:', err);
+      return false;
+    }
+  },
+
+  async toggleTenantStatus(id: string, active: boolean, tenantName?: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('tenants')
+        .update({
+          active,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error toggling tenant status:', error);
+        return false;
+      }
+
+      auditService.logAction({
+        action: active ? 'ACTIVAR' : 'SUSPENDER',
+        entityType: 'tenants',
+        entityId: id,
+        description: `${active ? 'Activación' : 'Suspensión'} de la empresa "${tenantName || id}" en la plataforma`,
+        details: { tenant_id: id, active },
+      });
+
+      return true;
+    } catch (err) {
+      console.error('Exception in toggleTenantStatus:', err);
       return false;
     }
   },
@@ -3112,7 +3856,7 @@ export const profileService = {
     try {
       const authUserId = typeof window !== 'undefined' ? localStorage.getItem('auth_user_id') : null;
       const authUsername = typeof window !== 'undefined' ? (localStorage.getItem('auth_username') || localStorage.getItem('auth_user')) : null;
-      const tenantId = (typeof window !== 'undefined' && localStorage.getItem('tenant_id')) || DEFAULT_TENANT_ID;
+      const tenantId = getActiveTenantId();
 
       let query = supabase
         .from('tenant_memberships')
@@ -3126,7 +3870,7 @@ export const profileService = {
 
       if (authUserId) {
         query = query.eq('id', authUserId);
-      } else if (authUsername) {
+      } else if (authUsername && tenantId) {
         query = query.eq('tenant_id', tenantId).ilike('username', authUsername);
       }
 
@@ -3136,10 +3880,10 @@ export const profileService = {
         return {
           membershipId: authUserId || '',
           userId: '',
-          fullName: (typeof window !== 'undefined' && localStorage.getItem('auth_user')) || 'Admin Principal',
-          username: (typeof window !== 'undefined' && localStorage.getItem('auth_username')) || 'admin',
-          email: (typeof window !== 'undefined' && localStorage.getItem('auth_email')) || 'admin@ventasbv.pe',
-          role: (typeof window !== 'undefined' && localStorage.getItem('user_role')) || 'Super Admin',
+          fullName: (typeof window !== 'undefined' && localStorage.getItem('auth_user')) || 'Usuario',
+          username: (typeof window !== 'undefined' && localStorage.getItem('auth_username')) || 'usuario',
+          email: (typeof window !== 'undefined' && localStorage.getItem('auth_email')) || '',
+          role: (typeof window !== 'undefined' && localStorage.getItem('user_role')) || 'Vendedor',
         };
       }
 
@@ -3152,7 +3896,7 @@ export const profileService = {
         fullName: pObj?.full_name || data.username || 'Usuario',
         username: data.username || '',
         email: pObj?.email || '',
-        role: rObj?.name || (typeof window !== 'undefined' ? localStorage.getItem('user_role') : '') || 'Super Admin',
+        role: rObj?.name || (typeof window !== 'undefined' ? localStorage.getItem('user_role') : '') || 'Vendedor',
       };
     } catch (err) {
       console.error('Error in getProfile:', err);
@@ -3176,7 +3920,8 @@ export const profileService = {
     try {
       const authUserId = typeof window !== 'undefined' ? localStorage.getItem('auth_user_id') : null;
       const authUsername = typeof window !== 'undefined' ? (localStorage.getItem('auth_username') || localStorage.getItem('auth_user')) : null;
-      const tenantId = (typeof window !== 'undefined' && localStorage.getItem('tenant_id')) || DEFAULT_TENANT_ID;
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return { success: false, error: 'No hay empresa activa seleccionada.' };
 
       // 1. Find the current user membership
       let query = supabase.from('tenant_memberships').select('id, user_id, username').eq('tenant_id', tenantId);
@@ -3286,10 +4031,12 @@ export const notificationsService = {
   async getNotifications(): Promise<AppNotification[]> {
     try {
       const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
+
       const { data, error } = await supabase
         .from('notifications')
         .select('*')
-        .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID}`)
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -3338,10 +4085,12 @@ export const notificationsService = {
   async markAllAsRead(): Promise<boolean> {
     try {
       const tenantId = getActiveTenantId();
+      if (!tenantId) return false;
+
       const { error } = await supabase
         .from('notifications')
         .update({ read: true })
-        .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID}`);
+        .eq('tenant_id', tenantId);
 
       if (error) {
         console.error('Error marking all notifications as read:', error);
@@ -3387,6 +4136,8 @@ export const notificationsService = {
   }): Promise<boolean> {
     try {
       const tenantId = getActiveTenantId();
+      if (!tenantId) return false;
+
       const { error } = await supabase
         .from('notifications')
         .insert({
@@ -3454,13 +4205,14 @@ export const auditService = {
   async getAuditLogs(): Promise<AuditLogEntry[]> {
     try {
       const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
 
       // Query audit logs, branches, members, and profiles simultaneously
       const [logsRes, branchesRes, membersRes, profilesRes] = await Promise.all([
         supabase
           .from('audit_logs')
           .select('*')
-          .or(`tenant_id.eq.${tenantId},tenant_id.eq.${DEFAULT_TENANT_ID},tenant_id.is.null`)
+          .eq('tenant_id', tenantId)
           .order('created_at', { ascending: false })
           .limit(200),
         branchesService.getBranches(),
@@ -3685,5 +4437,653 @@ export const auditService = {
     }
   },
 };
+
+// ---------------- SUNAT / RENIEC LOOKUP SERVICE ----------------
+export interface SunatRucResult {
+  ruc: string;
+  razonSocial: string;
+  nombreComercial?: string;
+  estado?: string;
+  condicion?: string;
+  direccion?: string;
+  departamento?: string;
+  provincia?: string;
+  distrito?: string;
+  ubigeo?: string;
+}
+
+export interface ReniecDniResult {
+  dni: string;
+  nombres: string;
+  apellidoPaterno: string;
+  apellidoMaterno: string;
+  nombreCompleto: string;
+}
+
+export const sunatReniecService = {
+  async consultarRuc(ruc: string): Promise<{ success: boolean; data?: SunatRucResult; message?: string }> {
+    const cleanRuc = ruc.trim();
+    if (!/^\d{11}$/.test(cleanRuc)) {
+      return { success: false, message: 'El RUC debe tener 11 dígitos numéricos.' };
+    }
+
+    try {
+      // 1. Try local Vite proxy endpoint (Bypasses browser CORS completely)
+      try {
+        const response = await fetch(`/api/ruc?numero=${cleanRuc}`);
+        if (response.ok) {
+          const json = await response.json();
+          if (json && (json.nombre || json.razonSocial)) {
+            return {
+              success: true,
+              data: {
+                ruc: cleanRuc,
+                razonSocial: json.nombre || json.razonSocial || '',
+                nombreComercial: json.nombreComercial || json.nombre || '',
+                estado: json.estado || 'ACTIVO',
+                condicion: json.condicion || 'HABIDO',
+                direccion: json.direccion || '',
+                departamento: json.departamento || '',
+                provincia: json.provincia || '',
+                distrito: json.distrito || '',
+                ubigeo: json.ubigeo || '',
+              },
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Local proxy RUC failed, trying direct endpoint:', e);
+      }
+
+      // 2. Try direct public APIS.NET.PE endpoint
+      try {
+        const response = await fetch(`https://api.apis.net.pe/v1/ruc?numero=${cleanRuc}`);
+        if (response.ok) {
+          const json = await response.json();
+          if (json && (json.nombre || json.razonSocial)) {
+            return {
+              success: true,
+              data: {
+                ruc: cleanRuc,
+                razonSocial: json.nombre || json.razonSocial || '',
+                nombreComercial: json.nombreComercial || json.nombre || '',
+                estado: json.estado || 'ACTIVO',
+                condicion: json.condicion || 'HABIDO',
+                direccion: json.direccion || '',
+                departamento: json.departamento || '',
+                provincia: json.provincia || '',
+                distrito: json.distrito || '',
+                ubigeo: json.ubigeo || '',
+              },
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Primary RUC API failed, trying fallback:', e);
+      }
+
+      // 3. Try secondary DecoLect endpoint
+      try {
+        const response2 = await fetch(`https://api.decolect.com/v1/ruc/${cleanRuc}`);
+        if (response2.ok) {
+          const json = await response2.json();
+          const rData = json.data || json;
+          if (rData && (rData.razon_social || rData.nombre)) {
+            return {
+              success: true,
+              data: {
+                ruc: cleanRuc,
+                razonSocial: rData.razon_social || rData.nombre || '',
+                nombreComercial: rData.nombre_comercial || rData.razon_social || '',
+                estado: rData.estado || 'ACTIVO',
+                condicion: rData.condicion || 'HABIDO',
+                direccion: rData.direccion || '',
+                departamento: rData.departamento || '',
+                provincia: rData.provincia || '',
+                distrito: rData.distrito || '',
+                ubigeo: rData.ubigeo || '',
+              },
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Secondary RUC API failed:', e);
+      }
+
+      // 4. Check existing customers table in database as fallback
+      const existing = await customersService.getCustomers();
+      const match = existing.find((c) => c.documentNumber === cleanRuc);
+      if (match) {
+        return {
+          success: true,
+          data: {
+            ruc: cleanRuc,
+            razonSocial: match.businessName || match.name,
+            nombreComercial: match.businessName || match.name,
+            direccion: match.address || '',
+            estado: 'REGISTRADO',
+            condicion: 'HABIDO',
+          },
+        };
+      }
+
+      return { success: false, message: `No se encontraron datos automáticos para el RUC ${cleanRuc}. Puede ingresarlo manualmente.` };
+    } catch (err: any) {
+      console.error('Error in consultarRuc:', err);
+      return { success: false, message: 'Error de conexión con el servicio de consulta SUNAT.' };
+    }
+  },
+
+  async consultarDni(dni: string): Promise<{ success: boolean; data?: ReniecDniResult; message?: string }> {
+    const cleanDni = dni.trim();
+    if (!/^\d{8}$/.test(cleanDni)) {
+      return { success: false, message: 'El DNI debe tener 8 dígitos numéricos.' };
+    }
+
+    try {
+      // 1. Try local Vite proxy endpoint (Bypasses browser CORS completely)
+      try {
+        const response = await fetch(`/api/dni?numero=${cleanDni}`);
+        if (response.ok) {
+          const json = await response.json();
+          if (json && (json.nombre || json.nombres)) {
+            const nombres = json.nombres || json.nombre || '';
+            const apPaterno = json.apellidoPaterno || '';
+            const apMaterno = json.apellidoMaterno || '';
+            const full = json.nombre || `${nombres} ${apPaterno} ${apMaterno}`.trim();
+            return {
+              success: true,
+              data: {
+                dni: cleanDni,
+                nombres,
+                apellidoPaterno: apPaterno,
+                apellidoMaterno: apMaterno,
+                nombreCompleto: full || nombres,
+              },
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Local proxy DNI failed, trying direct endpoint:', e);
+      }
+
+      // 2. Try direct public APIS.NET.PE endpoint
+      try {
+        const response = await fetch(`https://api.apis.net.pe/v1/dni?numero=${cleanDni}`);
+        if (response.ok) {
+          const json = await response.json();
+          if (json && (json.nombre || json.nombres)) {
+            const nombres = json.nombres || json.nombre || '';
+            const apPaterno = json.apellidoPaterno || '';
+            const apMaterno = json.apellidoMaterno || '';
+            const full = json.nombre || `${nombres} ${apPaterno} ${apMaterno}`.trim();
+            return {
+              success: true,
+              data: {
+                dni: cleanDni,
+                nombres,
+                apellidoPaterno: apPaterno,
+                apellidoMaterno: apMaterno,
+                nombreCompleto: full || nombres,
+              },
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Primary DNI API failed, trying fallback:', e);
+      }
+
+      // 3. Try DecoLect endpoint
+      try {
+        const response2 = await fetch(`https://api.decolect.com/v1/dni/${cleanDni}`);
+        if (response2.ok) {
+          const json = await response2.json();
+          const dData = json.data || json;
+          if (dData && (dData.nombres || dData.nombre_completo)) {
+            return {
+              success: true,
+              data: {
+                dni: cleanDni,
+                nombres: dData.nombres || '',
+                apellidoPaterno: dData.apellido_paterno || '',
+                apellidoMaterno: dData.apellido_materno || '',
+                nombreCompleto: dData.nombre_completo || `${dData.nombres} ${dData.apellido_paterno || ''}`.trim(),
+              },
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Secondary DNI API failed:', e);
+      }
+
+      // 4. Check existing customers database as fallback
+      const existing = await customersService.getCustomers();
+      const match = existing.find((c) => c.documentNumber === cleanDni);
+      if (match) {
+        return {
+          success: true,
+          data: {
+            dni: cleanDni,
+            nombres: match.fullName || match.name,
+            apellidoPaterno: '',
+            apellidoMaterno: '',
+            nombreCompleto: match.fullName || match.name,
+          },
+        };
+      }
+
+      return { success: false, message: `No se encontraron datos automáticos para el DNI ${cleanDni}. Puede ingresarlo manualmente.` };
+    } catch (err: any) {
+      console.error('Error in consultarDni:', err);
+      return { success: false, message: 'Error de conexión con el servicio de consulta RENIEC.' };
+    }
+  },
+};
+
+// ---------------- CREDITS & FINANCING SERVICE ----------------
+export interface CreditInstallment {
+  id: string;
+  creditId: string;
+  installmentNumber: number;
+  dueDate: string;
+  capitalAmount: number;
+  interestAmount: number;
+  totalAmount: number;
+  paidAmount: number;
+  paidDate?: string;
+  paymentMethod?: string;
+  receiptNumber?: string;
+  notes?: string;
+  status: 'PENDING' | 'PAID' | 'OVERDUE' | 'PARTIAL';
+}
+
+export interface Credit {
+  id: string;
+  tenantId: string;
+  branchId?: string;
+  branchName?: string;
+  saleId?: string;
+  saleNumber?: string;
+  customerId?: string;
+  customerName: string;
+  customerDoc: string;
+  totalAmount: number;
+  initialPayment: number;
+  financedAmount: number;
+  interestRate: number;
+  interestAmount: number;
+  totalCredit: number;
+  installmentsCount: number;
+  installmentFrequency: 'MENSUAL' | 'QUINCENAL' | 'SEMANAL';
+  amountPaid: number;
+  balancePending: number;
+  status: 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'CANCELLED';
+  createdAt: string;
+  installments?: CreditInstallment[];
+}
+
+export interface CreateCreditParams {
+  saleId?: string;
+  saleNumber?: string;
+  branchId?: string;
+  branchName?: string;
+  customerId?: string;
+  customerName: string;
+  customerDoc: string;
+  totalAmount: number;
+  initialPayment: number;
+  interestRate: number;
+  installmentsCount: number;
+  installmentFrequency?: 'MENSUAL' | 'QUINCENAL' | 'SEMANAL';
+  firstDueDate?: string;
+}
+
+export const creditsService = {
+  async getCredits(branchId?: string): Promise<Credit[]> {
+    try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId) return [];
+
+      let query = supabase
+        .from('credits')
+        .select(`
+          *,
+          branches ( name ),
+          credit_installments (*)
+        `)
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false });
+
+      if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
+        query = query.eq('branch_id', branchId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('Error fetching credits:', error);
+        return [];
+      }
+
+      return (data || []).map((c: any) => {
+        const rawInstallments = (c.credit_installments || []).sort(
+          (a: any, b: any) => a.installment_number - b.installment_number
+        );
+
+        const installments: CreditInstallment[] = rawInstallments.map((ins: any) => {
+          const isOverdue = ins.status === 'PENDING' && new Date(ins.due_date) < new Date();
+          return {
+            id: ins.id,
+            creditId: ins.credit_id,
+            installmentNumber: ins.installment_number,
+            dueDate: ins.due_date,
+            capitalAmount: Number(ins.capital_amount) || 0,
+            interestAmount: Number(ins.interest_amount) || 0,
+            totalAmount: Number(ins.total_amount) || 0,
+            paidAmount: Number(ins.paid_amount) || 0,
+            paidDate: ins.paid_date,
+            paymentMethod: ins.payment_method,
+            receiptNumber: ins.receipt_number,
+            notes: ins.notes,
+            status: isOverdue ? 'OVERDUE' : (ins.status as any),
+          };
+        });
+
+        const hasOverdue = installments.some((ins) => ins.status === 'OVERDUE');
+        const calculatedStatus = hasOverdue && c.status !== 'PAID' ? 'OVERDUE' : c.status;
+
+        return {
+          id: c.id,
+          tenantId: c.tenant_id,
+          branchId: c.branch_id,
+          branchName: c.branches?.name || 'Sede Principal',
+          saleId: c.sale_id,
+          saleNumber: c.sale_number,
+          customerId: c.customer_id,
+          customerName: c.customer_name || 'Cliente',
+          customerDoc: c.customer_doc || '00000000',
+          totalAmount: Number(c.total_amount) || 0,
+          initialPayment: Number(c.initial_payment) || 0,
+          financedAmount: Number(c.financed_amount) || 0,
+          interestRate: Number(c.interest_rate) || 0,
+          interestAmount: Number(c.interest_amount) || 0,
+          totalCredit: Number(c.total_credit) || 0,
+          installmentsCount: Number(c.installments_count) || 1,
+          installmentFrequency: c.installment_frequency || 'MENSUAL',
+          amountPaid: Number(c.amount_paid) || 0,
+          balancePending: Number(c.balance_pending) || 0,
+          status: calculatedStatus as any,
+          createdAt: c.created_at ? new Date(c.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          installments,
+        };
+      });
+    } catch (err) {
+      console.error('Exception in getCredits:', err);
+      return [];
+    }
+  },
+
+  async createCredit(params: CreateCreditParams): Promise<Credit | null> {
+    try {
+      const tenantId = getActiveTenantId();
+      const creditId = generateUUID();
+
+      const initial = Math.max(0, Number(params.initialPayment) || 0);
+      const totalSale = Number(params.totalAmount) || 0;
+      const capitalFinanced = Math.max(0, totalSale - initial);
+      const interestRate = Number(params.interestRate) || 0;
+      const interestAmount = Number(((capitalFinanced * interestRate) / 100).toFixed(2));
+      const totalCredit = Number((capitalFinanced + interestAmount).toFixed(2));
+      const count = Math.max(1, params.installmentsCount || 1);
+      const freq = params.installmentFrequency || 'MENSUAL';
+
+      // 1. Insert master credit record
+      const { data: creditRow, error: cErr } = await supabase
+        .from('credits')
+        .insert({
+          id: creditId,
+          tenant_id: tenantId,
+          branch_id: params.branchId && isValidUuid(params.branchId) ? params.branchId : null,
+          sale_id: params.saleId && isValidUuid(params.saleId) ? params.saleId : null,
+          customer_id: params.customerId && isValidUuid(params.customerId) ? params.customerId : null,
+          customer_name: params.customerName,
+          customer_doc: params.customerDoc,
+          total_amount: totalSale,
+          initial_payment: initial,
+          financed_amount: capitalFinanced,
+          interest_rate: interestRate,
+          interest_amount: interestAmount,
+          total_credit: totalCredit,
+          installments_count: count,
+          installment_frequency: freq,
+          amount_paid: 0,
+          balance_pending: totalCredit,
+          status: 'PENDING',
+        })
+        .select()
+        .single();
+
+      if (cErr || !creditRow) {
+        console.error('Error creating credit:', cErr);
+        return null;
+      }
+
+      // 2. Generate installments schedule
+      const startDate = params.firstDueDate ? new Date(params.firstDueDate) : new Date();
+      if (!params.firstDueDate) {
+        startDate.setDate(startDate.getDate() + (freq === 'SEMANAL' ? 7 : freq === 'QUINCENAL' ? 15 : 30));
+      }
+
+      const installmentCapital = Number((capitalFinanced / count).toFixed(2));
+      const installmentInterest = Number((interestAmount / count).toFixed(2));
+      const installmentTotal = Number((installmentCapital + installmentInterest).toFixed(2));
+
+      const installmentsToInsert: any[] = [];
+      for (let i = 1; i <= count; i++) {
+        const dueDate = new Date(startDate);
+        if (i > 1) {
+          if (freq === 'SEMANAL') dueDate.setDate(dueDate.getDate() + (i - 1) * 7);
+          else if (freq === 'QUINCENAL') dueDate.setDate(dueDate.getDate() + (i - 1) * 15);
+          else dueDate.setMonth(dueDate.getMonth() + (i - 1));
+        }
+
+        installmentsToInsert.push({
+          id: generateUUID(),
+          credit_id: creditId,
+          tenant_id: tenantId,
+          installment_number: i,
+          due_date: dueDate.toISOString().split('T')[0],
+          capital_amount: installmentCapital,
+          interest_amount: installmentInterest,
+          total_amount: installmentTotal,
+          paid_amount: 0,
+          status: 'PENDING',
+        });
+      }
+
+      const { data: insRows, error: insErr } = await supabase
+        .from('credit_installments')
+        .insert(installmentsToInsert)
+        .select();
+
+      if (insErr) {
+        console.error('Error inserting credit installments:', insErr);
+      }
+
+      auditService.logAction({
+        action: 'CRÉDITO OTORGADO',
+        entityType: 'credits',
+        entityId: creditId,
+        branchId: params.branchId,
+        description: `Crédito otorgado a "${params.customerName}" por S/ ${totalCredit.toFixed(2)} (${count} cuotas ${freq.toLowerCase()}es, Inicial: S/ ${initial.toFixed(2)})`,
+        details: {
+          customer: params.customerName,
+          total_sale: totalSale,
+          initial,
+          financed: capitalFinanced,
+          interest_rate: interestRate,
+          total_credit: totalCredit,
+          installments_count: count,
+        },
+      });
+
+      return {
+        id: creditId,
+        tenantId,
+        branchId: params.branchId,
+        branchName: params.branchName || 'Sede Principal',
+        saleId: params.saleId,
+        customerName: params.customerName,
+        customerDoc: params.customerDoc,
+        totalAmount: totalSale,
+        initialPayment: initial,
+        financedAmount: capitalFinanced,
+        interestRate,
+        interestAmount,
+        totalCredit,
+        installmentsCount: count,
+        installmentFrequency: freq,
+        amountPaid: 0,
+        balancePending: totalCredit,
+        status: 'PENDING',
+        createdAt: new Date().toISOString().split('T')[0],
+        installments: (insRows || installmentsToInsert).map((ins: any) => ({
+          id: ins.id,
+          creditId: ins.credit_id,
+          installmentNumber: ins.installment_number,
+          dueDate: ins.due_date,
+          capitalAmount: ins.capital_amount,
+          interestAmount: ins.interest_amount,
+          totalAmount: ins.total_amount,
+          paidAmount: 0,
+          status: 'PENDING',
+        })),
+      };
+    } catch (err) {
+      console.error('Exception in createCredit:', err);
+      return null;
+    }
+  },
+
+  async payInstallment(params: {
+    creditId: string;
+    installmentId?: string;
+    amount: number;
+    paymentMethod: string;
+    notes?: string;
+  }): Promise<{ success: boolean; receiptNumber?: string; message: string }> {
+    try {
+      const receiptNo = `REC-${Math.floor(100000 + Math.random() * 900000)}`;
+
+      // 1. Fetch all installments for this credit
+      const { data: allIns, error: allErr } = await supabase
+        .from('credit_installments')
+        .select('*')
+        .eq('credit_id', params.creditId)
+        .order('installment_number', { ascending: true });
+
+      if (allErr || !allIns || allIns.length === 0) {
+        return { success: false, message: 'No se encontraron cuotas para este crédito.' };
+      }
+
+      let remainingToApply = params.amount;
+
+      // Determine order of installments to pay
+      let targetInstallments = [...allIns];
+      if (params.installmentId) {
+        const startIdx = allIns.findIndex((i) => i.id === params.installmentId);
+        if (startIdx >= 0) {
+          targetInstallments = [...allIns.slice(startIdx), ...allIns.slice(0, startIdx)];
+        }
+      }
+
+      for (const ins of targetInstallments) {
+        if (remainingToApply <= 0.001) break;
+        const total = Number(ins.total_amount) || 0;
+        const currentPaid = Number(ins.paid_amount) || 0;
+        const pending = Math.max(0, total - currentPaid);
+
+        if (pending <= 0.001) continue;
+
+        const payToThis = Math.min(pending, remainingToApply);
+        const newPaid = currentPaid + payToThis;
+        const newStatus = newPaid >= (total - 0.01) ? 'PAID' : 'PARTIAL';
+        remainingToApply -= payToThis;
+
+        await supabase
+          .from('credit_installments')
+          .update({
+            paid_amount: newPaid,
+            paid_date: new Date().toISOString(),
+            payment_method: params.paymentMethod,
+            receipt_number: receiptNo,
+            notes: params.notes || null,
+            status: newStatus,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', ins.id);
+      }
+
+      // 2. Re-fetch all installments to calculate total master balance
+      const { data: updatedAllIns } = await supabase
+        .from('credit_installments')
+        .select('paid_amount, total_amount, status')
+        .eq('credit_id', params.creditId);
+
+      const totalPaidAll = (updatedAllIns || []).reduce((sum, item) => sum + (Number(item.paid_amount) || 0), 0);
+
+      const { data: masterCredit } = await supabase
+        .from('credits')
+        .select('total_credit, customer_name, customer_doc, sale_id')
+        .eq('id', params.creditId)
+        .single();
+
+      const totalCreditVal = Number(masterCredit?.total_credit) || 0;
+      const newBalance = Math.max(0, totalCreditVal - totalPaidAll);
+      const masterStatus = newBalance <= 0.01 ? 'PAID' : 'PARTIAL';
+
+      await supabase
+        .from('credits')
+        .update({
+          amount_paid: totalPaidAll,
+          balance_pending: newBalance,
+          status: masterStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', params.creditId);
+
+      // If fully paid, also update corresponding sale status to COMPLETED
+      if (masterStatus === 'PAID' && masterCredit?.sale_id) {
+        await supabase
+          .from('sales')
+          .update({ status: 'COMPLETED' })
+          .eq('id', masterCredit.sale_id);
+      }
+
+      auditService.logAction({
+        action: 'ABONO DE CUOTA',
+        entityType: 'credits',
+        entityId: params.creditId,
+        description: `Abono de S/ ${params.amount.toFixed(2)} registrado para el cliente "${masterCredit?.customer_name || 'Cliente'}" (${params.paymentMethod}, Recibo: ${receiptNo})`,
+        details: {
+          receipt_number: receiptNo,
+          amount: params.amount,
+          payment_method: params.paymentMethod,
+          remaining_balance: newBalance,
+        },
+      });
+
+      return {
+        success: true,
+        receiptNumber: receiptNo,
+        message: `Abono de S/ ${params.amount.toFixed(2)} registrado exitosamente. Recibo: ${receiptNo}. Saldo pendiente: S/ ${newBalance.toFixed(2)}.`,
+      };
+    } catch (err: any) {
+      console.error('Exception in payInstallment:', err);
+      return { success: false, message: err?.message || 'Error al registrar abono.' };
+    }
+  },
+};
+
 
 

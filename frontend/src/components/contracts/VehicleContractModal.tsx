@@ -27,11 +27,11 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
   const [brands, setBrands] = useState<Brand[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [companyInfo, setCompanyInfo] = useState({
-    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'GRUPO K CONTRERAS S.A.C') : 'GRUPO K CONTRERAS S.A.C',
-    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'GRUPO K CONTRERAS S.A.C') : 'GRUPO K CONTRERAS S.A.C',
-    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '20613639030') : '20613639030',
-    address: 'Retamas',
-    phone: '+51 993 275 893',
+    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '') : '',
+    address: 'Sede Principal',
+    phone: '',
     logo_path: '',
     signature_path: '',
   });
@@ -44,7 +44,7 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
       } else {
         const today = new Date().toISOString().split('T')[0];
         setFormData({
-          contractNumber: '000158',
+          contractNumber: '000001',
           docType: 'CONTRATO',
           vehicleType: 'MOTOCICLETA',
           date: today,
@@ -77,11 +77,11 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
       settingsService.getTenantInfo().then((info) => {
         if (info && Object.keys(info).length > 0) {
           setCompanyInfo({
-            name: info.legal_name || info.name || 'GRUPO K CONTRERAS S.A.C',
-            tradeName: info.trade_name || info.name || 'GRUPO K CONTRERAS S.A.C',
-            ruc: info.ruc || '20613639030',
-            address: info.address || 'Retamas',
-            phone: info.phone || '+51 993 275 893',
+            name: info.legal_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+            tradeName: info.trade_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+            ruc: info.ruc || (typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '' : ''),
+            address: info.address || 'Sede Principal',
+            phone: info.phone || '',
             logo_path: info.logo_path || '',
             signature_path: info.signature_path || '',
           });
@@ -135,7 +135,7 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
 
     const isQuote = formData.docType === 'COTIZACION';
     const docTitle = isQuote ? 'COTIZACIÓN' : 'CONTRATO DE COMPRA VENTA';
-    const company = companyInfo.tradeName || companyInfo.name || 'GRUPO K CONTRERAS S.A.C';
+    const company = companyInfo.tradeName || companyInfo.name || 'EMPRESA';
     const date = formData.date || new Date().toISOString().split('T')[0];
 
     let pdfLink = '';
@@ -813,15 +813,15 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
                       <img src={companyInfo.logo_path} alt="Logo" style={{ maxHeight: '44px', maxWidth: '145px', objectFit: 'contain' }} />
                     ) : (
                       <div style={{ fontWeight: 900, fontSize: '18px', letterSpacing: '-0.02em', color: '#b91c1c' }}>
-                        {companyInfo.tradeName || 'GRUPO K CONTRERAS S.A.C'}
+                        {companyInfo.tradeName || companyInfo.name || 'EMPRESA'}
                       </div>
                     )}
                     <div style={{ fontSize: '13px', fontWeight: 900, color: '#b91c1c', textTransform: 'uppercase' }}>
-                      {companyInfo.tradeName || companyInfo.name || 'GRUPO K CONTRERAS S.A.C'}
+                      {companyInfo.tradeName || companyInfo.name || 'EMPRESA'}
                     </div>
                   </div>
                   <div style={{ fontSize: '10px', color: '#475569', fontWeight: 600 }}>
-                    {companyInfo.name} • RUC N° {companyInfo.ruc}
+                    {companyInfo.name} {companyInfo.ruc ? `• RUC N° ${companyInfo.ruc}` : ''}
                   </div>
                 </div>
 
@@ -1030,7 +1030,7 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
                 )}
                 <div style={{ borderTop: '1.5px solid #000', width: '80%', margin: '0 auto 5px' }} />
                 <div style={{ fontWeight: 900, fontSize: '11px', textTransform: 'uppercase' }}>
-                  {companyInfo.tradeName || 'GRUPO K CONTRERAS S.A.C'}
+                  {companyInfo.tradeName || companyInfo.name || 'EMPRESA'}
                 </div>
                 <div style={{ fontSize: '9px', color: '#64748b', fontWeight: 600, marginTop: '1px' }}>Concesionario Autorizado</div>
               </div>
@@ -1041,7 +1041,7 @@ export const VehicleContractModal: React.FC<VehicleContractModalProps> = ({
                 <div style={{ fontWeight: 900, fontSize: '11px', textTransform: 'uppercase' }}>
                   COMPRADOR
                 </div>
-                <div style={{ fontSize: '9px', color: '#64748b', fontWeight: 600, marginTop: '1px' }}>DNI / RUC N° {formData.customerDoc || '60413282'}</div>
+                <div style={{ fontSize: '9px', color: '#64748b', fontWeight: 600, marginTop: '1px' }}>DNI / RUC N° {formData.customerDoc || ''}</div>
               </div>
             </div>
           </div>

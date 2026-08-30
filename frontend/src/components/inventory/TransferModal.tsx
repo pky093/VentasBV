@@ -1,6 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRightLeft, Building2, Package, Clock, AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react';
-import { Modal, Button, SuggestionChip } from '../ui';
+import {
+  ArrowRightLeft,
+  Building2,
+  Package,
+  Clock,
+  AlertTriangle,
+  CheckCircle2,
+  Sparkles,
+  ArrowRight,
+  Plus,
+  Minus,
+  Layers,
+  Check,
+} from 'lucide-react';
+import { Modal, Button, SuggestionChip, Badge } from '../ui';
 import { Product, Branch, inventoryService } from '../../lib/db-services';
 import Swal from 'sweetalert2';
 
@@ -65,9 +78,10 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     }
   }, [isOpen, preselectedProduct, targetBranchId, branches, products]);
 
-  // Source branch stock for selected product
+  // Source and target branch stock for selected product
   const sourceBranchStock = selectedProduct?.branchStocks?.find((bs) => bs.branchId === sourceBranchId)?.stock ?? 0;
   const targetBranchStock = selectedProduct?.branchStocks?.find((bs) => bs.branchId === destBranchId)?.stock ?? 0;
+  const resultingDestStock = targetBranchStock + (Number(transferQty) || 0);
 
   const handleProductChange = (prodId: string) => {
     setSelectedProductId(prodId);
@@ -84,27 +98,31 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     e.preventDefault();
 
     if (!selectedProduct) {
-      alert('Selecciona un producto válido.');
+      Swal.fire('Atención', 'Selecciona un producto válido.', 'warning');
       return;
     }
 
     if (!sourceBranchId || !destBranchId) {
-      alert('Debes seleccionar la sede de origen y la sede de destino.');
+      Swal.fire('Atención', 'Debes seleccionar la sede de origen y la sede de destino.', 'warning');
       return;
     }
 
     if (sourceBranchId === destBranchId) {
-      alert('La sede de origen y destino deben ser diferentes.');
+      Swal.fire('Atención', 'La sede de origen y destino deben ser diferentes.', 'warning');
       return;
     }
 
     if (transferQty <= 0) {
-      alert('Ingresa una cantidad mayor a 0.');
+      Swal.fire('Atención', 'Ingresa una cantidad mayor a 0.', 'warning');
       return;
     }
 
     if (sourceBranchStock < transferQty) {
-      alert(`La sede de origen solo cuenta con ${sourceBranchStock} unidades disponibles.`);
+      Swal.fire(
+        'Stock Insuficiente',
+        `La sede de origen solo cuenta con ${sourceBranchStock} unidades disponibles de "${selectedProduct.name}".`,
+        'warning'
+      );
       return;
     }
 
@@ -128,20 +146,29 @@ export const TransferModal: React.FC<TransferModalProps> = ({
       if (ok) {
         Swal.fire({
           title: '¡Traspaso Programado!',
-          html: `Se han traspasado <b>${transferQty} unid.</b> de <b>${selectedProduct.name}</b> desde <b>${sourceBranch?.name}</b> hacia <b>${destBranch?.name}</b>.<br/><br/><span class="text-xs text-blue-600 font-bold">Tiempo estimado de entrega: ${estimatedDays} día(s)</span>`,
+          html: `
+            <div style="text-align:center; padding: 4px;">
+              <p style="font-size:14px; margin-bottom:8px;">Se programó el traslado de <b>${transferQty} unid.</b> de <b>${selectedProduct.name}</b></p>
+              <div style="display:inline-flex; align-items:center; gap:8px; background:var(--bg-surface-hover); padding:6px 14px; border-radius:10px; border:1px solid var(--border-color); font-size:12px; font-weight:bold;">
+                <span>${sourceBranch?.name}</span>
+                <span style="color:var(--primary-600); font-size:16px;">➔</span>
+                <span>${destBranch?.name}</span>
+              </div>
+              <p style="font-size:12px; color:var(--text-secondary); margin-top:10px;">Tiempo estimado de llegada: <b>${estimatedDays} día(s)</b></p>
+            </div>
+          `,
           icon: 'success',
-          confirmButtonColor: '#2563eb',
-          background: 'var(--bg-surface)',
-          color: 'var(--text-primary)',
+          timer: 3000,
+          showConfirmButton: false,
         });
         onClose();
         if (onSuccess) onSuccess();
       } else {
-        alert('Error al registrar el traspaso en la base de datos.');
+        Swal.fire('Error', 'Error al registrar el traspaso en la base de datos.', 'error');
       }
     } catch (err) {
       console.error('Error enviando traspaso:', err);
-      alert('Ocurrió un error inesperado al procesar el traspaso.');
+      Swal.fire('Error', 'Ocurrió un error inesperado al procesar el traspaso.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -154,140 +181,188 @@ export const TransferModal: React.FC<TransferModalProps> = ({
       title="Solicitar / Programar Traspaso entre Sedes"
       size="lg"
     >
-      <form onSubmit={handleTransferSubmit} className="space-y-5">
-        {/* PRODUCT SELECTOR */}
-        <div className="form-group">
-          <label className="form-label font-bold flex items-center gap-1.5">
-            <Package size={16} className="text-primary-600" /> Producto a Traspasar
-          </label>
+      <form onSubmit={handleTransferSubmit} className="space-y-4">
+        {/* 1. SELECCIÓN DE PRODUCTO */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-primary flex items-center gap-1.5">
+              <Package size={15} className="text-primary-600" />
+              Producto a Traspasar
+            </label>
+            <span className="text-[11px] font-medium text-secondary">
+              Stock Total: <strong className="text-primary font-bold">{selectedProduct?.stock ?? 0} unid.</strong>
+            </span>
+          </div>
           <select
-            className="form-control"
+            className="form-control text-xs sm:text-sm font-medium"
             value={selectedProductId}
             onChange={(e) => handleProductChange(e.target.value)}
             required
           >
             {products.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.code} - {p.name} ({p.brand})
+                {p.code ? `[${p.code}] ` : ''}{p.name} {p.brand ? `• ${p.brand}` : ''} (Stock: {p.stock})
               </option>
             ))}
           </select>
-        </div>
-
-        {/* BRANCH STOCKS BREAKDOWN BANNER */}
-        {selectedProduct?.branchStocks && selectedProduct.branchStocks.length > 0 && (
-          <div className="p-3 bg-surface/70 border border-color rounded-xl">
-            <div className="text-xs font-bold text-secondary mb-2 flex items-center gap-1">
-              <Building2 size={14} /> Stock actual por Sede:
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {/* Sede Stock Breakdown list as simple inline text */}
+          {selectedProduct?.branchStocks && selectedProduct.branchStocks.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap text-[11px] text-secondary pt-0.5">
+              <span className="font-semibold text-secondary flex items-center gap-1">
+                <Building2 size={12} className="text-primary-600" /> Por sede:
+              </span>
               {selectedProduct.branchStocks.map((bs) => (
-                <div
+                <span
                   key={bs.branchId}
-                  className={`p-2 rounded-lg text-xs border ${
-                    bs.stock > 0
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
-                      : 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300'
+                  className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium ${
+                    bs.branchId === sourceBranchId
+                      ? 'bg-primary-50 dark:bg-primary-950/40 text-primary-700 dark:text-primary-300 font-bold border border-primary-200 dark:border-primary-800'
+                      : 'bg-surface-hover text-secondary'
                   }`}
                 >
-                  <div className="font-bold truncate">{bs.branchName}</div>
-                  <div className="font-mono text-sm">{bs.stock} unid.</div>
-                </div>
+                  {bs.branchName}: <strong className="font-mono">{bs.stock} unid.</strong>
+                </span>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* ORIGIN & TARGET BRANCH SELECTORS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="form-group">
-            <label className="form-label font-bold text-xs">Sede Origen (Provee Stock)</label>
+        {/* 2. SEDES DE ORIGEN Y DESTINO */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+          {/* ORIGIN BRANCH */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-primary flex items-center justify-between">
+              <span>Sede Origen (Salida)</span>
+              <span className="text-[11px] font-medium text-primary-600 font-mono">
+                Disp: {sourceBranchStock} unid.
+              </span>
+            </label>
             <select
-              className="form-control text-xs font-semibold"
+              className="form-control text-xs font-medium"
               value={sourceBranchId}
               onChange={(e) => setSourceBranchId(e.target.value)}
               required
             >
-              {branches.map((b) => (
-                <option key={b.id} value={b.id} disabled={b.id === destBranchId}>
-                  🏬 {b.name} {b.id === destBranchId ? '(Destino actual)' : ''}
-                </option>
-              ))}
+              {branches.map((b) => {
+                const bs = selectedProduct?.branchStocks?.find((s) => s.branchId === b.id)?.stock ?? 0;
+                return (
+                  <option key={b.id} value={b.id} disabled={b.id === destBranchId}>
+                    {b.name} ({bs} disponibles)
+                  </option>
+                );
+              })}
             </select>
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 block font-semibold">
-              Disponible en origen: {sourceBranchStock} unid.
-            </span>
           </div>
 
-          <div className="form-group">
-            <label className="form-label font-bold text-xs">Sede Destino (Recibe Stock)</label>
+          {/* DESTINATION BRANCH */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-primary flex items-center justify-between">
+              <span>Sede Destino (Ingreso)</span>
+              <span className="text-[11px] font-medium text-secondary font-mono">
+                Actual: {targetBranchStock} ➔ <strong className="text-primary-600">{resultingDestStock}</strong>
+              </span>
+            </label>
             <select
-              className="form-control text-xs font-semibold"
+              className="form-control text-xs font-medium"
               value={destBranchId}
               onChange={(e) => setDestBranchId(e.target.value)}
               required
             >
               {branches.map((b) => (
                 <option key={b.id} value={b.id} disabled={b.id === sourceBranchId}>
-                  🏬 {b.name} {b.id === sourceBranchId ? '(Origen actual)' : ''}
+                  {b.name} {b.id === sourceBranchId ? '(Origen actual)' : ''}
                 </option>
               ))}
             </select>
-            <span className="text-[11px] text-secondary mt-1 block">
-              Stock actual en destino: {targetBranchStock} unid.
-            </span>
           </div>
         </div>
 
-        {/* QUANTITY & ESTIMATED DAYS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="form-group">
-            <label className="form-label font-bold text-xs">Cantidad a Traspasar</label>
-            <input
-              type="number"
-              min="1"
-              max={sourceBranchStock > 0 ? sourceBranchStock : 9999}
-              className="form-control font-bold"
-              value={transferQty}
-              onChange={(e) => setTransferQty(Math.max(1, parseInt(e.target.value) || 1))}
-              required
-            />
+        {/* 3. CANTIDAD Y DÍAS ESTIMADOS */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+          <div className="space-y-1">
+            <div className="flex justify-between items-center text-xs">
+              <label className="font-bold text-primary">Cantidad a Traspasar</label>
+              {sourceBranchStock > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTransferQty(sourceBranchStock)}
+                  className="text-[10.5px] text-primary-600 hover:underline font-semibold"
+                >
+                  Máx: {sourceBranchStock} unid.
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTransferQty((q) => Math.max(1, q - 1))}
+                className="w-9 h-9 rounded-lg border border-border-color bg-surface hover:bg-surface-hover flex items-center justify-center text-primary font-bold active:scale-95 transition-transform shrink-0"
+              >
+                <Minus size={15} />
+              </button>
+              <input
+                type="number"
+                min="1"
+                max={sourceBranchStock > 0 ? sourceBranchStock : 9999}
+                className="form-control font-bold text-center text-sm"
+                value={transferQty}
+                onChange={(e) => setTransferQty(Math.max(1, parseInt(e.target.value) || 1))}
+                required
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setTransferQty((q) => (sourceBranchStock > 0 ? Math.min(sourceBranchStock, q + 1) : q + 1))
+                }
+                className="w-9 h-9 rounded-lg border border-border-color bg-surface hover:bg-surface-hover flex items-center justify-center text-primary font-bold active:scale-95 transition-transform shrink-0"
+              >
+                <Plus size={15} />
+              </button>
+            </div>
+            {sourceBranchStock > 0 && transferQty > sourceBranchStock && (
+              <span className="text-[11px] text-danger-600 font-semibold mt-0.5 block">
+                ⚠ Excede el stock disponible en la sede de origen ({sourceBranchStock} unid.)
+              </span>
+            )}
           </div>
 
-          <div className="form-group">
-            <label className="form-label font-bold text-xs flex items-center gap-1">
-              <Clock size={14} className="text-primary-600" /> Días Estimados para la Entrega
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-primary flex items-center gap-1">
+              <Clock size={13} className="text-primary-600" />
+              Tiempo Estimado de Entrega
             </label>
-            <input
-              type="number"
-              min="1"
-              max="30"
-              className="form-control font-bold text-primary-600"
-              value={estimatedDays}
-              onChange={(e) => setEstimatedDays(Math.max(1, parseInt(e.target.value) || 1))}
-              placeholder="Ej. 2 días"
-              required
-            />
-            <span className="text-[11px] text-secondary mt-1 block">
-              Indica al cliente o vendedor el tiempo de llegada estimado.
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="1"
+                max="30"
+                className="form-control font-bold text-sm"
+                value={estimatedDays}
+                onChange={(e) => setEstimatedDays(Math.max(1, parseInt(e.target.value) || 1))}
+                required
+              />
+              <span className="text-xs font-medium text-secondary shrink-0">días hábiles</span>
+            </div>
+            <span className="text-[10.5px] text-secondary block">
+              Tiempo estimado de traslado para seguimiento.
             </span>
           </div>
         </div>
 
-        {/* REASON / NOTES */}
-        <div className="form-group">
-          <label className="form-label font-bold text-xs">Motivo u Observación del Traspaso</label>
+        {/* 4. MOTIVO U OBSERVACIÓN */}
+        <div className="space-y-1.5 pt-1">
+          <label className="text-xs font-bold text-primary">Motivo u Observación del Traspaso</label>
           <textarea
             className="form-control text-xs"
             rows={2}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Ej. Solicitud urgente por venta pendiente en mostrador"
+            placeholder="Ej. Reabastecimiento urgente por venta pendiente en mostrador"
           />
           {/* Motivo suggestions */}
-          <div className="flex gap-1.5 flex-wrap items-center pt-2">
+          <div className="flex gap-1.5 flex-wrap items-center pt-1">
             <span className="text-[11px] font-semibold text-secondary flex items-center gap-1">
-              <Sparkles size={13} className="text-primary-600 dark:text-primary-400" />
+              <Sparkles size={12} className="text-primary-600 dark:text-primary-400" />
               Sugerencias:
             </span>
             {[
@@ -301,25 +376,26 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                 label={chip}
                 selected={reason === chip}
                 onClick={() => setReason(chip)}
-                size="sm"
+                size="xs"
               />
             ))}
           </div>
         </div>
 
-        {/* ACTION BUTTONS */}
-        <div className="flex justify-end gap-3 pt-2">
+        {/* BOTONES DE ACCIÓN */}
+        <div className="flex justify-end gap-2.5 pt-3 border-t border-border-color">
           <Button variant="secondary" onClick={onClose} type="button">
             Cancelar
           </Button>
-      <Button
-        variant="primary"
-        type="submit"
-        loading={isSubmitting}
-        icon={<ArrowRightLeft size={16} />}
-      >
-        Confirmar y Registrar Traspaso
-      </Button>
+          <Button
+            variant="primary"
+            type="submit"
+            loading={isSubmitting}
+            icon={<ArrowRightLeft size={15} />}
+            disabled={sourceBranchStock <= 0 || transferQty > sourceBranchStock}
+          >
+            Confirmar y Registrar Traspaso
+          </Button>
         </div>
       </form>
     </Modal>

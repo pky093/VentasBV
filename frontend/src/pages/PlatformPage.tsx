@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -17,76 +17,15 @@ import {
   Radio,
   Lock,
   Info,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { Button, Field, PageHeader } from '../components/ui';
 import { TenantCard } from '../components/platform/TenantCard';
+import { tenantsService, TenantCompany, TenantFormValues } from '../lib/db-services';
 import Swal from 'sweetalert2';
 
-export interface TenantCompany {
-  id: string;
-  name: string;
-  legalName?: string;
-  ruc: string;
-  address?: string;
-  phone?: string;
-  adminEmail: string;
-  adminName: string;
-  plan: 'ENTERPRISE' | 'PRO' | 'BASIC';
-  active: boolean;
-  createdAt: string;
-
-  // SUNAT Electronic Invoicing (CPE) Configuration
-  sunatEnv: 'BETA' | 'PRODUCTION';
-  solUser?: string;
-  solPassword?: string;
-  certPassword?: string;
-  certFileName?: string;
-  clientId?: string;
-  clientSecret?: string;
-  establishmentCode?: string;
-  invoiceSeries?: string;
-  receiptSeries?: string;
-  creditNoteSeries?: string;
-  debitNoteSeries?: string;
-  guiaSeries?: string;
-  ubigeo?: string;
-  urbanization?: string;
-  department?: string;
-  province?: string;
-  district?: string;
-}
-
-interface TenantFormValues {
-  name: string;
-  legalName: string;
-  ruc: string;
-  plan: 'ENTERPRISE' | 'PRO' | 'BASIC';
-  address: string;
-  phone: string;
-  adminName: string;
-  adminEmail: string;
-  adminPassword?: string;
-
-  // SUNAT fields
-  sunatEnv: 'BETA' | 'PRODUCTION';
-  solUser: string;
-  solPassword: string;
-  certPassword: string;
-  certFileName: string;
-  clientId: string;
-  clientSecret: string;
-  establishmentCode: string;
-  invoiceSeries: string;
-  receiptSeries: string;
-  creditNoteSeries: string;
-  debitNoteSeries: string;
-  guiaSeries: string;
-  ubigeo: string;
-  urbanization: string;
-  department: string;
-  province: string;
-  district: string;
-}
+export type { TenantCompany };
 
 type StatusFilter = 'ALL' | 'ACTIVE' | 'DISABLED';
 type FormTab = 'general' | 'sunat' | 'admin';
@@ -128,89 +67,26 @@ export default function PlatformPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [activeTab, setActiveTab] = useState<FormTab>('general');
+  const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const [tenants, setTenants] = useState<TenantCompany[]>([
-    {
-      id: 'tenant-1',
-      name: 'MotoRS S.A.C.',
-      legalName: 'MotoRS Perú S.A.C.',
-      ruc: '20998877665',
-      address: 'Av. Los Próceres 1240, Surco',
-      phone: '01 445 6789',
-      adminEmail: 'admin@motors.pe',
-      adminName: 'Admin MotoRS',
-      plan: 'ENTERPRISE',
-      active: true,
-      createdAt: '2026-08-16',
-      sunatEnv: 'PRODUCTION',
-      solUser: 'MODDATOS',
-      solPassword: '••••••••',
-      certPassword: '••••••••',
-      certFileName: 'certificado_motors_2026.pfx',
-      establishmentCode: '0000',
-      invoiceSeries: 'F001',
-      receiptSeries: 'B001',
-      creditNoteSeries: 'FC01',
-      debitNoteSeries: 'FD01',
-      guiaSeries: 'T001',
-      ubigeo: '150140',
-      department: 'Lima',
-      province: 'Lima',
-      district: 'Santiago de Surco',
-    },
-    {
-      id: 'tenant-2',
-      name: 'Importaciones y Novedades SAC',
-      legalName: 'Importaciones Novedades del Perú S.A.C.',
-      ruc: '20123456789',
-      address: 'Jr. Cuzco 452, Cercado de Lima',
-      phone: '01 332 9988',
-      adminEmail: 'contacto@novedades.pe',
-      adminName: 'Carlos Admin',
-      plan: 'PRO',
-      active: false,
-      createdAt: '2026-08-10',
-      sunatEnv: 'BETA',
-      solUser: 'MODDATOS',
-      solPassword: '••••••••',
-      establishmentCode: '0000',
-      invoiceSeries: 'F001',
-      receiptSeries: 'B001',
-      creditNoteSeries: 'FC01',
-      debitNoteSeries: 'FD01',
-      guiaSeries: 'T001',
-      ubigeo: '150101',
-      department: 'Lima',
-      province: 'Lima',
-      district: 'Lima',
-    },
-    {
-      id: 'tenant-3',
-      name: 'Comercial San Juan E.I.R.L.',
-      legalName: 'Comercial San Juan E.I.R.L.',
-      ruc: '20554433221',
-      address: 'Av. San Juan 890, SJM',
-      phone: '01 276 4321',
-      adminEmail: 'admin@sanjuan.pe',
-      adminName: 'Juan Pérez',
-      plan: 'BASIC',
-      active: true,
-      createdAt: '2026-08-01',
-      sunatEnv: 'BETA',
-      solUser: 'MODDATOS',
-      solPassword: '••••••••',
-      establishmentCode: '0000',
-      invoiceSeries: 'F001',
-      receiptSeries: 'B001',
-      creditNoteSeries: 'FC01',
-      debitNoteSeries: 'FD01',
-      guiaSeries: 'T001',
-      ubigeo: '150133',
-      department: 'Lima',
-      province: 'Lima',
-      district: 'San Juan de Miraflores',
-    },
-  ]);
+  const [tenants, setTenants] = useState<TenantCompany[]>([]);
+
+  const loadTenants = async () => {
+    setLoading(true);
+    try {
+      const data = await tenantsService.getTenants();
+      setTenants(data);
+    } catch (err) {
+      console.error('Error loading tenants:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTenants();
+  }, []);
 
   const form = useForm<TenantFormValues>({
     defaultValues: defaultFormValues,
@@ -261,93 +137,57 @@ export default function PlatformPage() {
     }
   };
 
-  const onSubmit = (values: TenantFormValues) => {
-    if (editingId) {
-      setTenants((prev) =>
-        prev.map((t) =>
-          t.id === editingId
-            ? {
-                ...t,
-                name: values.name,
-                legalName: values.legalName,
-                plan: values.plan,
-                address: values.address,
-                phone: values.phone,
-                adminName: values.adminName,
-                adminEmail: values.adminEmail,
-                sunatEnv: values.sunatEnv,
-                solUser: values.solUser,
-                solPassword: values.solPassword,
-                certPassword: values.certPassword,
-                certFileName: values.certFileName,
-                clientId: values.clientId,
-                clientSecret: values.clientSecret,
-                establishmentCode: values.establishmentCode,
-                invoiceSeries: values.invoiceSeries,
-                receiptSeries: values.receiptSeries,
-                creditNoteSeries: values.creditNoteSeries,
-                debitNoteSeries: values.debitNoteSeries,
-                guiaSeries: values.guiaSeries,
-                ubigeo: values.ubigeo,
-                urbanization: values.urbanization,
-                department: values.department,
-                province: values.province,
-                district: values.district,
-              }
-            : t
-        )
-      );
+  const onSubmit = async (values: TenantFormValues) => {
+    setIsSaving(true);
+    try {
+      if (editingId) {
+        const ok = await tenantsService.updateTenant(editingId, values);
+        if (ok) {
+          await loadTenants();
+          Swal.fire({
+            title: '¡Organización y CPE Actualizados!',
+            html: `Se guardaron los datos y credenciales SUNAT para <b>${values.name}</b> exitosamente.`,
+            icon: 'success',
+            confirmButtonColor: '#f59e0b',
+          });
+          resetForm();
+        } else {
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo actualizar la empresa en la base de datos.',
+            icon: 'error',
+          });
+        }
+      } else {
+        const newTenant = await tenantsService.createTenant(values);
+        if (newTenant) {
+          await loadTenants();
+          Swal.fire({
+            title: '¡Empresa y Configuración SUNAT Creadas!',
+            html: `Se registró <b>${values.name}</b> (RUC: ${values.ruc}) con ambiente <b>${values.sunatEnv}</b>.<br/><br/>
+                   <span style="font-size:12px; color:#f59e0b; font-weight:bold;">Admin Inicial:</span><br/>
+                   <code style="font-size:12px;">${values.adminEmail}</code> | <code style="font-size:12px;">Pass: ${values.adminPassword || '••••••••'}</code>`,
+            icon: 'success',
+            confirmButtonColor: '#f59e0b',
+          });
+          resetForm();
+        } else {
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo crear la empresa en la base de datos.',
+            icon: 'error',
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error('Error in onSubmit:', err);
       Swal.fire({
-        title: '¡Organización y CPE Actualizados!',
-        html: `Se guardaron los datos y credenciales SUNAT para <b>${values.name}</b> exitosamente.`,
-        icon: 'success',
-        confirmButtonColor: '#f59e0b',
+        title: 'Error inesperado',
+        text: err?.message || 'Ocurrió un problema al procesar los datos.',
+        icon: 'error',
       });
-      resetForm();
-    } else {
-      const newTenant: TenantCompany = {
-        id: `tenant-${Date.now()}`,
-        name: values.name,
-        legalName: values.legalName,
-        ruc: values.ruc,
-        plan: values.plan,
-        address: values.address,
-        phone: values.phone,
-        adminName: values.adminName,
-        adminEmail: values.adminEmail,
-        active: true,
-        createdAt: new Date().toISOString().split('T')[0],
-        sunatEnv: values.sunatEnv,
-        solUser: values.solUser,
-        solPassword: values.solPassword,
-        certPassword: values.certPassword,
-        certFileName: values.certFileName,
-        clientId: values.clientId,
-        clientSecret: values.clientSecret,
-        establishmentCode: values.establishmentCode,
-        invoiceSeries: values.invoiceSeries,
-        receiptSeries: values.receiptSeries,
-        creditNoteSeries: values.creditNoteSeries,
-        debitNoteSeries: values.debitNoteSeries,
-        guiaSeries: values.guiaSeries,
-        ubigeo: values.ubigeo,
-        urbanization: values.urbanization,
-        department: values.department,
-        province: values.province,
-        district: values.district,
-      };
-
-      setTenants((prev) => [newTenant, ...prev]);
-
-      Swal.fire({
-        title: '¡Empresa y Configuración SUNAT Creadas!',
-        html: `Se registró <b>${values.name}</b> (RUC: ${values.ruc}) con ambiente <b>${values.sunatEnv}</b>.<br/><br/>
-               <span style="font-size:12px; color:#f59e0b; font-weight:bold;">Admin Inicial:</span><br/>
-               <code style="font-size:12px;">${values.adminEmail}</code> | <code style="font-size:12px;">Pass: ${values.adminPassword || '••••••••'}</code>`,
-        icon: 'success',
-        confirmButtonColor: '#f59e0b',
-      });
-      resetForm();
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -365,19 +205,35 @@ export default function PlatformPage() {
       confirmButtonText: `Sí, ${actionLabel}`,
       cancelButtonText: 'Cancelar',
       confirmButtonColor: nextStatus ? '#10b981' : '#ef4444',
-    }).then((result) => {
+    }).then(async (result) => {
       if (result.isConfirmed) {
-        setTenants((prev) =>
-          prev.map((t) => (t.id === tenant.id ? { ...t, active: nextStatus } : t))
-        );
-        Swal.fire({
-          title: nextStatus ? '¡Empresa Activada!' : '¡Empresa Suspendida!',
-          icon: 'success',
-          timer: 1500,
-          showConfirmButton: false,
-        });
+        const ok = await tenantsService.toggleTenantStatus(tenant.id, nextStatus, tenant.name);
+        if (ok) {
+          await loadTenants();
+          Swal.fire({
+            title: nextStatus ? '¡Empresa Activada!' : '¡Empresa Suspendida!',
+            icon: 'success',
+            timer: 1500,
+            showConfirmButton: false,
+          });
+        } else {
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo cambiar el estado de la empresa.',
+            icon: 'error',
+          });
+        }
       }
     });
+  };
+
+  const handleEnterTenant = (tenant: TenantCompany) => {
+    localStorage.setItem('tenant_id', tenant.id);
+    localStorage.setItem('tenant_name', tenant.name);
+    localStorage.setItem('tenant_ruc', tenant.ruc);
+    localStorage.setItem('company_name', tenant.name);
+    localStorage.setItem('company_ruc', tenant.ruc);
+    navigate('/app');
   };
 
   const handleLogout = () => {
@@ -468,7 +324,7 @@ export default function PlatformPage() {
               <div>
                 <h2>Todas las empresas</h2>
                 <span>
-                  {filteredTenants.length} de {tenants.length} registradas
+                  {loading ? 'Cargando...' : `${filteredTenants.length} de ${tenants.length} registradas`}
                 </span>
               </div>
 
@@ -493,12 +349,31 @@ export default function PlatformPage() {
                   <option value="ACTIVE">Habilitadas</option>
                   <option value="DISABLED">Suspendidas</option>
                 </select>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={loadTenants}
+                  disabled={loading}
+                  icon={<RefreshCw size={14} className={loading ? 'animate-spin' : ''} />}
+                  title="Recargar lista de empresas"
+                >
+                  Actualizar
+                </Button>
               </div>
             </div>
 
             {/* LEDGER OF CARDS (Using TenantCard Component) */}
             <div className="platform-ledger">
-              {filteredTenants.length > 0 ? (
+              {loading ? (
+                <div className="p-12 text-center bg-surface rounded-2xl border border-color flex flex-col items-center justify-center gap-3">
+                  <Loader2 size={32} className="animate-spin text-amber-500" />
+                  <p className="text-sm font-semibold text-secondary">
+                    Cargando organizaciones y credenciales SUNAT...
+                  </p>
+                </div>
+              ) : filteredTenants.length > 0 ? (
                 filteredTenants.map((tenant) => (
                   <TenantCard
                     key={tenant.id}
@@ -506,6 +381,7 @@ export default function PlatformPage() {
                     isEditing={editingId === tenant.id}
                     onEdit={startEditing}
                     onToggleStatus={toggleStatus}
+                    onEnterTenant={handleEnterTenant}
                   />
                 ))
               ) : (
@@ -513,7 +389,7 @@ export default function PlatformPage() {
                   <AlertCircle size={32} className="mx-auto text-muted mb-2" />
                   <h3 className="text-sm font-bold text-primary">No se encontraron empresas</h3>
                   <p className="text-xs text-secondary mt-1">
-                    Prueba cambiando el texto de búsqueda o el filtro de estado.
+                    Prueba cambiando el texto de búsqueda o registra una nueva organización a la derecha.
                   </p>
                 </div>
               )}
@@ -860,12 +736,17 @@ export default function PlatformPage() {
               {/* Form Action Buttons */}
               <div className="platform-form-actions">
                 {editingId && (
-                  <Button type="button" variant="ghost" onClick={resetForm}>
+                  <Button type="button" variant="ghost" onClick={resetForm} disabled={isSaving}>
                     Cancelar
                   </Button>
                 )}
-                <Button type="submit" variant="primary" icon={<Plus size={16} />}>
-                  {editingId ? 'Guardar Cambios' : 'Crear Empresa & Admin'}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={isSaving}
+                  icon={isSaving ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                >
+                  {isSaving ? 'Guardando...' : editingId ? 'Guardar Cambios' : 'Crear Empresa & Admin'}
                 </Button>
               </div>
             </form>

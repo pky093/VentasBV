@@ -538,7 +538,7 @@ export function Field({
   );
 }
 
-// Suggestion & Stock Chip Component (Matches Badge Pill Style)
+// Suggestion & Stock Chip Component
 export interface SuggestionChipProps {
   label: string;
   count?: number | string;
@@ -565,20 +565,19 @@ export const SuggestionChip: React.FC<SuggestionChipProps> = ({
       onClick={onClick}
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
-      className={`badge badge-primary ${
-        isClickable ? 'cursor-pointer hover:opacity-90 active:scale-95 transition-transform' : ''
-      } ${
-        selected ? 'ring-2 ring-primary-500 font-extrabold shadow-xs' : ''
-      } ${className}`}
+      className={`inline-flex items-center gap-1 rounded-lg border text-xs font-semibold transition-all ${
+        selected
+          ? 'bg-primary-50 dark:bg-primary-950/50 border-primary-500 text-primary-700 dark:text-primary-300 shadow-xs'
+          : 'bg-surface hover:bg-surface-hover border-border-color text-secondary hover:text-primary'
+      } ${isClickable ? 'cursor-pointer active:scale-95' : ''} ${className}`}
       style={{
-        padding: size === 'sm' ? '0.35rem 0.85rem' : '0.25rem 0.75rem',
-        fontSize: size === 'sm' ? '0.8125rem' : '0.75rem',
+        padding: size === 'sm' ? '0.35rem 0.75rem' : '0.25rem 0.6rem',
       }}
     >
-      {icon && <span className="inline-flex items-center mr-1">{icon}</span>}
+      {icon && <span className="inline-flex items-center mr-0.5">{icon}</span>}
       <span>{label}</span>
       {count !== undefined && (
-        <span className="font-mono ml-1 font-bold">
+        <span className="font-mono ml-1 font-bold opacity-80">
           {count}
         </span>
       )}

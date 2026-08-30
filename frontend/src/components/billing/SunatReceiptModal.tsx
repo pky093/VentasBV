@@ -37,15 +37,15 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
   const [printFormat, setPrintFormat] = useState<'TICKET' | 'A4'>('TICKET');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [companyInfo, setCompanyInfo] = useState({
-    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
-    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'Grupo K contreras S.A.C') : 'Grupo K contreras S.A.C',
-    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '20613639030') : '20613639030',
-    address: 'Retamas',
-    phone: '+51 993 275 893',
+    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '') : '',
+    address: 'Sede Principal',
+    phone: '',
     establishmentCode: '0000',
-    department: 'LA LIBERTAD',
-    province: 'PATAZ',
-    district: 'PARCOY',
+    department: 'LIMA',
+    province: 'LIMA',
+    district: 'LIMA',
     logo_path: '',
   });
 
@@ -54,15 +54,15 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
       settingsService.getTenantInfo().then((info) => {
         if (info && Object.keys(info).length > 0) {
           setCompanyInfo({
-            name: info.legal_name || info.name || 'Grupo K contreras S.A.C',
-            tradeName: info.trade_name || info.name || 'Grupo K contreras S.A.C',
-            ruc: info.ruc || '20613639030',
-            address: info.address || 'Retamas',
-            phone: info.phone || '+51 993 275 893',
+            name: info.legal_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+            tradeName: info.trade_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+            ruc: info.ruc || (typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '' : ''),
+            address: info.address || 'Sede Principal',
+            phone: info.phone || '',
             establishmentCode: info.establishment_code || '0000',
-            department: info.department || 'LA LIBERTAD',
-            province: info.province || 'PATAZ',
-            district: info.district || 'PARCOY',
+            department: info.department || 'LIMA',
+            province: info.province || 'LIMA',
+            district: info.district || 'LIMA',
             logo_path: info.logo_path || '',
           });
         }
@@ -77,14 +77,14 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
       const seqStr = String(invoice.sequence).padStart(8, '0');
       const igv = (invoice.total - invoice.total / 1.18).toFixed(2);
       const totalStr = invoice.total.toFixed(2);
-      const dateStr = invoice.date ? invoice.date.split(',')[0].trim() : '2026-08-23';
+      const dateStr = invoice.date ? invoice.date.split(',')[0].trim() : new Date().toISOString().split('T')[0];
       const custDocType = invoice.customerDoc && invoice.customerDoc.length === 11 ? '6' : '1';
       const custDocNum = invoice.customerDoc || '00000000';
       const hash = '8a9F+zX2qK9/LmQ0wE7YnRtP1uI=';
 
       // SUNAT standard QR string format:
       // RUC|TIPO_DOC|SERIE|NUMERO|IGV|TOTAL|FECHA|TIPO_DOC_CLIENTE|NUM_DOC_CLIENTE|HASH|
-      const ruc = companyInfo.ruc || '20613639030';
+      const ruc = companyInfo.ruc || (typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '20000000001' : '20000000001');
       const sunatQrPayload = `${ruc}|${docTypeCode}|${invoice.series}|${seqStr}|${igv}|${totalStr}|${dateStr}|${custDocType}|${custDocNum}|${hash}|`;
 
       QRCode.toDataURL(sunatQrPayload, {
@@ -120,25 +120,28 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
     (typeof window !== 'undefined'
       ? localStorage.getItem('auth_user') || localStorage.getItem('auth_username')
       : '') ||
-    'Niver Contreras';
+    'Vendedor';
 
   const branchName =
     invoice.branchName ||
     (typeof window !== 'undefined' ? localStorage.getItem('active_branch_name') : '') ||
     'Sede Principal';
 
-  const paymentMethod = invoice.paymentMethod
+  const isCredit = invoice.paymentCondition === 'CREDITO' || Boolean(invoice.creditInfo);
+  const paymentMethod = isCredit
+    ? 'Crédito'
+    : invoice.paymentMethod
     ? invoice.paymentMethod === 'CASH'
       ? 'Contado (Efectivo)'
       : invoice.paymentMethod === 'TRANSFER'
-      ? 'Transferencia Bancaria'
+      ? 'Contado (Transferencia)'
       : invoice.paymentMethod === 'CARD'
-      ? 'Tarjeta de Débito/Crédito'
+      ? 'Contado (Tarjeta)'
       : invoice.paymentMethod === 'YAPE'
-      ? 'Yape'
+      ? 'Contado (Yape)'
       : invoice.paymentMethod === 'PLIN'
-      ? 'Plin'
-      : invoice.paymentMethod
+      ? 'Contado (Plin)'
+      : `Contado (${invoice.paymentMethod})`
     : 'Contado (Efectivo)';
 
   const formatTabs = [
@@ -476,6 +479,34 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
                   SON: {totalInWords}
                 </div>
 
+                {/* Credit Information (SUNAT UBL 2.1 Compliance for Credit Sales) */}
+                {isCredit && invoice.creditInfo && (
+                  <div style={{ margin: '8px 0', padding: '6px 0', borderTop: '1px dashed #000', borderBottom: '1px dashed #000' }}>
+                    <div style={{ fontWeight: 800, fontSize: '10px', marginBottom: '4px' }}>
+                      INFORMACIÓN DEL CRÉDITO (SUNAT UBL 2.1):
+                    </div>
+                    {invoice.creditInfo.initialPayment > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px', marginBottom: '2px' }}>
+                        <span>Cuota inicial pagada:</span>
+                        <span style={{ fontWeight: 700 }}>S/ {invoice.creditInfo.initialPayment.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px', marginBottom: '4px' }}>
+                      <span>Monto neto pendiente de pago:</span>
+                      <span style={{ fontWeight: 700 }}>S/ {invoice.creditInfo.totalCredit.toFixed(2)}</span>
+                    </div>
+                    <div style={{ fontSize: '9.5px', fontWeight: 700, marginTop: '4px', marginBottom: '2px' }}>
+                      CUOTAS PROGRAMADAS ({invoice.creditInfo.installmentsCount}):
+                    </div>
+                    {invoice.creditInfo.installments.map((ins) => (
+                      <div key={ins.installmentNumber} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', padding: '1.5px 0' }}>
+                        <span>Cuota {ins.installmentNumber} ({ins.dueDate}):</span>
+                        <span style={{ fontWeight: 700 }}>S/ {ins.totalAmount.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* Dashed Line */}
                 <div className="dashed-line" style={{ borderBottom: '1px dashed #000', margin: '8px 0' }} />
 
@@ -629,6 +660,44 @@ export const SunatReceiptModal: React.FC<SunatReceiptModalProps> = ({
                     })}
                   </tbody>
                 </table>
+
+                {/* Si es venta al Crédito: Mostrar Cronograma de Cuotas (SUNAT UBL 2.1) */}
+                {isCredit && invoice.creditInfo && (
+                  <div style={{ margin: '14px 0', padding: '12px 16px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '11.5px', marginBottom: '8px', color: '#0f172a' }}>
+                      INFORMACIÓN DEL CRÉDITO Y CUOTAS PROGRAMADAS (SUNAT UBL 2.1)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', marginBottom: '10px' }}>
+                      <div style={{ padding: '6px 10px', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px' }}>
+                        <span style={{ color: '#64748b' }}>Cuota Inicial:</span> <strong style={{ color: '#0f172a' }}>S/ {invoice.creditInfo.initialPayment.toFixed(2)}</strong>
+                      </div>
+                      <div style={{ padding: '6px 10px', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px' }}>
+                        <span style={{ color: '#64748b' }}>Saldo Pendiente:</span> <strong style={{ color: '#0f172a' }}>S/ {invoice.creditInfo.totalCredit.toFixed(2)}</strong>
+                      </div>
+                      <div style={{ padding: '6px 10px', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px' }}>
+                        <span style={{ color: '#64748b' }}>N° de Cuotas:</span> <strong style={{ color: '#0f172a' }}>{invoice.creditInfo.installmentsCount}</strong>
+                      </div>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <thead>
+                        <tr style={{ background: '#e2e8f0', color: '#334155', fontWeight: 700 }}>
+                          <th style={{ padding: '5px 10px', textAlign: 'left' }}>Cuota</th>
+                          <th style={{ padding: '5px 10px', textAlign: 'left' }}>Vencimiento</th>
+                          <th style={{ padding: '5px 10px', textAlign: 'right' }}>Monto Cuota</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invoice.creditInfo.installments.map((ins) => (
+                          <tr key={ins.installmentNumber} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                            <td style={{ padding: '5px 10px', fontWeight: 600 }}>Cuota {ins.installmentNumber}</td>
+                            <td style={{ padding: '5px 10px' }}>{ins.dueDate}</td>
+                            <td style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 700 }}>S/ {ins.totalAmount.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {/* Bottom: Left QR + In Words / Right Totals */}
                 <div style={{ display: 'grid', gridTemplateColumns: '7fr 5fr', gap: '20px', alignItems: 'start', paddingTop: '8px', paddingBottom: '8px' }}>

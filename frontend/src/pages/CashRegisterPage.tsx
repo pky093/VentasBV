@@ -3,6 +3,7 @@ import { CreditCard, ArrowDownRight, ArrowUpRight, Lock, Unlock, DollarSign, Plu
 import { PageHeader, Button, Badge, Card, DataTable, Modal } from '../components/ui';
 import { useBranch } from '../context/BranchContext';
 import { auditService } from '../lib/db-services';
+import { getActiveTenantId } from '../lib/supabase';
 import Swal from 'sweetalert2';
 
 interface Movement {
@@ -16,13 +17,23 @@ interface Movement {
 export default function CashRegisterPage() {
   const { activeBranchId, activeBranch } = useBranch();
   const [isOpen, setIsOpen] = useState(true);
-  const [openingAmount, setOpeningAmount] = useState(200.00);
+  const [openingAmount, setOpeningAmount] = useState(0.00);
 
-  const [movements, setMovements] = useState<Movement[]>([
-    { id: '1', type: 'INCOME', amount: 650.00, reason: 'Venta V-000104 en efectivo', time: '15:40' },
-    { id: '2', type: 'EXPENSE', amount: 35.00, reason: 'Pago de flete local urgente', time: '13:10' },
-    { id: '3', type: 'INCOME', amount: 95.00, reason: 'Venta V-000102 en efectivo', time: '12:25' },
-  ]);
+  const getStorageKey = () => `ventasbv_cash_movs_${getActiveTenantId() || 'global'}_${activeBranchId || 'main'}`;
+
+  const [movements, setMovements] = useState<Movement[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`ventasbv_cash_movs_${getActiveTenantId() || 'global'}_${activeBranchId || 'main'}`);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [movType, setMovType] = useState<'INCOME' | 'EXPENSE'>('INCOME');
@@ -84,6 +95,7 @@ export default function CashRegisterPage() {
         setOpeningAmount(val);
         setIsOpen(true);
         setMovements([]);
+        localStorage.setItem(getStorageKey(), JSON.stringify([]));
         auditService.logAction({
           action: 'APERTURA CAJA',
           entityType: 'cash_registers',
@@ -118,7 +130,9 @@ export default function CashRegisterPage() {
       time: timeStr,
     };
 
-    setMovements([newMov, ...movements]);
+    const updatedList = [newMov, ...movements];
+    setMovements(updatedList);
+    localStorage.setItem(getStorageKey(), JSON.stringify(updatedList));
     setIsModalOpen(false);
 
     auditService.logAction({

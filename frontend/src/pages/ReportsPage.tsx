@@ -8,11 +8,11 @@ export default function ReportsPage() {
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [companyInfo, setCompanyInfo] = useState({
-    name: 'Grupo K contreras S.A.C',
-    tradeName: 'Chilia',
-    ruc: '22213639030',
-    address: 'Retamas PRUEBA 1, Santiago de Surco - Lima',
-    phone: '+51 993 275 893',
+    name: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    tradeName: typeof window !== 'undefined' ? (localStorage.getItem('tenant_name') || 'EMPRESA') : 'EMPRESA',
+    ruc: typeof window !== 'undefined' ? (localStorage.getItem('tenant_ruc') || '') : '',
+    address: 'Sede Principal',
+    phone: '',
     logo_path: '',
   });
 
@@ -29,11 +29,11 @@ export default function ReportsPage() {
     settingsService.getTenantInfo().then((info) => {
       if (info && Object.keys(info).length > 0) {
         setCompanyInfo({
-          name: info.legal_name || info.name || 'Grupo K contreras S.A.C',
-          tradeName: info.trade_name || info.name || 'Chilia',
-          ruc: info.ruc || '22213639030',
-          address: info.address || 'Retamas PRUEBA 1',
-          phone: info.phone || '+51 993 275 893',
+          name: info.legal_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+          tradeName: info.trade_name || info.name || (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || 'EMPRESA' : 'EMPRESA'),
+          ruc: info.ruc || (typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '' : ''),
+          address: info.address || 'Sede Principal',
+          phone: info.phone || '',
           logo_path: info.logo_path || '',
         });
       }

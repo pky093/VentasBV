@@ -38,7 +38,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { setUserRole } = usePermissions();
 
-  const savedRuc = typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '20613639030' : '20613639030';
+  const savedRuc = typeof window !== 'undefined' ? localStorage.getItem('tenant_ruc') || '' : '';
 
   const staffForm = useForm<StaffCredentials>({
     defaultValues: {
@@ -439,7 +439,7 @@ export default function LoginPage() {
               className="auth-support-link"
             >
               <HelpCircle size={14} color="#f59e0b" />
-              <span>¿Necesitas ayuda? Central: 01 234 5678</span>
+              <span>¿Necesitas ayuda? Central: 960044978</span>
             </button>
           </div>
         </div>

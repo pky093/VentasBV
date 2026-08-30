@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, UserCheck, Building2, Phone, Mail, Edit2, Trash2 } from 'lucide-react';
+import { Plus, UserCheck, Building2, Phone, Mail, Edit2, Trash2, Search, Loader2 } from 'lucide-react';
 import { PageHeader, Button, Badge, DataTable, Modal } from '../components/ui';
-import { customersService, Customer } from '../lib/db-services';
+import { customersService, Customer, sunatReniecService } from '../lib/db-services';
 import Swal from 'sweetalert2';
 
 export default function CustomersPage() {
@@ -10,6 +10,7 @@ export default function CustomersPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Partial<Customer> | null>(null);
+  const [isLookingUp, setIsLookingUp] = useState(false);
 
   const loadCustomers = async () => {
     setIsLoading(true);
@@ -26,6 +27,69 @@ export default function CustomersPage() {
   useEffect(() => {
     loadCustomers();
   }, []);
+
+  const handleLookup = async () => {
+    const doc = (selectedCustomer?.documentNumber || '').trim();
+    if (!doc) {
+      Swal.fire({ title: 'Documento vacío', text: 'Ingrese un número de DNI o RUC para consultar.', icon: 'info' });
+      return;
+    }
+
+    setIsLookingUp(true);
+    try {
+      if (doc.length === 8) {
+        const res = await sunatReniecService.consultarDni(doc);
+        if (res.success && res.data) {
+          setSelectedCustomer((prev) => ({
+            ...prev,
+            customerType: 'PERSON',
+            documentType: 'DNI',
+            documentNumber: doc,
+            fullName: res.data?.nombreCompleto || '',
+            name: res.data?.nombreCompleto || '',
+          }));
+          Swal.fire({
+            title: '¡DNI Encontrado!',
+            text: res.data.nombreCompleto,
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
+        } else {
+          Swal.fire({ title: 'Consulta DNI', text: res.message || 'No se encontraron datos.', icon: 'warning' });
+        }
+      } else if (doc.length === 11) {
+        const res = await sunatReniecService.consultarRuc(doc);
+        if (res.success && res.data) {
+          setSelectedCustomer((prev) => ({
+            ...prev,
+            customerType: 'BUSINESS',
+            documentType: 'RUC',
+            documentNumber: doc,
+            businessName: res.data?.razonSocial || '',
+            name: res.data?.razonSocial || '',
+            address: res.data?.direccion || prev?.address || '',
+          }));
+          Swal.fire({
+            title: '¡RUC Encontrado en SUNAT!',
+            html: `<p><strong>${res.data.razonSocial}</strong></p><p style="font-size:12px; color:#10b981;">${res.data.estado || 'ACTIVO'} • ${res.data.condicion || 'HABIDO'}</p>`,
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
+        } else {
+          Swal.fire({ title: 'Consulta RUC', text: res.message || 'No se encontraron datos.', icon: 'warning' });
+        }
+      } else {
+        Swal.fire({ title: 'Formato incorrecto', text: 'El DNI debe tener 8 dígitos y el RUC 11 dígitos.', icon: 'warning' });
+      }
+    } catch (err: any) {
+      console.error('Error during customer lookup:', err);
+      Swal.fire({ title: 'Error', text: 'Error al consultar el servicio.', icon: 'error' });
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,14 +300,26 @@ export default function CustomersPage() {
             </div>
             <div>
               <label className="form-label">Documento ({selectedCustomer?.documentType || 'DNI'})</label>
-              <input
-                type="text"
-                className="form-control font-mono"
-                placeholder={selectedCustomer?.customerType === 'BUSINESS' ? '20600000000' : '70000000'}
-                value={selectedCustomer?.documentNumber || ''}
-                onChange={(e) => setSelectedCustomer({ ...selectedCustomer, documentNumber: e.target.value })}
-                required
-              />
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  className="form-control font-mono flex-1"
+                  placeholder={selectedCustomer?.customerType === 'BUSINESS' ? '20600000000' : '70000000'}
+                  value={selectedCustomer?.documentNumber || ''}
+                  onChange={(e) => setSelectedCustomer({ ...selectedCustomer, documentNumber: e.target.value.replace(/\D/g, '') })}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={handleLookup}
+                  disabled={isLookingUp || !selectedCustomer?.documentNumber}
+                  className="btn btn-outline btn-sm px-2.5 flex items-center gap-1 font-bold text-primary-600 border-primary-300"
+                  title="Consultar con SUNAT / RENIEC"
+                >
+                  {isLookingUp ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                  <span>Buscar</span>
+                </button>
+              </div>
             </div>
           </div>
 
