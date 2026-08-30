@@ -176,11 +176,15 @@ const PULL_TABLES: PullTableConfig[] = [
   { storeName: STORES.CREDIT_INSTALLMENTS, tableName: 'credit_installments', select: '*', filterTenant: true },
   { storeName: STORES.EXPENSES, tableName: 'expenses', select: '*', filterTenant: true },
   { storeName: STORES.BRANCHES, tableName: 'branches', select: 'id, name, address, phone, manager_name, status, is_main, tenant_id', filterTenant: true },
+  { storeName: STORES.INVENTORY_MOVEMENTS, tableName: 'inventory_movements', select: '*', filterTenant: true },
+  { storeName: STORES.CONTRACTS, tableName: 'contracts', select: '*', filterTenant: true },
+  { storeName: STORES.NOTIFICATIONS, tableName: 'notifications', select: '*', filterTenant: true },
+  { storeName: STORES.ROLES, tableName: 'roles', select: '*', filterTenant: true },
 ];
 
 /**
  * Pull all data from Supabase into IndexedDB.
- * This downloads every table and replaces the local cache.
+ * This downloads every table filtered strictly by the logged-in tenant (RUC).
  */
 export async function pullAllData(): Promise<boolean> {
   const tenantId = getActiveTenantId();
@@ -197,7 +201,16 @@ export async function pullAllData(): Promise<boolean> {
   updateState({ status: 'syncing', syncProgress: 0 });
 
   try {
-    const totalTables = PULL_TABLES.length;
+    // 1. Check if switching to a different tenant/RUC. If so, clear old tenant's local stores first.
+    const lastTenant = await getSyncMeta('current_tenant_id');
+    if (lastTenant && lastTenant !== tenantId) {
+      console.log('[SyncEngine] Tenant changed from', lastTenant, 'to', tenantId, '- clearing previous stores');
+      const { clearAllTenantStores } = await import('./offline-db');
+      await clearAllTenantStores();
+    }
+    await setSyncMeta('current_tenant_id', tenantId);
+
+    const totalTables = PULL_TABLES.length + 1;
     let completedTables = 0;
 
     for (const config of PULL_TABLES) {
@@ -223,7 +236,7 @@ export async function pullAllData(): Promise<boolean> {
       updateState({ syncProgress: Math.round((completedTables / totalTables) * 100) });
     }
 
-    // Also pull settings (tenant info)
+    // Also pull settings (tenant info) strictly for this tenant
     try {
       const { data: tenantData } = await supabase
         .from('tenants')
@@ -236,6 +249,9 @@ export async function pullAllData(): Promise<boolean> {
       }
     } catch { /* non-critical */ }
 
+    completedTables++;
+    updateState({ syncProgress: 100 });
+
     const now = new Date().toISOString();
     await setSyncMeta('last_pull_timestamp', now);
 
@@ -245,7 +261,7 @@ export async function pullAllData(): Promise<boolean> {
       lastPullDate: now,
     });
 
-    console.log('[SyncEngine] Pull completed successfully.');
+    console.log('[SyncEngine] Pull completed successfully for tenant:', tenantId);
     return true;
   } catch (error) {
     console.error('[SyncEngine] Pull failed:', error);
@@ -333,17 +349,51 @@ async function executeMutation(mutation: OutboxMutation): Promise<void> {
       const { _localId, ...insertData } = payload as Record<string, unknown> & { _localId?: string };
       const { error } = await supabase.from(entity).insert(insertData);
       if (error) throw new Error(`INSERT ${entity}: ${error.message}`);
+
+      // When syncing inventory_movements, also adjust the corresponding branch_inventory stock in Supabase
+      if (entity === 'inventory_movements') {
+        try {
+          const { product_id, branch_id, movement_type, quantity, resulting_stock, tenant_id } = insertData as any;
+          if (product_id && tenant_id) {
+            let q = supabase.from('branch_inventory').select('id, quantity').eq('tenant_id', tenant_id).eq('product_id', product_id);
+            if (branch_id) q = q.eq('branch_id', branch_id);
+            const { data: invRow } = await q.maybeSingle();
+
+            if (invRow) {
+              const currentOnlineQty = Number(invRow.quantity) || 0;
+              const qtyChange = Number(quantity) || 0;
+              let newOnlineQty = currentOnlineQty;
+              if (movement_type === 'OUT') newOnlineQty = Math.max(0, currentOnlineQty - qtyChange);
+              else if (movement_type === 'IN') newOnlineQty = currentOnlineQty + qtyChange;
+              else if (movement_type === 'ADJUSTMENT') newOnlineQty = Number(resulting_stock) || qtyChange;
+
+              await supabase.from('branch_inventory').update({ quantity: newOnlineQty }).eq('id', invRow.id);
+            } else if (branch_id) {
+              await supabase.from('branch_inventory').insert({
+                tenant_id,
+                branch_id,
+                product_id,
+                quantity: resulting_stock !== undefined ? resulting_stock : 0,
+              });
+            }
+          }
+        } catch (invSyncErr) {
+          console.warn('[SyncEngine] Error updating branch_inventory during movement push:', invSyncErr);
+        }
+      }
+
       break;
     }
     case 'UPDATE': {
-      const { _id, ...updateData } = payload as Record<string, unknown> & { _id: string };
-      if (!_id) throw new Error(`UPDATE ${entity}: missing _id`);
-      const { error } = await supabase.from(entity).update(updateData).eq('id', _id);
+      const targetId = ((payload._id || payload.id) as string);
+      if (!targetId) throw new Error(`UPDATE ${entity}: missing _id`);
+      const { _id, id, ...updateData } = payload as Record<string, unknown> & { _id?: string; id?: string };
+      const { error } = await supabase.from(entity).update(updateData).eq('id', targetId);
       if (error) throw new Error(`UPDATE ${entity}: ${error.message}`);
       break;
     }
     case 'DELETE': {
-      const id = payload._id as string;
+      const id = ((payload._id || payload.id) as string);
       if (!id) throw new Error(`DELETE ${entity}: missing _id`);
       const { error } = await supabase.from(entity).delete().eq('id', id);
       if (error) throw new Error(`DELETE ${entity}: ${error.message}`);

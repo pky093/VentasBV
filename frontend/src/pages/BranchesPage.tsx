@@ -39,8 +39,19 @@ export default function BranchesPage() {
           await loadBranches();
           setIsModalOpen(false);
           setSelectedBranch(null);
+          Swal.fire({
+            title: '¡Sucursal Actualizada!',
+            text: 'Los datos de la sucursal se guardaron correctamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('No se pudo actualizar la sucursal.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo actualizar la sucursal.',
+            icon: 'error',
+          });
         }
       } else {
         const created = await branchesService.createBranch({
@@ -54,13 +65,28 @@ export default function BranchesPage() {
           await loadBranches();
           setIsModalOpen(false);
           setSelectedBranch(null);
+          Swal.fire({
+            title: '¡Sucursal Guardada!',
+            text: 'La sucursal fue creada exitosamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('No se pudo crear la sucursal en Supabase.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo crear la sucursal.',
+            icon: 'error',
+          });
         }
       }
     } catch (err) {
       console.error('Error saving branch:', err);
-      alert('Error al comunicarse con la base de datos.');
+      Swal.fire({
+        title: 'Error',
+        text: 'Ocurrió un error al guardar la sucursal.',
+        icon: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }

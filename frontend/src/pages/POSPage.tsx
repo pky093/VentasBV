@@ -169,19 +169,26 @@ export default function POSPage() {
       setProducts(
         dbProds
           .filter((p) => p.status === 'ACTIVE')
-          .map((p) => ({
-            id: p.id,
-            sku: p.code || p.sku,
-            name: p.name,
-            category: p.category || 'Sin categoría',
-            brand: p.brand || '',
-            model: p.model || '',
-            price: p.price,
-            stock: p.stock,
-            icon: '',
-            imagePath: p.imagePath,
-            dbProduct: p,
-          }))
+          .map((p) => {
+            const colorsList = Array.isArray(p.colors) ? p.colors : [];
+            const hasColors = colorsList.length > 0;
+            const colorsTotalStock = hasColors ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0) : null;
+            const effectiveStock = hasColors && colorsTotalStock !== null ? (p.stock > 0 ? p.stock : colorsTotalStock) : p.stock;
+
+            return {
+              id: p.id,
+              sku: p.code || p.sku,
+              name: p.name,
+              category: p.category || 'Sin categoría',
+              brand: p.brand || '',
+              model: p.model || '',
+              price: p.price,
+              stock: effectiveStock,
+              icon: '',
+              imagePath: p.imagePath,
+              dbProduct: p,
+            };
+          })
       );
 
       const catList = ['Todas', ...dbCats.map((c) => c.name)];
@@ -293,12 +300,17 @@ export default function POSPage() {
 
   // Cart operations
   const handleProductClick = (product: Product) => {
-    if (product.stock <= 0) {
+    const colorsList = product.dbProduct?.colors || [];
+    const hasColors = Array.isArray(colorsList) && colorsList.length > 0;
+    const colorsTotalStock = hasColors ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0) : 0;
+    const effectiveStock = hasColors ? (colorsTotalStock > 0 ? colorsTotalStock : product.stock) : product.stock;
+
+    if (effectiveStock <= 0) {
       alert('Producto sin stock disponible.');
       return;
     }
 
-    if (product.dbProduct?.colors && product.dbProduct.colors.length > 0) {
+    if (hasColors) {
       setColorModalProduct(product);
     } else {
       addToCartWithColor(product);

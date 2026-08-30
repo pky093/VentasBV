@@ -5,7 +5,7 @@
  */
 
 const DB_NAME = 'VentasBV_OfflineDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 // Store names
 export const STORES = {
@@ -22,6 +22,11 @@ export const STORES = {
   CREDIT_INSTALLMENTS: 'credit_installments',
   EXPENSES: 'expenses',
   BRANCHES: 'branches',
+  INVENTORY_MOVEMENTS: 'inventory_movements',
+  CONTRACTS: 'contracts',
+  NOTIFICATIONS: 'notifications',
+  ROLES: 'roles',
+  USERS: 'users',
   SETTINGS: 'settings',
   OUTBOX: 'outbox_mutations',
   SYNC_META: 'sync_meta',
@@ -107,6 +112,23 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORES.BRANCHES)) {
         db.createObjectStore(STORES.BRANCHES, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(STORES.INVENTORY_MOVEMENTS)) {
+        const imStore = db.createObjectStore(STORES.INVENTORY_MOVEMENTS, { keyPath: 'id' });
+        imStore.createIndex('by_product', 'product_id', { unique: false });
+        imStore.createIndex('by_branch', 'branch_id', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORES.CONTRACTS)) {
+        db.createObjectStore(STORES.CONTRACTS, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(STORES.NOTIFICATIONS)) {
+        db.createObjectStore(STORES.NOTIFICATIONS, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(STORES.ROLES)) {
+        db.createObjectStore(STORES.ROLES, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(STORES.USERS)) {
+        db.createObjectStore(STORES.USERS, { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
         db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
@@ -227,6 +249,39 @@ export async function clearStore(storeName: StoreName): Promise<void> {
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
+}
+
+/** Clear all business entity stores (useful when switching tenant or fresh re-sync) */
+export async function clearAllTenantStores(): Promise<void> {
+  const tenantStores: StoreName[] = [
+    STORES.PRODUCTS,
+    STORES.BRANCH_INVENTORY,
+    STORES.CATEGORIES,
+    STORES.BRANDS,
+    STORES.MODELS,
+    STORES.CUSTOMERS,
+    STORES.SUPPLIERS,
+    STORES.SALES,
+    STORES.SALE_ITEMS,
+    STORES.CREDITS,
+    STORES.CREDIT_INSTALLMENTS,
+    STORES.EXPENSES,
+    STORES.BRANCHES,
+    STORES.INVENTORY_MOVEMENTS,
+    STORES.CONTRACTS,
+    STORES.NOTIFICATIONS,
+    STORES.ROLES,
+    STORES.USERS,
+    STORES.SETTINGS,
+  ];
+
+  for (const s of tenantStores) {
+    try {
+      await clearStore(s);
+    } catch (_) {
+      /* ignore */
+    }
+  }
 }
 
 /** Count records in a store */

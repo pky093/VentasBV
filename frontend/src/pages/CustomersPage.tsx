@@ -103,8 +103,19 @@ export default function CustomersPage() {
           await loadCustomers();
           setIsModalOpen(false);
           setSelectedCustomer(null);
+          Swal.fire({
+            title: '¡Cliente Actualizado!',
+            text: 'Los datos del cliente se guardaron correctamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('Error al actualizar cliente en Supabase.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo actualizar los datos del cliente.',
+            icon: 'error',
+          });
         }
       } else {
         const isBusiness = selectedCustomer.customerType === 'BUSINESS';
@@ -123,13 +134,28 @@ export default function CustomersPage() {
           await loadCustomers();
           setIsModalOpen(false);
           setSelectedCustomer(null);
+          Swal.fire({
+            title: '¡Cliente Guardado!',
+            text: 'El cliente fue registrado exitosamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('Error al crear cliente en la base de datos.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo registrar el cliente en el sistema.',
+            icon: 'error',
+          });
         }
       }
     } catch (err) {
       console.error('Error saving customer:', err);
-      alert('Error de procesamiento con Supabase.');
+      Swal.fire({
+        title: 'Error',
+        text: 'Ocurrió un error inesperado al guardar el cliente.',
+        icon: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }

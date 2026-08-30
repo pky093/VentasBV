@@ -244,14 +244,91 @@ export const productsService = {
   /** Read products from IndexedDB cache */
   async _getProductsFromCache(branchId?: string): Promise<Product[]> {
     try {
-      const cached = await getAllRecords<Product>(STORES.PRODUCTS);
-      if (branchId && branchId !== 'ALL') {
-        return cached.map(p => {
-          const bs = p.branchStocks?.find(b => b.branchId === branchId);
-          return { ...p, stock: bs ? bs.stock : p.stock };
-        });
-      }
-      return cached;
+      const [cached, branchInv, categories, brands, models, branches] = await Promise.all([
+        getAllRecords<any>(STORES.PRODUCTS),
+        getAllRecords<any>(STORES.BRANCH_INVENTORY),
+        getAllRecords<any>(STORES.CATEGORIES),
+        getAllRecords<any>(STORES.BRANDS),
+        getAllRecords<any>(STORES.MODELS),
+        getAllRecords<any>(STORES.BRANCHES),
+      ]);
+
+      const catMap = new Map<string, string>();
+      categories.forEach((c: any) => catMap.set(c.id, c.name));
+
+      const brandMap = new Map<string, string>();
+      brands.forEach((b: any) => brandMap.set(b.id, b.name));
+
+      const modelMap = new Map<string, string>();
+      models.forEach((m: any) => modelMap.set(m.id, m.name));
+
+      const branchNameMap = new Map<string, string>();
+      branches.forEach((b: any) => branchNameMap.set(b.id, b.name));
+
+      // Build productStocksMap from STORES.BRANCH_INVENTORY
+      const productStocksMap = new Map<string, BranchStock[]>();
+      branchInv.forEach((s: any) => {
+        const pid = s.product_id;
+        const bId = s.branch_id;
+        const bName = branchNameMap.get(bId) || 'Sede Principal';
+        const qty = Number(s.quantity) || 0;
+
+        const list = productStocksMap.get(pid) || [];
+        list.push({ branchId: bId, branchName: bName, stock: qty });
+        productStocksMap.set(pid, list);
+      });
+
+      return cached.map((p: any) => {
+        const branchStocks = p.branchStocks && p.branchStocks.length > 0
+          ? p.branchStocks
+          : (productStocksMap.get(p.id) || []);
+
+        let calculatedStock = 0;
+        if (branchId && branchId !== 'ALL') {
+          const found = branchStocks.find((bs: any) => bs.branchId === branchId);
+          calculatedStock = found ? found.stock : (Number(p.stock) || 0);
+        } else {
+          calculatedStock = branchStocks.length > 0
+            ? branchStocks.reduce((sum: number, bs: any) => sum + (Number(bs.stock) || 0), 0)
+            : (Number(p.stock) || 0);
+        }
+
+        const colorsList = Array.isArray(p.colors) ? p.colors : [];
+        const hasColors = colorsList.length > 0;
+        const colorsTotalStock = hasColors
+          ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0)
+          : null;
+
+        let finalStock = calculatedStock;
+        if (hasColors && colorsTotalStock !== null) {
+          if (!branchId || branchId === 'ALL') {
+            finalStock = colorsTotalStock;
+          } else {
+            finalStock = calculatedStock > 0 ? calculatedStock : colorsTotalStock;
+          }
+        }
+
+        return {
+          id: p.id,
+          code: p.code || p.sku || 'PROD',
+          sku: p.sku || p.code || '',
+          name: p.name,
+          category: p.category || catMap.get(p.category_id) || 'Sin categoría',
+          categoryId: p.category_id || p.categoryId,
+          brand: p.brand || brandMap.get(p.brand_id) || 'Sin marca',
+          brandId: p.brand_id || p.brandId,
+          model: p.model || modelMap.get(p.model_id) || '',
+          modelId: p.model_id || p.modelId,
+          price: Number(p.price) || 0,
+          cost: Number(p.cost) || 0,
+          stock: finalStock,
+          minStock: Number(p.min_stock || p.minStock) || 5,
+          status: p.status === 'INACTIVE' ? ('INACTIVE' as const) : ('ACTIVE' as const),
+          imagePath: p.image_path || p.imagePath || '',
+          colors: colorsList,
+          branchStocks,
+        };
+      });
     } catch {
       return [];
     }
@@ -262,9 +339,112 @@ export const productsService = {
     if (!tenantId) return null;
     const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
 
-    const { data, error } = await supabase
-      .from('products')
-      .insert({
+    if (isNetworkOnline()) {
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .insert({
+            tenant_id: tenantId,
+            code: prod.code,
+            sku: prod.sku || prod.code,
+            name: prod.name,
+            category_id: prod.categoryId || null,
+            brand_id: prod.brandId || null,
+            model_id: prod.modelId || null,
+            price: prod.price,
+            cost: prod.cost,
+            min_stock: prod.minStock,
+            status: prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE',
+            image_path: prod.imagePath || null,
+            colors: prod.colors || [],
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          if (targetBranch) {
+            await supabase.from('branch_inventory').insert({
+              tenant_id: tenantId,
+              branch_id: targetBranch,
+              product_id: data.id,
+              quantity: prod.stock,
+            });
+          }
+
+          auditService.logAction({
+            action: 'CREAR',
+            entityType: 'products',
+            entityId: data.id,
+            branchId: targetBranch,
+            description: `Creación de producto "${prod.name}" (SKU: ${prod.sku || prod.code}, Precio: S/ ${Number(prod.price).toFixed(2)}, Stock inicial: ${prod.stock})`,
+            details: {
+              name: prod.name,
+              sku: prod.sku || prod.code,
+              price: prod.price,
+              cost: prod.cost,
+              stock: prod.stock,
+            },
+          });
+
+          const created: Product = {
+            id: data.id,
+            code: data.code,
+            sku: data.sku || data.code,
+            name: data.name,
+            category: prod.category || 'Sin categoría',
+            categoryId: data.category_id,
+            brand: prod.brand || 'Sin marca',
+            brandId: data.brand_id,
+            model: prod.model || '',
+            modelId: data.model_id,
+            price: Number(data.price),
+            cost: Number(data.cost),
+            stock: prod.stock,
+            minStock: Number(data.min_stock),
+            status: data.status === 'AVAILABLE' ? 'ACTIVE' : 'INACTIVE',
+            imagePath: data.image_path || '',
+            colors: prod.colors || [],
+          };
+
+          try { await putRecord(STORES.PRODUCTS, created); } catch { /* non-critical */ }
+          return created;
+        }
+      } catch (networkErr) {
+        console.warn('[productsService] Online create failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline fallback
+    const localId = generateLocalId();
+    const localProduct: Product = {
+      id: localId,
+      code: prod.code,
+      sku: prod.sku || prod.code,
+      name: prod.name,
+      category: prod.category || 'Sin categoría',
+      categoryId: prod.categoryId,
+      brand: prod.brand || 'Sin marca',
+      brandId: prod.brandId,
+      model: prod.model || '',
+      modelId: prod.modelId,
+      price: Number(prod.price) || 0,
+      cost: Number(prod.cost) || 0,
+      stock: prod.stock || 0,
+      minStock: Number(prod.minStock) || 5,
+      status: prod.status || 'ACTIVE',
+      imagePath: prod.imagePath || '',
+      colors: prod.colors || [],
+    };
+
+    try {
+      await putRecord(STORES.PRODUCTS, localProduct);
+    } catch (dbErr) {
+      console.error('[productsService] Error saving to IndexedDB:', dbErr);
+    }
+
+    try {
+      await queueMutation('products', 'CREATE', {
+        id: localId,
         tenant_id: tenantId,
         code: prod.code,
         sku: prod.sku || prod.code,
@@ -278,30 +458,18 @@ export const productsService = {
         status: prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE',
         image_path: prod.imagePath || null,
         colors: prod.colors || [],
-      })
-      .select()
-      .single();
-
-    if (error || !data) {
-      console.error('Error creating product:', error);
-      return null;
-    }
-
-    if (targetBranch) {
-      await supabase.from('branch_inventory').insert({
-        tenant_id: tenantId,
-        branch_id: targetBranch,
-        product_id: data.id,
-        quantity: prod.stock,
       });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[productsService] Error queueing outbox mutation:', queueErr);
     }
 
     auditService.logAction({
       action: 'CREAR',
       entityType: 'products',
-      entityId: data.id,
+      entityId: localId,
       branchId: targetBranch,
-      description: `Creación de producto "${prod.name}" (SKU: ${prod.sku || prod.code}, Precio: S/ ${Number(prod.price).toFixed(2)}, Stock inicial: ${prod.stock})`,
+      description: `Creación de producto "${prod.name}" (Modo Offline)`,
       details: {
         name: prod.name,
         sku: prod.sku || prod.code,
@@ -311,29 +479,25 @@ export const productsService = {
       },
     });
 
-    return {
-      id: data.id,
-      code: data.code,
-      sku: data.sku || data.code,
-      name: data.name,
-      category: prod.category || 'Sin categoría',
-      categoryId: data.category_id,
-      brand: prod.brand || 'Sin marca',
-      brandId: data.brand_id,
-      model: prod.model || '',
-      modelId: data.model_id,
-      price: Number(data.price),
-      cost: Number(data.cost),
-      stock: prod.stock,
-      minStock: Number(data.min_stock),
-      status: data.status === 'AVAILABLE' ? 'ACTIVE' : 'INACTIVE',
-      imagePath: data.image_path || '',
-      colors: prod.colors || [],
-    };
+    return localProduct;
   },
 
   async updateProduct(id: string, prod: Partial<Product>, branchId?: string): Promise<boolean> {
     try {
+      // Update local cache
+      try {
+        const existing = await getRecord<Product>(STORES.PRODUCTS, id);
+        if (existing) {
+          const updated: Product = {
+            ...existing,
+            ...prod,
+          };
+          await putRecord(STORES.PRODUCTS, updated);
+        }
+      } catch (e) {
+        console.warn('[productsService] Error updating local cache:', e);
+      }
+
       const updateData: any = {};
       if (prod.code) updateData.code = prod.code;
       if (prod.sku) updateData.sku = prod.sku;
@@ -348,33 +512,57 @@ export const productsService = {
       if (prod.imagePath !== undefined) updateData.image_path = prod.imagePath || null;
       if (prod.colors !== undefined) updateData.colors = prod.colors;
 
-      const { error } = await supabase.from('products').update(updateData).eq('id', id);
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase.from('products').update(updateData).eq('id', id);
+          if (!error) {
+            if (prod.stock !== undefined) {
+              const tenantId = getActiveTenantId();
+              const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
+              const { data: inv } = await supabase
+                .from('branch_inventory')
+                .select('id')
+                .eq('product_id', id)
+                .eq('branch_id', targetBranch)
+                .maybeSingle();
 
-      if (error) {
-        console.error('Error updating product in Supabase:', error);
-        return false;
+              if (inv) {
+                await supabase.from('branch_inventory').update({ quantity: prod.stock }).eq('id', inv.id);
+              } else if (targetBranch) {
+                await supabase.from('branch_inventory').insert({
+                  tenant_id: tenantId,
+                  branch_id: targetBranch,
+                  product_id: id,
+                  quantity: prod.stock,
+                });
+              }
+            }
+
+            auditService.logAction({
+              action: 'MODIFICAR',
+              entityType: 'products',
+              entityId: id,
+              branchId: branchId && branchId !== 'ALL' ? branchId : undefined,
+              description: `Actualización de datos del producto "${prod.name || id}"`,
+              details: { ...prod },
+            });
+
+            return true;
+          }
+        } catch (networkErr) {
+          console.warn('[productsService] Online update failed, queueing offline mutation:', networkErr);
+        }
       }
 
-      if (prod.stock !== undefined) {
-        const tenantId = getActiveTenantId();
-        const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
-        const { data: inv } = await supabase
-          .from('branch_inventory')
-          .select('id')
-          .eq('product_id', id)
-          .eq('branch_id', targetBranch)
-          .maybeSingle();
-
-        if (inv) {
-          await supabase.from('branch_inventory').update({ quantity: prod.stock }).eq('id', inv.id);
-        } else if (targetBranch) {
-          await supabase.from('branch_inventory').insert({
-            tenant_id: tenantId,
-            branch_id: targetBranch,
-            product_id: id,
-            quantity: prod.stock,
-          });
-        }
+      // Offline queue
+      try {
+        await queueMutation('products', 'UPDATE', {
+          _id: id,
+          ...updateData,
+        });
+        refreshPendingCount().catch(() => {});
+      } catch (queueErr) {
+        console.error('[productsService] Error queueing update mutation:', queueErr);
       }
 
       auditService.logAction({
@@ -382,7 +570,7 @@ export const productsService = {
         entityType: 'products',
         entityId: id,
         branchId: branchId && branchId !== 'ALL' ? branchId : undefined,
-        description: `Actualización de datos del producto "${prod.name || id}"`,
+        description: `Actualización de datos del producto "${prod.name || id}" (Modo Offline)`,
         details: { ...prod },
       });
 
@@ -396,40 +584,62 @@ export const productsService = {
   async deleteProduct(id: string): Promise<boolean> {
     try {
       let prodName = 'Producto';
-      let prodSku = '';
-      const { data: prodData } = await supabase.from('products').select('name, sku, code').eq('id', id).maybeSingle();
-      if (prodData) {
-        prodName = prodData.name || prodName;
-        prodSku = prodData.sku || prodData.code || '';
+      try {
+        const localProd = await getRecord<Product>(STORES.PRODUCTS, id);
+        if (localProd) prodName = localProd.name || prodName;
+      } catch (_) {}
+
+      // Delete from local cache
+      try {
+        await deleteLocalRecord(STORES.PRODUCTS, id);
+      } catch (e) {
+        console.warn('[productsService] Error deleting local record:', e);
       }
 
-      await supabase.from('sale_items').delete().eq('product_id', id);
-      await supabase.from('purchase_items').delete().eq('product_id', id);
-      await supabase.from('purchase_order_items').delete().eq('product_id', id);
-      await supabase.from('inventory_movements').delete().eq('product_id', id);
-      await supabase.from('physical_count_items').delete().eq('product_id', id);
-      await supabase.from('branch_inventory').delete().eq('product_id', id);
-      const { error } = await supabase.from('products').delete().eq('id', id);
+      if (isNetworkOnline()) {
+        try {
+          await supabase.from('sale_items').delete().eq('product_id', id);
+          await supabase.from('purchase_items').delete().eq('product_id', id);
+          await supabase.from('purchase_order_items').delete().eq('product_id', id);
+          await supabase.from('inventory_movements').delete().eq('product_id', id);
+          await supabase.from('physical_count_items').delete().eq('product_id', id);
+          await supabase.from('branch_inventory').delete().eq('product_id', id);
+          const { error } = await supabase.from('products').delete().eq('id', id);
 
-      if (error) {
-        console.error('Error deleting product from Supabase:', error);
-        return false;
+          if (!error) {
+            auditService.logAction({
+              action: 'ELIMINAR',
+              entityType: 'products',
+              entityId: id,
+              description: `Eliminación del producto "${prodName}"`,
+              details: { name: prodName },
+            });
+            return true;
+          }
+        } catch (networkErr) {
+          console.warn('[productsService] Online delete failed, queueing offline mutation:', networkErr);
+        }
+      }
+
+      // Offline queue
+      try {
+        await queueMutation('products', 'DELETE', { _id: id });
+        refreshPendingCount().catch(() => {});
+      } catch (queueErr) {
+        console.error('[productsService] Error queueing delete mutation:', queueErr);
       }
 
       auditService.logAction({
         action: 'ELIMINAR',
         entityType: 'products',
         entityId: id,
-        description: `Eliminación permanente del producto "${prodName}" (${prodSku})`,
-        details: {
-          name: prodName,
-          sku: prodSku,
-        },
+        description: `Eliminación del producto "${prodName}" (Modo Offline)`,
+        details: { name: prodName },
       });
 
       return true;
     } catch (err) {
-      console.error('Error deleting product:', err);
+      console.error('Exception deleting product:', err);
       return false;
     }
   },
@@ -478,29 +688,88 @@ export const branchesService = {
     const tenantId = getActiveTenantId();
     if (!tenantId) return null;
 
-    const { data, error } = await supabase
-      .from('branches')
-      .insert({
+    if (isNetworkOnline()) {
+      try {
+        const { data, error } = await supabase
+          .from('branches')
+          .insert({
+            tenant_id: tenantId,
+            name: branch.name,
+            address: branch.address,
+            phone: branch.phone,
+            manager_name: branch.managerName,
+            status: branch.status,
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          const created: Branch = {
+            id: data.id,
+            name: data.name,
+            address: data.address || '',
+            phone: data.phone || '',
+            managerName: data.manager_name || '',
+            status: data.status,
+          };
+          try { await putRecord(STORES.BRANCHES, created); } catch { /* non-critical */ }
+
+          auditService.logAction({
+            action: 'CREAR',
+            entityType: 'branches',
+            entityId: data.id,
+            description: `Creación de sucursal "${branch.name}" (Dirección: ${branch.address || 'Sin especificar'}, Responsable: ${branch.managerName || 'Sin asignar'})`,
+            details: {
+              name: branch.name,
+              address: branch.address,
+              manager_name: branch.managerName,
+            },
+          });
+
+          return created;
+        }
+      } catch (networkErr) {
+        console.warn('[branchesService] Online create failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline fallback
+    const localId = generateLocalId();
+    const localBranch: Branch = {
+      id: localId,
+      name: branch.name,
+      address: branch.address || '',
+      phone: branch.phone || '',
+      managerName: branch.managerName || '',
+      status: branch.status,
+    };
+
+    try {
+      await putRecord(STORES.BRANCHES, localBranch);
+    } catch (dbErr) {
+      console.error('[branchesService] Error saving to IndexedDB:', dbErr);
+    }
+
+    try {
+      await queueMutation('branches', 'CREATE', {
+        id: localId,
         tenant_id: tenantId,
         name: branch.name,
         address: branch.address,
         phone: branch.phone,
         manager_name: branch.managerName,
         status: branch.status,
-      })
-      .select()
-      .single();
-
-    if (error || !data) {
-      console.error('Error creating branch:', error);
-      return null;
+      });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[branchesService] Error queueing outbox mutation:', queueErr);
     }
 
     auditService.logAction({
       action: 'CREAR',
       entityType: 'branches',
-      entityId: data.id,
-      description: `Creación de sucursal "${branch.name}" (Dirección: ${branch.address || 'Sin especificar'}, Responsable: ${branch.managerName || 'Sin asignar'})`,
+      entityId: localId,
+      description: `Creación de sucursal "${branch.name}" (Modo Offline)`,
       details: {
         name: branch.name,
         address: branch.address,
@@ -508,57 +777,124 @@ export const branchesService = {
       },
     });
 
-    return {
-      id: data.id,
-      name: data.name,
-      address: data.address || '',
-      phone: data.phone || '',
-      managerName: data.manager_name || '',
-      status: data.status,
-    };
+    return localBranch;
   },
 
   async updateBranch(id: string, branch: Partial<Branch>): Promise<boolean> {
-    const { error } = await supabase
-      .from('branches')
-      .update({
-        ...(branch.name && { name: branch.name }),
-        ...(branch.address !== undefined && { address: branch.address }),
-        ...(branch.phone !== undefined && { phone: branch.phone }),
-        ...(branch.managerName !== undefined && { manager_name: branch.managerName }),
-        ...(branch.status && { status: branch.status }),
-      })
-      .eq('id', id);
-
-    if (!error) {
-      auditService.logAction({
-        action: 'MODIFICAR',
-        entityType: 'branches',
-        entityId: id,
-        description: `Actualización de sucursal "${branch.name || id}"`,
-        details: { ...branch },
-      });
+    // Update local cache
+    try {
+      const existing = await getRecord<Branch>(STORES.BRANCHES, id);
+      if (existing) {
+        const updated: Branch = {
+          ...existing,
+          ...branch,
+        };
+        await putRecord(STORES.BRANCHES, updated);
+      }
+    } catch (e) {
+      console.warn('[branchesService] Error updating local cache:', e);
     }
 
-    return !error;
+    const payload: any = {};
+    if (branch.name) payload.name = branch.name;
+    if (branch.address !== undefined) payload.address = branch.address;
+    if (branch.phone !== undefined) payload.phone = branch.phone;
+    if (branch.managerName !== undefined) payload.manager_name = branch.managerName;
+    if (branch.status) payload.status = branch.status;
+
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase
+          .from('branches')
+          .update(payload)
+          .eq('id', id);
+
+        if (!error) {
+          auditService.logAction({
+            action: 'MODIFICAR',
+            entityType: 'branches',
+            entityId: id,
+            description: `Actualización de sucursal "${branch.name || id}"`,
+            details: { ...branch },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[branchesService] Online update failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline queue
+    try {
+      await queueMutation('branches', 'UPDATE', {
+        _id: id,
+        ...payload,
+      });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[branchesService] Error queueing update mutation:', queueErr);
+    }
+
+    auditService.logAction({
+      action: 'MODIFICAR',
+      entityType: 'branches',
+      entityId: id,
+      description: `Actualización de sucursal "${branch.name || id}" (Modo Offline)`,
+      details: { ...branch },
+    });
+
+    return true;
   },
 
   async deleteBranch(id: string): Promise<boolean> {
     let branchName = 'Sucursal';
-    const { data } = await supabase.from('branches').select('name').eq('id', id).maybeSingle();
-    if (data) branchName = data.name || branchName;
+    try {
+      const localBr = await getRecord<Branch>(STORES.BRANCHES, id);
+      if (localBr) branchName = localBr.name || branchName;
+    } catch (_) {}
 
-    const { error } = await supabase.from('branches').delete().eq('id', id);
-    if (!error) {
-      auditService.logAction({
-        action: 'ELIMINAR',
-        entityType: 'branches',
-        entityId: id,
-        description: `Eliminación de sucursal "${branchName}"`,
-        details: { name: branchName },
-      });
+    // Delete from local cache
+    try {
+      await deleteLocalRecord(STORES.BRANCHES, id);
+    } catch (e) {
+      console.warn('[branchesService] Error deleting local record:', e);
     }
-    return !error;
+
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase.from('branches').delete().eq('id', id);
+        if (!error) {
+          auditService.logAction({
+            action: 'ELIMINAR',
+            entityType: 'branches',
+            entityId: id,
+            description: `Eliminación de sucursal "${branchName}"`,
+            details: { name: branchName },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[branchesService] Online delete failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline queue
+    try {
+      await queueMutation('branches', 'DELETE', { _id: id });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[branchesService] Error queueing delete mutation:', queueErr);
+    }
+
+    auditService.logAction({
+      action: 'ELIMINAR',
+      entityType: 'branches',
+      entityId: id,
+      description: `Eliminación de sucursal "${branchName}" (Modo Offline)`,
+      details: { name: branchName },
+    });
+
+    return true;
   },
 };
 
@@ -568,66 +904,135 @@ export const catalogService = {
     const tenantId = getActiveTenantId();
     if (!tenantId) return [];
 
-    const { data: cats, error } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('tenant_id', tenantId)
-      .order('name');
-
-    if (error) {
-      console.error('Error fetching categories:', error);
-      return [];
+    if (!isNetworkOnline()) {
+      try {
+        const localCats = await getAllRecords<any>(STORES.CATEGORIES);
+        const localBrs = await getAllRecords<any>(STORES.BRANDS);
+        const categoryBrandsMap = new Map<string, { id: string; name: string }[]>();
+        localBrs.forEach((b: any) => {
+          if (b.category_id) {
+            const list = categoryBrandsMap.get(b.category_id) || [];
+            list.push({ id: b.id, name: b.name });
+            categoryBrandsMap.set(b.category_id, list);
+          }
+        });
+        return localCats.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          active: c.active ?? true,
+          brandsCount: (categoryBrandsMap.get(c.id) || []).length,
+          brands: categoryBrandsMap.get(c.id) || [],
+        }));
+      } catch {
+        return [];
+      }
     }
 
-    const { data: brs } = await supabase
-      .from('brands')
-      .select('id, name, category_id')
-      .eq('tenant_id', tenantId);
+    try {
+      const { data: cats, error } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('name');
 
-    const categoryBrandsMap = new Map<string, { id: string; name: string }[]>();
-    brs?.forEach((b) => {
-      if (b.category_id) {
-        const list = categoryBrandsMap.get(b.category_id) || [];
-        list.push({ id: b.id, name: b.name });
-        categoryBrandsMap.set(b.category_id, list);
+      if (error) {
+        const localCats = await getAllRecords<any>(STORES.CATEGORIES);
+        return localCats.map((c: any) => ({ id: c.id, name: c.name, active: c.active ?? true, brandsCount: 0, brands: [] }));
       }
-    });
 
-    return (cats || []).map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      active: c.active ?? true,
-      brandsCount: (categoryBrandsMap.get(c.id) || []).length,
-      brands: categoryBrandsMap.get(c.id) || [],
-    }));
+      const { data: brs } = await supabase
+        .from('brands')
+        .select('id, name, category_id')
+        .eq('tenant_id', tenantId);
+
+      const categoryBrandsMap = new Map<string, { id: string; name: string }[]>();
+      brs?.forEach((b) => {
+        if (b.category_id) {
+          const list = categoryBrandsMap.get(b.category_id) || [];
+          list.push({ id: b.id, name: b.name });
+          categoryBrandsMap.set(b.category_id, list);
+        }
+      });
+
+      if (cats) {
+        try { await putManyRecords(STORES.CATEGORIES, cats); } catch {}
+      }
+      if (brs) {
+        try { await putManyRecords(STORES.BRANDS, brs); } catch {}
+      }
+
+      return (cats || []).map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        active: c.active ?? true,
+        brandsCount: (categoryBrandsMap.get(c.id) || []).length,
+        brands: categoryBrandsMap.get(c.id) || [],
+      }));
+    } catch {
+      try {
+        const localCats = await getAllRecords<any>(STORES.CATEGORIES);
+        return localCats.map((c: any) => ({ id: c.id, name: c.name, active: c.active ?? true, brandsCount: 0, brands: [] }));
+      } catch {
+        return [];
+      }
+    }
   },
 
   async createCategory(name: string): Promise<Category | null> {
     const tenantId = getActiveTenantId();
     if (!tenantId) return null;
 
-    const { data, error } = await supabase
-      .from('categories')
-      .insert({ tenant_id: tenantId, name })
-      .select()
-      .single();
+    if (isNetworkOnline()) {
+      try {
+        const { data, error } = await supabase
+          .from('categories')
+          .insert({ tenant_id: tenantId, name })
+          .select()
+          .single();
 
-    if (error || !data) {
-      console.error('Error creating category:', error);
-      return null;
+        if (!error && data) {
+          try { await putRecord(STORES.CATEGORIES, data); } catch {}
+          auditService.logAction({
+            action: 'CREAR',
+            entityType: 'categories',
+            entityId: data.id,
+            description: `Creación de categoría "${name}"`,
+            details: { name },
+          });
+
+          return {
+            id: data.id,
+            name: data.name,
+            active: true,
+            brandsCount: 0,
+            brands: [],
+          };
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online category creation failed, queueing offline:', networkErr);
+      }
     }
+
+    // Offline fallback
+    const localId = generateLocalId();
+    const localCat = { id: localId, tenant_id: tenantId, name, active: true };
+    try { await putRecord(STORES.CATEGORIES, localCat); } catch {}
+    try {
+      await queueMutation('categories', 'CREATE', { id: localId, tenant_id: tenantId, name, active: true });
+      refreshPendingCount().catch(() => {});
+    } catch {}
 
     auditService.logAction({
       action: 'CREAR',
       entityType: 'categories',
-      entityId: data.id,
-      description: `Creación de categoría "${name}"`,
+      entityId: localId,
+      description: `Creación de categoría "${name}" (Modo Offline)`,
       details: { name },
     });
 
     return {
-      id: data.id,
-      name: data.name,
+      id: localId,
+      name,
       active: true,
       brandsCount: 0,
       brands: [],
@@ -635,239 +1040,527 @@ export const catalogService = {
   },
 
   async updateCategory(id: string, name: string): Promise<boolean> {
-    const { error } = await supabase
-      .from('categories')
-      .update({ name })
-      .eq('id', id);
+    try {
+      const existing = await getRecord<any>(STORES.CATEGORIES, id);
+      if (existing) {
+        await putRecord(STORES.CATEGORIES, { ...existing, name });
+      }
+    } catch {}
 
-    if (!error) {
-      auditService.logAction({
-        action: 'MODIFICAR',
-        entityType: 'categories',
-        entityId: id,
-        description: `Actualización de categoría a "${name}"`,
-        details: { name },
-      });
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase
+          .from('categories')
+          .update({ name })
+          .eq('id', id);
+
+        if (!error) {
+          auditService.logAction({
+            action: 'MODIFICAR',
+            entityType: 'categories',
+            entityId: id,
+            description: `Actualización de categoría a "${name}"`,
+            details: { name },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online category update failed, queueing offline:', networkErr);
+      }
     }
-    return !error;
+
+    // Offline queue
+    try {
+      await queueMutation('categories', 'UPDATE', { _id: id, name });
+      refreshPendingCount().catch(() => {});
+    } catch {}
+
+    auditService.logAction({
+      action: 'MODIFICAR',
+      entityType: 'categories',
+      entityId: id,
+      description: `Actualización de categoría a "${name}" (Modo Offline)`,
+      details: { name },
+    });
+
+    return true;
   },
 
   async deleteCategory(id: string): Promise<boolean> {
     let catName = 'Categoría';
-    const { data } = await supabase.from('categories').select('name').eq('id', id).maybeSingle();
-    if (data) catName = data.name || catName;
+    try {
+      const localCat = await getRecord<any>(STORES.CATEGORIES, id);
+      if (localCat) catName = localCat.name || catName;
+      await deleteLocalRecord(STORES.CATEGORIES, id);
+    } catch {}
 
-    const { error } = await supabase.from('categories').delete().eq('id', id);
-    if (!error) {
-      auditService.logAction({
-        action: 'ELIMINAR',
-        entityType: 'categories',
-        entityId: id,
-        description: `Eliminación de categoría "${catName}"`,
-        details: { name: catName },
-      });
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase.from('categories').delete().eq('id', id);
+        if (!error) {
+          auditService.logAction({
+            action: 'ELIMINAR',
+            entityType: 'categories',
+            entityId: id,
+            description: `Eliminación de categoría "${catName}"`,
+            details: { name: catName },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online category delete failed, queueing offline:', networkErr);
+      }
     }
-    return !error;
+
+    // Offline queue
+    try {
+      await queueMutation('categories', 'DELETE', { _id: id });
+      refreshPendingCount().catch(() => {});
+    } catch {}
+
+    auditService.logAction({
+      action: 'ELIMINAR',
+      entityType: 'categories',
+      entityId: id,
+      description: `Eliminación de categoría "${catName}" (Modo Offline)`,
+      details: { name: catName },
+    });
+
+    return true;
   },
 
   async getBrands(): Promise<Brand[]> {
     const tenantId = getActiveTenantId();
     if (!tenantId) return [];
 
-    const { data, error } = await supabase
-      .from('brands')
-      .select(`
-        id, name, active, category_id,
-        categories ( name )
-      `)
-      .eq('tenant_id', tenantId)
-      .order('name');
+    if (!isNetworkOnline()) {
+      try {
+        const localBrs = await getAllRecords<any>(STORES.BRANDS);
+        const localCats = await getAllRecords<any>(STORES.CATEGORIES);
+        const catMap = new Map<string, string>();
+        localCats.forEach((c: any) => catMap.set(c.id, c.name));
 
-    if (error) {
-      console.error('Error fetching brands:', error);
-      return [];
+        return localBrs.map((b: any) => ({
+          id: b.id,
+          name: b.name,
+          categoryId: b.category_id,
+          categoryName: catMap.get(b.category_id) || 'Sin Categoría',
+          category_id: b.category_id,
+          category_name: catMap.get(b.category_id) || 'Sin Categoría',
+          active: b.active ?? true,
+        }));
+      } catch {
+        return [];
+      }
     }
 
-    return (data || []).map((b: any) => ({
-      id: b.id,
-      name: b.name,
-      categoryId: b.category_id,
-      categoryName: b.categories?.name || 'Sin Categoría',
-      category_id: b.category_id,
-      category_name: b.categories?.name || 'Sin Categoría',
-      active: b.active ?? true,
-    }));
+    try {
+      const { data, error } = await supabase
+        .from('brands')
+        .select(`
+          id, name, active, category_id,
+          categories ( name )
+        `)
+        .eq('tenant_id', tenantId)
+        .order('name');
+
+      if (error) {
+        const localBrs = await getAllRecords<any>(STORES.BRANDS);
+        return localBrs.map((b: any) => ({ id: b.id, name: b.name, categoryId: b.category_id, categoryName: 'Sin Categoría', active: b.active ?? true }));
+      }
+
+      if (data) {
+        try { await putManyRecords(STORES.BRANDS, data); } catch {}
+      }
+
+      return (data || []).map((b: any) => ({
+        id: b.id,
+        name: b.name,
+        categoryId: b.category_id,
+        categoryName: b.categories?.name || 'Sin Categoría',
+        category_id: b.category_id,
+        category_name: b.categories?.name || 'Sin Categoría',
+        active: b.active ?? true,
+      }));
+    } catch {
+      try {
+        const localBrs = await getAllRecords<any>(STORES.BRANDS);
+        return localBrs.map((b: any) => ({ id: b.id, name: b.name, categoryId: b.category_id, categoryName: 'Sin Categoría', active: b.active ?? true }));
+      } catch {
+        return [];
+      }
+    }
   },
 
   async createBrand(name: string, categoryId?: string): Promise<Brand | null> {
     const tenantId = getActiveTenantId();
     if (!tenantId) return null;
 
-    const { data, error } = await supabase
-      .from('brands')
-      .insert({ tenant_id: tenantId, name, category_id: categoryId || null })
-      .select(`
-        id, name, active, category_id,
-        categories ( name )
-      `)
-      .single();
+    if (isNetworkOnline()) {
+      try {
+        const { data, error } = await supabase
+          .from('brands')
+          .insert({ tenant_id: tenantId, name, category_id: categoryId || null })
+          .select(`
+            id, name, active, category_id,
+            categories ( name )
+          `)
+          .single();
 
-    if (error || !data) {
-      console.error('Error creating brand:', error);
-      return null;
+        if (!error && data) {
+          try { await putRecord(STORES.BRANDS, data); } catch {}
+          auditService.logAction({
+            action: 'CREAR',
+            entityType: 'brands',
+            entityId: data.id,
+            description: `Creación de marca "${name}"`,
+            details: { name, category_id: categoryId },
+          });
+
+          return {
+            id: data.id,
+            name: data.name,
+            categoryId: data.category_id,
+            categoryName: (data as any).categories?.name || 'Sin Categoría',
+            active: true,
+          };
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online brand create failed, queueing offline:', networkErr);
+      }
     }
+
+    // Offline fallback
+    const localId = generateLocalId();
+    const localBrand = { id: localId, tenant_id: tenantId, name, category_id: categoryId || null, active: true };
+    try { await putRecord(STORES.BRANDS, localBrand); } catch {}
+    try {
+      await queueMutation('brands', 'CREATE', localBrand);
+      refreshPendingCount().catch(() => {});
+    } catch {}
 
     auditService.logAction({
       action: 'CREAR',
       entityType: 'brands',
-      entityId: data.id,
-      description: `Creación de marca "${name}"`,
+      entityId: localId,
+      description: `Creación de marca "${name}" (Modo Offline)`,
       details: { name, category_id: categoryId },
     });
 
     return {
-      id: data.id,
-      name: data.name,
-      categoryId: data.category_id,
-      categoryName: (data as any).categories?.name || 'Sin Categoría',
+      id: localId,
+      name,
+      categoryId,
+      categoryName: 'Sin Categoría',
       active: true,
     };
   },
 
   async updateBrand(id: string, name: string, categoryId?: string): Promise<boolean> {
-    const { error } = await supabase
-      .from('brands')
-      .update({ name, category_id: categoryId || null })
-      .eq('id', id);
+    try {
+      const existing = await getRecord<any>(STORES.BRANDS, id);
+      if (existing) {
+        await putRecord(STORES.BRANDS, { ...existing, name, category_id: categoryId || null });
+      }
+    } catch {}
 
-    if (!error) {
-      auditService.logAction({
-        action: 'MODIFICAR',
-        entityType: 'brands',
-        entityId: id,
-        description: `Actualización de marca "${name}"`,
-        details: { name, category_id: categoryId },
-      });
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase
+          .from('brands')
+          .update({ name, category_id: categoryId || null })
+          .eq('id', id);
+
+        if (!error) {
+          auditService.logAction({
+            action: 'MODIFICAR',
+            entityType: 'brands',
+            entityId: id,
+            description: `Actualización de marca "${name}"`,
+            details: { name, category_id: categoryId },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online brand update failed, queueing offline:', networkErr);
+      }
     }
-    return !error;
+
+    // Offline queue
+    try {
+      await queueMutation('brands', 'UPDATE', { _id: id, name, category_id: categoryId || null });
+      refreshPendingCount().catch(() => {});
+    } catch {}
+
+    auditService.logAction({
+      action: 'MODIFICAR',
+      entityType: 'brands',
+      entityId: id,
+      description: `Actualización de marca "${name}" (Modo Offline)`,
+      details: { name, category_id: categoryId },
+    });
+
+    return true;
   },
 
   async deleteBrand(id: string): Promise<boolean> {
     let brandName = 'Marca';
-    const { data } = await supabase.from('brands').select('name').eq('id', id).maybeSingle();
-    if (data) brandName = data.name || brandName;
+    try {
+      const localBrand = await getRecord<any>(STORES.BRANDS, id);
+      if (localBrand) brandName = localBrand.name || brandName;
+      await deleteLocalRecord(STORES.BRANDS, id);
+    } catch {}
 
-    const { error } = await supabase.from('brands').delete().eq('id', id);
-    if (!error) {
-      auditService.logAction({
-        action: 'ELIMINAR',
-        entityType: 'brands',
-        entityId: id,
-        description: `Eliminación de marca "${brandName}"`,
-        details: { name: brandName },
-      });
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase.from('brands').delete().eq('id', id);
+        if (!error) {
+          auditService.logAction({
+            action: 'ELIMINAR',
+            entityType: 'brands',
+            entityId: id,
+            description: `Eliminación de marca "${brandName}"`,
+            details: { name: brandName },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online brand delete failed, queueing offline:', networkErr);
+      }
     }
-    return !error;
+
+    // Offline queue
+    try {
+      await queueMutation('brands', 'DELETE', { _id: id });
+      refreshPendingCount().catch(() => {});
+    } catch {}
+
+    auditService.logAction({
+      action: 'ELIMINAR',
+      entityType: 'brands',
+      entityId: id,
+      description: `Eliminación de marca "${brandName}" (Modo Offline)`,
+      details: { name: brandName },
+    });
+
+    return true;
   },
 
   async getModels(): Promise<Model[]> {
     const tenantId = getActiveTenantId();
     if (!tenantId) return [];
 
-    const { data, error } = await supabase
-      .from('models')
-      .select(`
-        id, name, active, brand_id,
-        brands ( name )
-      `)
-      .eq('tenant_id', tenantId)
-      .order('name');
+    if (!isNetworkOnline()) {
+      try {
+        const localModels = await getAllRecords<any>(STORES.MODELS);
+        const localBrands = await getAllRecords<any>(STORES.BRANDS);
+        const brandMap = new Map<string, string>();
+        localBrands.forEach((b: any) => brandMap.set(b.id, b.name));
 
-    if (error) {
-      console.error('Error fetching models:', error);
-      return [];
+        return localModels.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          brandId: m.brand_id,
+          brandName: brandMap.get(m.brand_id) || 'Sin Marca',
+          brand_id: m.brand_id,
+          brand_name: brandMap.get(m.brand_id) || 'Sin Marca',
+          active: m.active ?? true,
+        }));
+      } catch {
+        return [];
+      }
     }
 
-    return (data || []).map((m: any) => ({
-      id: m.id,
-      name: m.name,
-      brandId: m.brand_id,
-      brandName: m.brands?.name || 'Sin Marca',
-      brand_id: m.brand_id,
-      brand_name: m.brands?.name || 'Sin Marca',
-      active: m.active ?? true,
-    }));
+    try {
+      const { data, error } = await supabase
+        .from('models')
+        .select(`
+          id, name, active, brand_id,
+          brands ( name )
+        `)
+        .eq('tenant_id', tenantId)
+        .order('name');
+
+      if (error) {
+        const localModels = await getAllRecords<any>(STORES.MODELS);
+        return localModels.map((m: any) => ({ id: m.id, name: m.name, brandId: m.brand_id, brandName: 'Sin Marca', active: m.active ?? true }));
+      }
+
+      if (data) {
+        try { await putManyRecords(STORES.MODELS, data); } catch {}
+      }
+
+      return (data || []).map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        brandId: m.brand_id,
+        brandName: m.brands?.name || 'Sin Marca',
+        brand_id: m.brand_id,
+        brand_name: m.brands?.name || 'Sin Marca',
+        active: m.active ?? true,
+      }));
+    } catch {
+      try {
+        const localModels = await getAllRecords<any>(STORES.MODELS);
+        return localModels.map((m: any) => ({ id: m.id, name: m.name, brandId: m.brand_id, brandName: 'Sin Marca', active: m.active ?? true }));
+      } catch {
+        return [];
+      }
+    }
   },
 
   async createModel(name: string, brandId?: string): Promise<Model | null> {
     const tenantId = getActiveTenantId();
     if (!tenantId) return null;
 
-    const { data, error } = await supabase
-      .from('models')
-      .insert({ tenant_id: tenantId, name, brand_id: brandId || null })
-      .select(`
-        id, name, active, brand_id,
-        brands ( name )
-      `)
-      .single();
+    if (isNetworkOnline()) {
+      try {
+        const { data, error } = await supabase
+          .from('models')
+          .insert({ tenant_id: tenantId, name, brand_id: brandId || null })
+          .select(`
+            id, name, active, brand_id,
+            brands ( name )
+          `)
+          .single();
 
-    if (error || !data) {
-      console.error('Error creating model:', error);
-      return null;
+        if (!error && data) {
+          try { await putRecord(STORES.MODELS, data); } catch {}
+          auditService.logAction({
+            action: 'CREAR',
+            entityType: 'models',
+            entityId: data.id,
+            description: `Creación de modelo "${name}"`,
+            details: { name, brand_id: brandId },
+          });
+
+          return {
+            id: data.id,
+            name: data.name,
+            brandId: data.brand_id,
+            brandName: (data as any).brands?.name || 'Sin Marca',
+            active: true,
+          };
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online model create failed, queueing offline:', networkErr);
+      }
     }
+
+    // Offline fallback
+    const localId = generateLocalId();
+    const localModel = { id: localId, tenant_id: tenantId, name, brand_id: brandId || null, active: true };
+    try { await putRecord(STORES.MODELS, localModel); } catch {}
+    try {
+      await queueMutation('models', 'CREATE', localModel);
+      refreshPendingCount().catch(() => {});
+    } catch {}
 
     auditService.logAction({
       action: 'CREAR',
       entityType: 'models',
-      entityId: data.id,
-      description: `Creación de modelo "${name}"`,
+      entityId: localId,
+      description: `Creación de modelo "${name}" (Modo Offline)`,
       details: { name, brand_id: brandId },
     });
 
     return {
-      id: data.id,
-      name: data.name,
-      brandId: data.brand_id,
-      brandName: (data as any).brands?.name || 'Sin Marca',
+      id: localId,
+      name,
+      brandId,
+      brandName: 'Sin Marca',
       active: true,
     };
   },
 
   async updateModel(id: string, name: string, brandId?: string): Promise<boolean> {
-    const { error } = await supabase
-      .from('models')
-      .update({ name, brand_id: brandId || null })
-      .eq('id', id);
+    try {
+      const existing = await getRecord<any>(STORES.MODELS, id);
+      if (existing) {
+        await putRecord(STORES.MODELS, { ...existing, name, brand_id: brandId || null });
+      }
+    } catch {}
 
-    if (!error) {
-      auditService.logAction({
-        action: 'MODIFICAR',
-        entityType: 'models',
-        entityId: id,
-        description: `Actualización de modelo "${name}"`,
-        details: { name, brand_id: brandId },
-      });
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase
+          .from('models')
+          .update({ name, brand_id: brandId || null })
+          .eq('id', id);
+
+        if (!error) {
+          auditService.logAction({
+            action: 'MODIFICAR',
+            entityType: 'models',
+            entityId: id,
+            description: `Actualización de modelo "${name}"`,
+            details: { name, brand_id: brandId },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online model update failed, queueing offline:', networkErr);
+      }
     }
-    return !error;
+
+    // Offline queue
+    try {
+      await queueMutation('models', 'UPDATE', { _id: id, name, brand_id: brandId || null });
+      refreshPendingCount().catch(() => {});
+    } catch {}
+
+    auditService.logAction({
+      action: 'MODIFICAR',
+      entityType: 'models',
+      entityId: id,
+      description: `Actualización de modelo "${name}" (Modo Offline)`,
+      details: { name, brand_id: brandId },
+    });
+
+    return true;
   },
 
   async deleteModel(id: string): Promise<boolean> {
     let modelName = 'Modelo';
-    const { data } = await supabase.from('models').select('name').eq('id', id).maybeSingle();
-    if (data) modelName = data.name || modelName;
+    try {
+      const localModel = await getRecord<any>(STORES.MODELS, id);
+      if (localModel) modelName = localModel.name || modelName;
+      await deleteLocalRecord(STORES.MODELS, id);
+    } catch {}
 
-    const { error } = await supabase.from('models').delete().eq('id', id);
-    if (!error) {
-      auditService.logAction({
-        action: 'ELIMINAR',
-        entityType: 'models',
-        entityId: id,
-        description: `Eliminación de modelo "${modelName}"`,
-        details: { name: modelName },
-      });
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase.from('models').delete().eq('id', id);
+        if (!error) {
+          auditService.logAction({
+            action: 'ELIMINAR',
+            entityType: 'models',
+            entityId: id,
+            description: `Eliminación de modelo "${modelName}"`,
+            details: { name: modelName },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[catalogService] Online model delete failed, queueing offline:', networkErr);
+      }
     }
-    return !error;
+
+    // Offline queue
+    try {
+      await queueMutation('models', 'DELETE', { _id: id });
+      refreshPendingCount().catch(() => {});
+    } catch {}
+
+    auditService.logAction({
+      action: 'ELIMINAR',
+      entityType: 'models',
+      entityId: id,
+      description: `Eliminación de modelo "${modelName}" (Modo Offline)`,
+      details: { name: modelName },
+    });
+
+    return true;
   },
 };
 
@@ -917,79 +1610,205 @@ export const customersService = {
     if (!tenantId) return null;
 
     const custName = cust.businessName || cust.fullName || 'Cliente';
-    const { data, error } = await supabase
-      .from('customers')
-      .insert({
+
+    // 1. Try online creation if connected
+    if (isNetworkOnline()) {
+      try {
+        const { data, error } = await supabase
+          .from('customers')
+          .insert({
+            tenant_id: tenantId,
+            customer_type: cust.customerType,
+            document_type: cust.documentType,
+            document_number: cust.documentNumber,
+            full_name: cust.fullName || null,
+            business_name: cust.businessName || null,
+            email: cust.email || null,
+            phone: cust.phone || null,
+            address: cust.address || null,
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          const created: Customer = {
+            id: data.id,
+            ...cust,
+            name: data.business_name || data.full_name || custName,
+          };
+          try { await putRecord(STORES.CUSTOMERS, created); } catch { /* non-critical */ }
+
+          auditService.logAction({
+            action: 'CREAR',
+            entityType: 'customers',
+            entityId: data.id,
+            description: `Cliente ${custName} registrado`,
+            details: { business_name: cust.businessName, full_name: cust.fullName, name: custName, document_number: cust.documentNumber },
+          });
+
+          return created;
+        }
+      } catch (networkErr) {
+        console.warn('[customersService] Online creation failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // 2. Offline fallback: local IndexedDB + Outbox Queue
+    const localId = generateLocalId();
+    const localCustomer: Customer = {
+      id: localId,
+      ...cust,
+      name: custName,
+    };
+
+    try {
+      await putRecord(STORES.CUSTOMERS, localCustomer);
+    } catch (dbErr) {
+      console.error('[customersService] Error saving to IndexedDB:', dbErr);
+    }
+
+    try {
+      await queueMutation('customers', 'CREATE', {
+        id: localId,
         tenant_id: tenantId,
         customer_type: cust.customerType,
         document_type: cust.documentType,
         document_number: cust.documentNumber,
         full_name: cust.fullName || null,
         business_name: cust.businessName || null,
-        email: cust.email,
-        phone: cust.phone,
-        address: cust.address,
-      })
-      .select()
-      .single();
-
-    if (error || !data) return null;
+        email: cust.email || null,
+        phone: cust.phone || null,
+        address: cust.address || null,
+      });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[customersService] Error queueing outbox mutation:', queueErr);
+    }
 
     auditService.logAction({
       action: 'CREAR',
       entityType: 'customers',
-      entityId: data.id,
-      description: `Cliente ${custName} registrado`,
+      entityId: localId,
+      description: `Cliente ${custName} registrado (Modo Offline)`,
       details: { business_name: cust.businessName, full_name: cust.fullName, name: custName, document_number: cust.documentNumber },
     });
 
-    return {
-      id: data.id,
-      ...cust,
-      name: data.business_name || data.full_name || 'Cliente',
-    };
+    return localCustomer;
   },
 
   async updateCustomer(id: string, cust: Partial<Customer>): Promise<boolean> {
     const custName = cust.businessName || cust.fullName || cust.name || 'Cliente';
-    const { error } = await supabase
-      .from('customers')
-      .update({
-        ...(cust.customerType && { customer_type: cust.customerType }),
-        ...(cust.documentType && { document_type: cust.documentType }),
-        ...(cust.documentNumber && { document_number: cust.documentNumber }),
-        ...(cust.fullName !== undefined && { full_name: cust.fullName }),
-        ...(cust.businessName !== undefined && { business_name: cust.businessName }),
-        ...(cust.email !== undefined && { email: cust.email }),
-        ...(cust.phone !== undefined && { phone: cust.phone }),
-        ...(cust.address !== undefined && { address: cust.address }),
-      })
-      .eq('id', id);
 
-    if (!error) {
-      auditService.logAction({
-        action: 'MODIFICAR',
-        entityType: 'customers',
-        entityId: id,
-        description: `Cliente ${custName} actualizado`,
-        details: { business_name: cust.businessName, full_name: cust.fullName, name: custName, document_number: cust.documentNumber },
-      });
+    // Update local cache
+    try {
+      const existing = await getRecord<Customer>(STORES.CUSTOMERS, id);
+      if (existing) {
+        const updated: Customer = {
+          ...existing,
+          ...cust,
+          name: cust.businessName || cust.fullName || cust.name || existing.name,
+        };
+        await putRecord(STORES.CUSTOMERS, updated);
+      }
+    } catch (e) {
+      console.warn('[customersService] Error updating local cache:', e);
     }
 
-    return !error;
+    const payload: any = {};
+    if (cust.customerType) payload.customer_type = cust.customerType;
+    if (cust.documentType) payload.document_type = cust.documentType;
+    if (cust.documentNumber) payload.document_number = cust.documentNumber;
+    if (cust.fullName !== undefined) payload.full_name = cust.fullName;
+    if (cust.businessName !== undefined) payload.business_name = cust.businessName;
+    if (cust.email !== undefined) payload.email = cust.email;
+    if (cust.phone !== undefined) payload.phone = cust.phone;
+    if (cust.address !== undefined) payload.address = cust.address;
+
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase
+          .from('customers')
+          .update(payload)
+          .eq('id', id);
+
+        if (!error) {
+          auditService.logAction({
+            action: 'MODIFICAR',
+            entityType: 'customers',
+            entityId: id,
+            description: `Cliente ${custName} actualizado`,
+            details: { business_name: cust.businessName, full_name: cust.fullName, name: custName, document_number: cust.documentNumber },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[customersService] Online update failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline queue
+    try {
+      await queueMutation('customers', 'UPDATE', {
+        _id: id,
+        ...payload,
+      });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[customersService] Error queueing update mutation:', queueErr);
+    }
+
+    auditService.logAction({
+      action: 'MODIFICAR',
+      entityType: 'customers',
+      entityId: id,
+      description: `Cliente ${custName} actualizado (Modo Offline)`,
+      details: { business_name: cust.businessName, full_name: cust.fullName, name: custName, document_number: cust.documentNumber },
+    });
+
+    return true;
   },
 
   async deleteCustomer(id: string): Promise<boolean> {
-    const { error } = await supabase.from('customers').delete().eq('id', id);
-    if (!error) {
-      auditService.logAction({
-        action: 'ELIMINAR',
-        entityType: 'customers',
-        entityId: id,
-        description: `Cliente eliminado`,
-      });
+    // Delete from local cache
+    try {
+      await deleteLocalRecord(STORES.CUSTOMERS, id);
+    } catch (e) {
+      console.warn('[customersService] Error deleting local record:', e);
     }
-    return !error;
+
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase.from('customers').delete().eq('id', id);
+        if (!error) {
+          auditService.logAction({
+            action: 'ELIMINAR',
+            entityType: 'customers',
+            entityId: id,
+            description: `Cliente eliminado`,
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[customersService] Online delete failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline queue
+    try {
+      await queueMutation('customers', 'DELETE', { _id: id });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[customersService] Error queueing delete mutation:', queueErr);
+    }
+
+    auditService.logAction({
+      action: 'ELIMINAR',
+      entityType: 'customers',
+      entityId: id,
+      description: `Cliente eliminado (Modo Offline)`,
+    });
+
+    return true;
   },
 };
 
@@ -1036,9 +1855,66 @@ export const suppliersService = {
     const tenantId = getActiveTenantId();
     if (!tenantId) return null;
 
-    const { data, error } = await supabase
-      .from('suppliers')
-      .insert({
+    if (isNetworkOnline()) {
+      try {
+        const { data, error } = await supabase
+          .from('suppliers')
+          .insert({
+            tenant_id: tenantId,
+            ruc: sup.ruc,
+            business_name: sup.businessName,
+            contact_name: sup.contactName,
+            phone: sup.phone,
+            email: sup.email,
+            address: sup.address,
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          const created: Supplier = {
+            id: data.id,
+            ...sup,
+            name: data.business_name,
+          };
+          try { await putRecord(STORES.SUPPLIERS, created); } catch { /* non-critical */ }
+
+          auditService.logAction({
+            action: 'CREAR',
+            entityType: 'suppliers',
+            entityId: data.id,
+            description: `Registro de proveedor "${sup.businessName}" (RUC: ${sup.ruc || 'S/N'}, Contacto: ${sup.contactName || 'S/N'})`,
+            details: {
+              business_name: sup.businessName,
+              ruc: sup.ruc,
+              contact_name: sup.contactName,
+            },
+          });
+
+          return created;
+        }
+      } catch (networkErr) {
+        console.warn('[suppliersService] Online creation failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline fallback
+    const localId = generateLocalId();
+    const localSupplier: Supplier = {
+      id: localId,
+      ...sup,
+      name: sup.businessName,
+    };
+
+    try {
+      await putRecord(STORES.SUPPLIERS, localSupplier);
+    } catch (dbErr) {
+      console.error('[suppliersService] Error saving to IndexedDB:', dbErr);
+    }
+
+    try {
+      await queueMutation('suppliers', 'CREATE', {
+        id: localId,
         tenant_id: tenantId,
         ruc: sup.ruc,
         business_name: sup.businessName,
@@ -1046,17 +1922,17 @@ export const suppliersService = {
         phone: sup.phone,
         email: sup.email,
         address: sup.address,
-      })
-      .select()
-      .single();
-
-    if (error || !data) return null;
+      });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[suppliersService] Error queueing outbox mutation:', queueErr);
+    }
 
     auditService.logAction({
       action: 'CREAR',
       entityType: 'suppliers',
-      entityId: data.id,
-      description: `Registro de proveedor "${sup.businessName}" (RUC: ${sup.ruc || 'S/N'}, Contacto: ${sup.contactName || 'S/N'})`,
+      entityId: localId,
+      description: `Registro de proveedor "${sup.businessName}" (Modo Offline)`,
       details: {
         business_name: sup.businessName,
         ruc: sup.ruc,
@@ -1064,55 +1940,126 @@ export const suppliersService = {
       },
     });
 
-    return {
-      id: data.id,
-      ...sup,
-      name: data.business_name,
-    };
+    return localSupplier;
   },
 
   async updateSupplier(id: string, sup: Partial<Supplier>): Promise<boolean> {
-    const { error } = await supabase
-      .from('suppliers')
-      .update({
-        ...(sup.ruc && { ruc: sup.ruc }),
-        ...(sup.businessName && { business_name: sup.businessName }),
-        ...(sup.contactName !== undefined && { contact_name: sup.contactName }),
-        ...(sup.phone !== undefined && { phone: sup.phone }),
-        ...(sup.email !== undefined && { email: sup.email }),
-        ...(sup.address !== undefined && { address: sup.address }),
-      })
-      .eq('id', id);
-
-    if (!error) {
-      auditService.logAction({
-        action: 'MODIFICAR',
-        entityType: 'suppliers',
-        entityId: id,
-        description: `Actualización de proveedor "${sup.businessName || id}"`,
-        details: { ...sup },
-      });
+    // Update local cache
+    try {
+      const existing = await getRecord<Supplier>(STORES.SUPPLIERS, id);
+      if (existing) {
+        const updated: Supplier = {
+          ...existing,
+          ...sup,
+          name: sup.businessName || existing.name,
+        };
+        await putRecord(STORES.SUPPLIERS, updated);
+      }
+    } catch (e) {
+      console.warn('[suppliersService] Error updating local cache:', e);
     }
 
-    return !error;
+    const payload: any = {};
+    if (sup.ruc !== undefined) payload.ruc = sup.ruc;
+    if (sup.businessName !== undefined) payload.business_name = sup.businessName;
+    if (sup.contactName !== undefined) payload.contact_name = sup.contactName;
+    if (sup.phone !== undefined) payload.phone = sup.phone;
+    if (sup.email !== undefined) payload.email = sup.email;
+    if (sup.address !== undefined) payload.address = sup.address;
+
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase
+          .from('suppliers')
+          .update(payload)
+          .eq('id', id);
+
+        if (!error) {
+          auditService.logAction({
+            action: 'MODIFICAR',
+            entityType: 'suppliers',
+            entityId: id,
+            description: `Actualización de proveedor "${sup.businessName || id}"`,
+            details: { ...sup },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[suppliersService] Online update failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline queue
+    try {
+      await queueMutation('suppliers', 'UPDATE', {
+        _id: id,
+        ...payload,
+      });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[suppliersService] Error queueing update mutation:', queueErr);
+    }
+
+    auditService.logAction({
+      action: 'MODIFICAR',
+      entityType: 'suppliers',
+      entityId: id,
+      description: `Actualización de proveedor "${sup.businessName || id}" (Modo Offline)`,
+      details: { ...sup },
+    });
+
+    return true;
   },
 
   async deleteSupplier(id: string): Promise<boolean> {
     let supName = 'Proveedor';
-    const { data } = await supabase.from('suppliers').select('business_name').eq('id', id).maybeSingle();
-    if (data) supName = data.business_name || supName;
+    try {
+      const localSup = await getRecord<Supplier>(STORES.SUPPLIERS, id);
+      if (localSup) supName = localSup.businessName || localSup.name || supName;
+    } catch (_) {}
 
-    const { error } = await supabase.from('suppliers').delete().eq('id', id);
-    if (!error) {
-      auditService.logAction({
-        action: 'ELIMINAR',
-        entityType: 'suppliers',
-        entityId: id,
-        description: `Eliminación de proveedor "${supName}"`,
-        details: { business_name: supName },
-      });
+    // Delete from local cache
+    try {
+      await deleteLocalRecord(STORES.SUPPLIERS, id);
+    } catch (e) {
+      console.warn('[suppliersService] Error deleting local record:', e);
     }
-    return !error;
+
+    if (isNetworkOnline()) {
+      try {
+        const { error } = await supabase.from('suppliers').delete().eq('id', id);
+        if (!error) {
+          auditService.logAction({
+            action: 'ELIMINAR',
+            entityType: 'suppliers',
+            entityId: id,
+            description: `Eliminación de proveedor "${supName}"`,
+            details: { business_name: supName },
+          });
+          return true;
+        }
+      } catch (networkErr) {
+        console.warn('[suppliersService] Online delete failed, queueing offline mutation:', networkErr);
+      }
+    }
+
+    // Offline queue
+    try {
+      await queueMutation('suppliers', 'DELETE', { _id: id });
+      refreshPendingCount().catch(() => {});
+    } catch (queueErr) {
+      console.error('[suppliersService] Error queueing delete mutation:', queueErr);
+    }
+
+    auditService.logAction({
+      action: 'ELIMINAR',
+      entityType: 'suppliers',
+      entityId: id,
+      description: `Eliminación de proveedor "${supName}" (Modo Offline)`,
+      details: { business_name: supName },
+    });
+
+    return true;
   },
 };
 
@@ -1935,6 +2882,42 @@ export const inventoryService = {
       const tenantId = getActiveTenantId();
       if (!tenantId) return [];
 
+      if (!isNetworkOnline()) {
+        try {
+          const localMovs = await getAllRecords<any>(STORES.INVENTORY_MOVEMENTS);
+          const localProds = await getAllRecords<Product>(STORES.PRODUCTS);
+          const prodMap = new Map<string, { name: string; sku: string }>();
+          localProds.forEach(p => prodMap.set(p.id, { name: p.name, sku: p.sku || p.code || '' }));
+
+          let filtered = localMovs;
+          if (branchId && branchId !== 'ALL') {
+            filtered = localMovs.filter((m: any) => m.branch_id === branchId || m.source_branch_id === branchId || m.target_branch_id === branchId);
+          }
+
+          return filtered.map((m: any) => {
+            const pInfo = prodMap.get(m.product_id);
+            return {
+              id: m.id,
+              date: m.created_at ? new Date(m.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }) : 'Reciente',
+              productId: m.product_id,
+              product: pInfo?.name || m.product || 'Producto',
+              productSku: pInfo?.sku || m.product_sku || '',
+              branchId: m.branch_id,
+              branchName: m.branch_name || 'Sede Principal',
+              type: m.movement_type as any,
+              qty: Number(m.quantity) || 0,
+              prevStock: Number(m.previous_stock) || 0,
+              newStock: Number(m.resulting_stock) || 0,
+              reason: m.reason || 'Sin motivo especificado',
+              sourceBranchId: m.source_branch_id,
+              targetBranchId: m.target_branch_id,
+            };
+          });
+        } catch {
+          return [];
+        }
+      }
+
       let query = supabase
         .from('inventory_movements')
         .select(`
@@ -1953,8 +2936,28 @@ export const inventoryService = {
       const { data, error } = await query;
 
       if (error || !data) {
-        return [];
+        try {
+          const localMovs = await getAllRecords<any>(STORES.INVENTORY_MOVEMENTS);
+          return localMovs.map((m: any) => ({
+            id: m.id,
+            date: m.created_at ? new Date(m.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }) : 'Reciente',
+            productId: m.product_id,
+            product: m.product || 'Producto',
+            productSku: m.product_sku || '',
+            branchId: m.branch_id,
+            branchName: 'Sede Principal',
+            type: m.movement_type as any,
+            qty: Number(m.quantity) || 0,
+            prevStock: Number(m.previous_stock) || 0,
+            newStock: Number(m.resulting_stock) || 0,
+            reason: m.reason || 'Sin motivo especificado',
+          }));
+        } catch {
+          return [];
+        }
       }
+
+      try { await putManyRecords(STORES.INVENTORY_MOVEMENTS, data); } catch {}
 
       return data.map((m: any) => ({
         id: m.id,
@@ -1974,7 +2977,25 @@ export const inventoryService = {
       }));
     } catch (err) {
       console.error('Error fetching inventory movements:', err);
-      return [];
+      try {
+        const localMovs = await getAllRecords<any>(STORES.INVENTORY_MOVEMENTS);
+        return localMovs.map((m: any) => ({
+          id: m.id,
+          date: m.created_at ? new Date(m.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }) : 'Reciente',
+          productId: m.product_id,
+          product: m.product || 'Producto',
+          productSku: m.product_sku || '',
+          branchId: m.branch_id,
+          branchName: 'Sede Principal',
+          type: m.movement_type as any,
+          qty: Number(m.quantity) || 0,
+          prevStock: Number(m.previous_stock) || 0,
+          newStock: Number(m.resulting_stock) || 0,
+          reason: m.reason || 'Sin motivo especificado',
+        }));
+      } catch {
+        return [];
+      }
     }
   },
 
@@ -2003,146 +3024,194 @@ export const inventoryService = {
       return false;
     }
 
+    // 1. Resolve effective target branch
     let targetBranch = branchId && branchId !== 'ALL' && branchId !== DEFAULT_BRANCH_ID ? branchId : getActiveBranchId();
     if (!targetBranch || targetBranch === 'ALL' || targetBranch === DEFAULT_BRANCH_ID) {
-      const { data: firstBranch } = await supabase
-        .from('branches')
-        .select('id')
-        .eq('tenant_id', tenantId)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      if (firstBranch) targetBranch = firstBranch.id;
+      try {
+        const localBranches = await getAllRecords<any>(STORES.BRANCHES);
+        if (localBranches.length > 0) {
+          targetBranch = localBranches[0].id;
+        }
+      } catch (_) {}
     }
 
+    const qtyChange = Math.abs(qty);
+
+    // 2. Fetch local product and update stock in IndexedDB STORES.PRODUCTS
     let currentStock = 0;
-    let invRecordId: string | null = null;
-    let effectiveBranchId = targetBranch;
-
-    // 1. Try finding inventory for this specific branch
-    if (targetBranch && targetBranch !== 'ALL' && targetBranch !== DEFAULT_BRANCH_ID) {
-      const { data: inv } = await supabase
-        .from('branch_inventory')
-        .select('id, branch_id, quantity')
-        .eq('product_id', productId)
-        .eq('branch_id', targetBranch)
-        .maybeSingle();
-
-      if (inv) {
-        invRecordId = inv.id;
-        effectiveBranchId = inv.branch_id;
-        currentStock = Number(inv.quantity) || 0;
-      }
-    }
-
-    // 2. If not found in target branch, find any branch inventory record for this product with stock
-    if (!invRecordId) {
-      const { data: anyInv } = await supabase
-        .from('branch_inventory')
-        .select('id, branch_id, quantity')
-        .eq('tenant_id', tenantId)
-        .eq('product_id', productId)
-        .order('quantity', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (anyInv) {
-        invRecordId = anyInv.id;
-        effectiveBranchId = anyInv.branch_id;
-        currentStock = Number(anyInv.quantity) || 0;
-      }
-    }
-
-    let resultingStock = currentStock;
-    let qtyChange = Math.abs(qty);
-
-    if (type === 'IN') {
-      resultingStock = currentStock + qtyChange;
-    } else if (type === 'OUT') {
-      resultingStock = Math.max(0, currentStock - qtyChange);
-    } else if (type === 'ADJUSTMENT') {
-      resultingStock = qty;
-      qtyChange = Math.abs(resultingStock - currentStock);
-    }
-
-    // Update branch_inventory
-    if (invRecordId) {
-      const { error: updateErr } = await supabase
-        .from('branch_inventory')
-        .update({ quantity: resultingStock })
-        .eq('id', invRecordId);
-
-      if (updateErr) {
-        console.error('Error updating branch_inventory quantity:', updateErr);
-      }
-    } else if (effectiveBranchId && effectiveBranchId !== 'ALL' && effectiveBranchId !== DEFAULT_BRANCH_ID) {
-      const { error: insertErr } = await supabase.from('branch_inventory').insert({
-        tenant_id: tenantId,
-        branch_id: effectiveBranchId,
-        product_id: productId,
-        quantity: resultingStock,
-      });
-
-      if (insertErr) {
-        console.error('Error inserting branch_inventory:', insertErr);
-      }
-    }
-
-    // 3. Update products.colors JSON variant stock if the product has color variants
+    let localProd: Product | null | undefined = null;
     try {
-      const { data: prodRow } = await supabase
-        .from('products')
-        .select('id, colors')
-        .eq('id', productId)
-        .maybeSingle();
+      localProd = await getRecord<Product>(STORES.PRODUCTS, productId);
+      if (localProd) {
+        currentStock = localProd.stock || 0;
+        let newProdStock = currentStock;
+        if (type === 'IN') newProdStock = currentStock + qtyChange;
+        else if (type === 'OUT') newProdStock = Math.max(0, currentStock - qtyChange);
+        else if (type === 'ADJUSTMENT') newProdStock = qty;
 
-      if (prodRow && Array.isArray(prodRow.colors) && prodRow.colors.length > 0) {
-        let targetColorName = colorVariant?.trim();
-        if (!targetColorName) {
-          const colorMatch = productName.match(/\(([^)]+)\)$/);
-          if (colorMatch && colorMatch[1]) {
-            targetColorName = colorMatch[1].trim();
+        localProd.stock = newProdStock;
+
+        // Update branchStocks array inside product
+        if (Array.isArray(localProd.branchStocks)) {
+          const bsIdx = localProd.branchStocks.findIndex(b => b.branchId === targetBranch);
+          if (bsIdx >= 0) {
+            const oldBs = localProd.branchStocks[bsIdx].stock || 0;
+            const newBs = type === 'IN' ? oldBs + qtyChange : (type === 'OUT' ? Math.max(0, oldBs - qtyChange) : qty);
+            localProd.branchStocks[bsIdx] = { ...localProd.branchStocks[bsIdx], stock: newBs };
+          } else if (targetBranch) {
+            localProd.branchStocks.push({
+              branchId: targetBranch,
+              branchName: branchName || 'Sede Principal',
+              stock: newProdStock,
+            });
           }
         }
 
-        let variantUpdated = false;
-        const updatedColors = prodRow.colors.map((c: any) => {
-          if (!c) return c;
-          const cName = (c.color || '').trim().toLowerCase();
-          const isMatch = targetColorName
-            ? cName === targetColorName.toLowerCase()
-            : true;
-
-          if (isMatch && !variantUpdated) {
-            const currentVariantStock = Number(c.stock) || 0;
-            let newVariantStock = currentVariantStock;
-            if (type === 'OUT') {
-              newVariantStock = Math.max(0, currentVariantStock - qtyChange);
-            } else if (type === 'IN') {
-              newVariantStock = currentVariantStock + qtyChange;
-            } else if (type === 'ADJUSTMENT') {
-              newVariantStock = qtyChange;
-            }
-            variantUpdated = true;
-            return { ...c, stock: newVariantStock };
+        // Update colors variant stock inside product
+        if (Array.isArray(localProd.colors) && localProd.colors.length > 0) {
+          let targetColor = colorVariant?.trim();
+          if (!targetColor) {
+            const m = productName.match(/\(([^)]+)\)$/);
+            if (m && m[1]) targetColor = m[1].trim();
           }
-          return c;
-        });
-
-        if (variantUpdated) {
-          await supabase
-            .from('products')
-            .update({ colors: updatedColors })
-            .eq('id', productId);
+          if (targetColor) {
+            localProd.colors = localProd.colors.map((c: any) => {
+              if (c && c.color && c.color.trim().toLowerCase() === targetColor!.toLowerCase()) {
+                const curVarStock = Number(c.stock) || 0;
+                const newVarStock = type === 'OUT' ? Math.max(0, curVarStock - qtyChange) : (type === 'IN' ? curVarStock + qtyChange : qty);
+                return { ...c, stock: newVarStock };
+              }
+              return c;
+            });
+          }
         }
+
+        await putRecord(STORES.PRODUCTS, localProd);
       }
-    } catch (colorErr) {
-      console.error('Error updating color variant stock on product:', colorErr);
+    } catch (_) {}
+
+    // 3. Update stock in IndexedDB STORES.BRANCH_INVENTORY
+    let resultingStock = currentStock;
+    if (type === 'IN') resultingStock = currentStock + qtyChange;
+    else if (type === 'OUT') resultingStock = Math.max(0, currentStock - qtyChange);
+    else if (type === 'ADJUSTMENT') resultingStock = qty;
+
+    try {
+      const allBranchInv = await getAllRecords<any>(STORES.BRANCH_INVENTORY);
+      const existingInv = allBranchInv.find(
+        (bi: any) => bi.product_id === productId && (!targetBranch || bi.branch_id === targetBranch)
+      );
+      if (existingInv) {
+        const biStock = Number(existingInv.quantity) || 0;
+        const newBiStock = type === 'OUT' ? Math.max(0, biStock - qtyChange) : (type === 'IN' ? biStock + qtyChange : qty);
+        await putRecord(STORES.BRANCH_INVENTORY, { ...existingInv, quantity: newBiStock });
+      } else if (targetBranch) {
+        await putRecord(STORES.BRANCH_INVENTORY, {
+          id: generateLocalId(),
+          tenant_id: tenantId,
+          branch_id: targetBranch,
+          product_id: productId,
+          quantity: resultingStock,
+        });
+      }
+    } catch (_) {}
+
+    // 4. If Online, update Supabase branch_inventory, products.colors, and inventory_movements
+    if (isNetworkOnline()) {
+      try {
+        let invRecordId: string | null = null;
+        let onlineCurrentStock = currentStock;
+
+        if (targetBranch) {
+          const { data: inv } = await supabase
+            .from('branch_inventory')
+            .select('id, branch_id, quantity')
+            .eq('product_id', productId)
+            .eq('branch_id', targetBranch)
+            .maybeSingle();
+
+          if (inv) {
+            invRecordId = inv.id;
+            onlineCurrentStock = Number(inv.quantity) || 0;
+          }
+        }
+
+        if (!invRecordId) {
+          const { data: anyInv } = await supabase
+            .from('branch_inventory')
+            .select('id, branch_id, quantity')
+            .eq('tenant_id', tenantId)
+            .eq('product_id', productId)
+            .order('quantity', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (anyInv) {
+            invRecordId = anyInv.id;
+            onlineCurrentStock = Number(anyInv.quantity) || 0;
+          }
+        }
+
+        let onlineResultingStock = onlineCurrentStock;
+        if (type === 'IN') onlineResultingStock = onlineCurrentStock + qtyChange;
+        else if (type === 'OUT') onlineResultingStock = Math.max(0, onlineCurrentStock - qtyChange);
+        else if (type === 'ADJUSTMENT') onlineResultingStock = qty;
+
+        if (invRecordId) {
+          await supabase.from('branch_inventory').update({ quantity: onlineResultingStock }).eq('id', invRecordId);
+        } else if (targetBranch) {
+          await supabase.from('branch_inventory').insert({
+            tenant_id: tenantId,
+            branch_id: targetBranch,
+            product_id: productId,
+            quantity: onlineResultingStock,
+          });
+        }
+
+        if (localProd && Array.isArray(localProd.colors) && localProd.colors.length > 0) {
+          await supabase.from('products').update({ colors: localProd.colors }).eq('id', productId);
+        }
+
+        const { data: movData, error: movErr } = await supabase.from('inventory_movements').insert({
+          tenant_id: tenantId,
+          branch_id: targetBranch || null,
+          product_id: productId,
+          movement_type: type,
+          quantity: qtyChange,
+          previous_stock: onlineCurrentStock,
+          resulting_stock: onlineResultingStock,
+          reason: reason || 'Movimiento de inventario',
+          reference_type: params.referenceType || 'MANUAL',
+        }).select().single();
+
+        if (!movErr && movData) {
+          try { await putRecord(STORES.INVENTORY_MOVEMENTS, movData); } catch {}
+          auditService.logAction({
+            action: type === 'IN' ? 'ENTRADA STOCK' : type === 'OUT' ? 'SALIDA STOCK' : 'AJUSTE STOCK',
+            entityType: 'inventory',
+            entityId: productId,
+            branchId: targetBranch || undefined,
+            description: `${type === 'IN' ? 'Entrada' : type === 'OUT' ? 'Salida' : 'Ajuste'} de ${qtyChange} unidades para "${productName}". Motivo: ${reason}`,
+            details: {
+              product_name: productName,
+              movement_type: type,
+              quantity: qtyChange,
+              previous_stock: onlineCurrentStock,
+            }
+          });
+          return true;
+        }
+      } catch (onlineErr) {
+        console.warn('[inventoryService] Online movement registration failed, processing offline:', onlineErr);
+      }
     }
 
-    const { error: movErr } = await supabase.from('inventory_movements').insert({
+    // 5. Offline Fallback: Save local movement and queue outbox mutation
+    const localMovId = generateLocalId();
+    const localMovement = {
+      id: localMovId,
       tenant_id: tenantId,
-      branch_id: (effectiveBranchId && effectiveBranchId !== 'ALL' && effectiveBranchId !== DEFAULT_BRANCH_ID) ? effectiveBranchId : null,
+      branch_id: targetBranch || null,
       product_id: productId,
       movement_type: type,
       quantity: qtyChange,
@@ -2150,28 +3219,27 @@ export const inventoryService = {
       resulting_stock: resultingStock,
       reason: reason || 'Movimiento de inventario',
       reference_type: params.referenceType || 'MANUAL',
-    });
+      created_at: new Date().toISOString(),
+    };
 
-    if (movErr) {
-      console.error('Error recording inventory movement:', movErr);
-      return false;
-    }
+    try {
+      await putRecord(STORES.INVENTORY_MOVEMENTS, localMovement);
+      await queueMutation('inventory_movements', 'CREATE', localMovement);
+      refreshPendingCount().catch(() => {});
+    } catch (_) {}
 
     auditService.logAction({
       action: type === 'IN' ? 'ENTRADA STOCK' : type === 'OUT' ? 'SALIDA STOCK' : 'AJUSTE STOCK',
       entityType: 'inventory',
       entityId: productId,
       branchId: targetBranch || undefined,
-      description: `${type === 'IN' ? 'Entrada' : type === 'OUT' ? 'Salida' : 'Ajuste'} de ${qtyChange} unidades para "${productName}". Motivo: ${reason}`,
+      description: `${type === 'IN' ? 'Entrada' : type === 'OUT' ? 'Salida' : 'Ajuste'} de ${qtyChange} unidades para "${productName}" (Modo Offline). Motivo: ${reason}`,
       details: {
         product_name: productName,
         movement_type: type,
         quantity: qtyChange,
         previous_stock: currentStock,
-        resulting_stock: resultingStock,
-        reason,
-        branch_name: branchName,
-      },
+      }
     });
 
     return true;
@@ -2342,6 +3410,80 @@ export interface Sale {
 }
 
 export const salesService = {
+  _normalizeSale(s: any): Sale {
+    const custName = s.customer || s.customer_name || (s.customers ? (s.customers.business_name || s.customers.full_name) : 'Público General') || 'Público General';
+    const custDoc = s.customerDoc || s.customer_document || s.customers?.document_number || '00000000';
+    const sNum = s.saleNumber || s.sale_number || 'B001-00001';
+    const rawD = s.rawDate || s.created_at || new Date().toISOString();
+    const dateStr = s.date || new Date(rawD).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' });
+    const bName = s.branch || (s.branches ? s.branches.name : 'Sede Principal');
+    const bId = s.branchId || s.branch_id || '';
+    const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Vendedor') : 'Vendedor';
+
+    let creditRecord: any = null;
+    if (Array.isArray(s.credits) && s.credits.length > 0 && s.credits[0]?.id) {
+      creditRecord = s.credits[0];
+    } else if (s.credits && typeof s.credits === 'object' && !Array.isArray(s.credits) && s.credits.id) {
+      creditRecord = s.credits;
+    } else if (s.creditInfo) {
+      creditRecord = s.creditInfo;
+    }
+
+    const isCredit = s.paymentCondition === 'CREDITO' || Boolean(creditRecord && creditRecord.id) || (s.paymentMethod === 'TRANSFER' && Boolean(s.creditInfo));
+
+    let creditInfo = undefined;
+    if (creditRecord && (creditRecord.id || creditRecord.installments)) {
+      const rawInst = Array.isArray(creditRecord.credit_installments)
+        ? creditRecord.credit_installments.sort((a: any, b: any) => a.installment_number - b.installment_number)
+        : (Array.isArray(creditRecord.installments) ? creditRecord.installments : []);
+
+      creditInfo = {
+        id: creditRecord.id || 'credit-local',
+        installmentsCount: Number(creditRecord.installments_count || creditRecord.installmentsCount) || rawInst.length || 1,
+        initialPayment: Number(creditRecord.initial_payment || creditRecord.initialPayment) || 0,
+        financedAmount: Number(creditRecord.financed_amount || creditRecord.financedAmount) || 0,
+        interestRate: Number(creditRecord.interest_rate || creditRecord.interestRate) || 0,
+        interestAmount: Number(creditRecord.interest_amount || creditRecord.interestAmount) || 0,
+        totalCredit: Number(creditRecord.total_credit || creditRecord.totalCredit) || 0,
+        installmentFrequency: creditRecord.installment_frequency || creditRecord.installmentFrequency || 'MENSUAL',
+        amountPaid: Number(creditRecord.amount_paid || creditRecord.amountPaid) || 0,
+        balancePending: Number(creditRecord.balance_pending || creditRecord.balancePending) || 0,
+        status: creditRecord.status || 'PENDING',
+        installments: rawInst.map((ins: any) => ({
+          installmentNumber: ins.installment_number || ins.installmentNumber,
+          dueDate: ins.due_date || ins.dueDate,
+          totalAmount: Number(ins.total_amount || ins.totalAmount) || 0,
+          capitalAmount: Number(ins.capital_amount || ins.capitalAmount) || 0,
+          interestAmount: Number(ins.interest_amount || ins.interestAmount) || 0,
+          paidAmount: Number(ins.paid_amount || ins.paidAmount) || 0,
+          status: ins.status || 'PENDING',
+        })),
+      };
+    }
+
+    return {
+      id: s.id,
+      saleNumber: sNum,
+      customer: custName,
+      customerDoc: custDoc,
+      customerId: s.customerId || s.customer_id,
+      sellerName: s.sellerName || s.seller_name || currentUserName,
+      branch: bName,
+      branchId: bId,
+      date: dateStr,
+      rawDate: rawD,
+      total: Number(s.total) || 0,
+      subtotal: Number(s.subtotal) || 0,
+      tax: Number(s.tax) || 0,
+      paymentMethod: s.paymentMethod || s.payment_method || 'CASH',
+      paymentCondition: isCredit ? 'CREDITO' : 'CONTADO',
+      creditInfo,
+      documentType: s.documentType || s.document_type || (sNum.startsWith('F') ? 'FACTURA' : 'BOLETA'),
+      status: s.status || 'COMPLETED',
+      sunatStatus: s.sunatStatus || s.sunat_status || 'PENDIENTE',
+    };
+  },
+
   async getSales(): Promise<Sale[]> {
     try {
       const tenantId = getActiveTenantId();
@@ -2349,7 +3491,10 @@ export const salesService = {
 
       // ─── OFFLINE FALLBACK ───
       if (!isNetworkOnline()) {
-        try { return await getAllRecords<Sale>(STORES.SALES); } catch { return []; }
+        try {
+          const raw = await getAllRecords<any>(STORES.SALES);
+          return raw.map(this._normalizeSale).sort((a, b) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
+        } catch { return []; }
       }
 
       const { data, error } = await supabase
@@ -2371,76 +3516,13 @@ export const salesService = {
         .order('created_at', { ascending: false });
 
       if (error || !data) {
-        try { return await getAllRecords<Sale>(STORES.SALES); } catch { return []; }
+        try {
+          const raw = await getAllRecords<any>(STORES.SALES);
+          return raw.map(this._normalizeSale).sort((a, b) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
+        } catch { return []; }
       }
 
-      const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Vendedor') : 'Vendedor';
-
-      const result = data.map((s: any) => {
-        const custName = s.customer_name || (s.customers ? (s.customers.business_name || s.customers.full_name) : 'Público General') || 'Público General';
-        const custDoc = s.customer_document || s.customers?.document_number || '00000000';
-
-        let creditRecord: any = null;
-        if (Array.isArray(s.credits) && s.credits.length > 0 && s.credits[0]?.id) {
-          creditRecord = s.credits[0];
-        } else if (s.credits && typeof s.credits === 'object' && !Array.isArray(s.credits) && s.credits.id) {
-          creditRecord = s.credits;
-        }
-
-        const isCredit = Boolean(creditRecord && creditRecord.id);
-
-        let creditInfo = undefined;
-        if (creditRecord && isCredit) {
-          const rawInst = Array.isArray(creditRecord.credit_installments)
-            ? creditRecord.credit_installments.sort((a: any, b: any) => a.installment_number - b.installment_number)
-            : [];
-
-          creditInfo = {
-            id: creditRecord.id,
-            installmentsCount: Number(creditRecord.installments_count) || rawInst.length || 1,
-            initialPayment: Number(creditRecord.initial_payment) || 0,
-            financedAmount: Number(creditRecord.financed_amount) || 0,
-            interestRate: Number(creditRecord.interest_rate) || 0,
-            interestAmount: Number(creditRecord.interest_amount) || 0,
-            totalCredit: Number(creditRecord.total_credit) || 0,
-            installmentFrequency: creditRecord.installment_frequency || 'MENSUAL',
-            amountPaid: Number(creditRecord.amount_paid) || 0,
-            balancePending: Number(creditRecord.balance_pending) || 0,
-            status: creditRecord.status || 'PENDING',
-            installments: rawInst.map((ins: any) => ({
-              installmentNumber: ins.installment_number,
-              dueDate: ins.due_date,
-              totalAmount: Number(ins.total_amount) || 0,
-              capitalAmount: Number(ins.capital_amount) || 0,
-              interestAmount: Number(ins.interest_amount) || 0,
-              paidAmount: Number(ins.paid_amount) || 0,
-              status: ins.status || 'PENDING',
-            })),
-          };
-        }
-
-        return {
-          id: s.id,
-          saleNumber: s.sale_number,
-          customer: custName,
-          customerDoc: custDoc,
-          customerId: s.customer_id,
-          sellerName: s.seller_name || currentUserName,
-          branch: s.branches?.name || 'Sede Principal',
-          branchId: s.branch_id,
-          date: new Date(s.created_at).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
-          rawDate: s.created_at,
-          total: Number(s.total) || 0,
-          subtotal: Number(s.subtotal) || 0,
-          tax: Number(s.tax) || 0,
-          paymentMethod: s.payment_method as any,
-          paymentCondition: isCredit ? 'CREDITO' as const : 'CONTADO' as const,
-          creditInfo,
-          documentType: s.document_type || (s.sale_number?.startsWith('F') ? 'FACTURA' : 'BOLETA'),
-          status: s.status || 'COMPLETED',
-          sunatStatus: s.sunat_status || 'PENDIENTE',
-        };
-      }) as Sale[];
+      const result = data.map(this._normalizeSale);
 
       // ─── CACHE sales in IndexedDB ───
       try { await putManyRecords(STORES.SALES, result); } catch { /* non-critical */ }
@@ -2448,7 +3530,10 @@ export const salesService = {
       return result;
     } catch (err) {
       console.error('Error fetching sales from database:', err);
-      try { return await getAllRecords<Sale>(STORES.SALES); } catch { return []; }
+      try {
+        const raw = await getAllRecords<any>(STORES.SALES);
+        return raw.map(this._normalizeSale).sort((a, b) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
+      } catch { return []; }
     }
   },
 
@@ -2478,75 +3563,198 @@ export const salesService = {
 
       let customerName = sale.customerName?.trim() || 'Público General';
       let customerDoc = sale.customerDoc?.trim() || '00000000';
-      if (isValidUuid(sale.customerId)) {
-        const { data: custData } = await supabase
-          .from('customers')
-          .select('full_name, business_name, document_number')
-          .eq('id', sale.customerId!)
-          .maybeSingle();
-        if (custData) {
-          customerName = custData.business_name || custData.full_name || customerName;
-          customerDoc = custData.document_number || customerDoc;
-        }
-      }
 
       const currentUserName = typeof window !== 'undefined' ? (localStorage.getItem('auth_user') || 'Vendedor') : 'Vendedor';
       const targetBranch = isValidUuid(sale.branchId) ? sale.branchId : (getActiveBranchId() || null);
 
-      const { data: saleData, error: saleError } = await supabase
-        .from('sales')
-        .insert({
-          tenant_id: tenantId,
-          branch_id: targetBranch,
-          customer_id: isValidUuid(sale.customerId) ? sale.customerId : null,
-          customer_name: customerName,
-          customer_document: customerDoc,
-          sale_number: saleNumber,
-          status: 'COMPLETED',
-          subtotal: sale.subtotal,
-          tax: sale.tax,
-          total: sale.total,
-          payment_method: sale.paymentMethod,
-          document_type: sale.documentType || 'BOLETA',
-          seller_name: sale.sellerName || currentUserName,
-        })
-        .select()
-        .single();
+      // 1. Try Online Flow
+      if (isNetworkOnline()) {
+        try {
+          if (isValidUuid(sale.customerId)) {
+            const { data: custData } = await supabase
+              .from('customers')
+              .select('full_name, business_name, document_number')
+              .eq('id', sale.customerId!)
+              .maybeSingle();
+            if (custData) {
+              customerName = custData.business_name || custData.full_name || customerName;
+              customerDoc = custData.document_number || customerDoc;
+            }
+          }
 
-      if (saleError || !saleData) {
-        console.error('Supabase sale insert error:', saleError?.message || saleError);
-        return null;
-      }
+          const { data: saleData, error: saleError } = await supabase
+            .from('sales')
+            .insert({
+              tenant_id: tenantId,
+              branch_id: targetBranch,
+              customer_id: isValidUuid(sale.customerId) ? sale.customerId : null,
+              customer_name: customerName,
+              customer_document: customerDoc,
+              sale_number: saleNumber,
+              status: 'COMPLETED',
+              subtotal: sale.subtotal,
+              tax: sale.tax,
+              total: sale.total,
+              payment_method: sale.paymentMethod,
+              document_type: sale.documentType || 'BOLETA',
+              seller_name: sale.sellerName || currentUserName,
+            })
+            .select()
+            .single();
 
-      const saleId = saleData.id;
-      const finalSaleNumber = saleData.sale_number || saleNumber;
+          if (!saleError && saleData) {
+            const saleId = saleData.id;
+            const finalSaleNumber = saleData.sale_number || saleNumber;
 
-      const itemsToInsert = sale.items.map((item) => {
-        let cleanProdId = item.productId;
-        if (cleanProdId.includes('-') && cleanProdId.length > 36) {
-          cleanProdId = cleanProdId.substring(0, 36);
+            const itemsToInsert = sale.items.map((item) => {
+              let cleanProdId = item.productId;
+              if (cleanProdId.includes('-') && cleanProdId.length > 36) {
+                cleanProdId = cleanProdId.substring(0, 36);
+              }
+              return {
+                tenant_id: tenantId,
+                sale_id: saleId,
+                product_id: cleanProdId,
+                quantity: item.quantity,
+                unit_price: item.unitPrice,
+                subtotal: item.subtotal,
+              };
+            });
+
+            await supabase.from('sale_items').insert(itemsToInsert);
+
+            for (const item of sale.items) {
+              let cleanProdId = item.productId;
+              if (cleanProdId.includes('-') && cleanProdId.length > 36) {
+                cleanProdId = cleanProdId.substring(0, 36);
+              }
+
+              await inventoryService.registerMovement({
+                productId: cleanProdId,
+                productName: item.productName,
+                colorVariant: item.selectedColor,
+                branchId: targetBranch || '',
+                branchName: sale.branchName || 'Sede Principal',
+                type: 'OUT',
+                qty: item.quantity,
+                reason: `Venta ${finalSaleNumber}`,
+                referenceType: 'SALE'
+              });
+            }
+
+            // Save sale locally in IndexedDB cache
+            try {
+              const localSaleObj: Sale = {
+                id: saleId,
+                saleNumber: finalSaleNumber,
+                customer: customerName,
+                customerDoc,
+                customerId: sale.customerId,
+                sellerName: sale.sellerName || currentUserName,
+                branch: sale.branchName || 'Sede Principal',
+                branchId: targetBranch || '',
+                date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
+                rawDate: new Date().toISOString(),
+                total: sale.total,
+                subtotal: sale.subtotal,
+                tax: sale.tax,
+                paymentMethod: sale.paymentMethod,
+                paymentCondition: 'CONTADO',
+                documentType: sale.documentType || 'BOLETA',
+                status: 'COMPLETED',
+                sunatStatus: 'PENDIENTE',
+              };
+              await putRecord(STORES.SALES, localSaleObj);
+            } catch (_) {}
+
+            auditService.logAction({
+              action: 'VENTA POS',
+              entityType: 'sales',
+              entityId: saleId,
+              branchId: targetBranch || undefined,
+              description: `Emisión de ${sale.documentType || 'BOLETA'} ${finalSaleNumber} por S/ ${sale.total.toFixed(2)} (${sale.paymentMethod}) al cliente "${customerName}" (${sale.items.length} ítems)`,
+              details: {
+                sale_number: finalSaleNumber,
+                total: sale.total,
+                customer: customerName,
+                payment_method: sale.paymentMethod,
+                items_count: sale.items.length,
+              },
+            });
+
+            return saleId;
+          }
+        } catch (networkErr) {
+          console.warn('[salesService] Online sale insert failed, processing in Offline Mode:', networkErr);
         }
-        return {
-          tenant_id: tenantId,
-          sale_id: saleId,
-          product_id: cleanProdId,
-          quantity: item.quantity,
-          unit_price: item.unitPrice,
-          subtotal: item.subtotal,
-        };
-      });
-
-      const { error: itemsError } = await supabase.from('sale_items').insert(itemsToInsert);
-      if (itemsError) {
-        console.error('Error inserting sale items:', itemsError);
       }
 
+      // 2. Offline Fallback Flow
+      const localSaleId = generateLocalId();
+      const finalSaleNumber = saleNumber;
+
+      const localSaleObj: any = {
+        id: localSaleId,
+        saleNumber: finalSaleNumber,
+        sale_number: finalSaleNumber,
+        customer: customerName,
+        customer_name: customerName,
+        customerDoc,
+        customer_document: customerDoc,
+        customerId: sale.customerId,
+        customer_id: sale.customerId,
+        sellerName: sale.sellerName || currentUserName,
+        seller_name: sale.sellerName || currentUserName,
+        branch: sale.branchName || 'Sede Principal',
+        branchId: targetBranch || '',
+        branch_id: targetBranch || '',
+        date: new Date().toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }),
+        rawDate: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        total: sale.total,
+        subtotal: sale.subtotal,
+        tax: sale.tax,
+        paymentMethod: sale.paymentMethod,
+        payment_method: sale.paymentMethod,
+        paymentCondition: 'CONTADO',
+        documentType: sale.documentType || 'BOLETA',
+        document_type: sale.documentType || 'BOLETA',
+        status: 'COMPLETED',
+        sunatStatus: 'PENDIENTE',
+        sunat_status: 'PENDIENTE',
+        tenant_id: tenantId,
+      };
+
+      try {
+        await putRecord(STORES.SALES, localSaleObj);
+      } catch (e) {
+        console.error('[salesService] Error saving local sale to IndexedDB:', e);
+      }
+
+      // Deduct stock locally & save items & movements
       for (const item of sale.items) {
         let cleanProdId = item.productId;
         if (cleanProdId.includes('-') && cleanProdId.length > 36) {
           cleanProdId = cleanProdId.substring(0, 36);
         }
 
+        const localItemId = generateLocalId();
+        const itemRecord = {
+          id: localItemId,
+          tenant_id: tenantId,
+          sale_id: localSaleId,
+          product_id: cleanProdId,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          subtotal: item.subtotal,
+        };
+
+        try {
+          await putRecord(STORES.SALE_ITEMS, itemRecord);
+          await queueMutation('sale_items', 'CREATE', itemRecord);
+        } catch (_) {}
+
+        // Accurately decrement stock locally across products, branch_inventory, colors, and register movement
         await inventoryService.registerMovement({
           productId: cleanProdId,
           productName: item.productName,
@@ -2555,17 +3763,40 @@ export const salesService = {
           branchName: sale.branchName || 'Sede Principal',
           type: 'OUT',
           qty: item.quantity,
-          reason: `Venta ${finalSaleNumber}`,
+          reason: `Venta ${finalSaleNumber} (Offline)`,
           referenceType: 'SALE'
         });
+      }
+
+      // Queue the sale mutation
+      try {
+        await queueMutation('sales', 'CREATE', {
+          id: localSaleId,
+          tenant_id: tenantId,
+          branch_id: targetBranch,
+          customer_id: isValidUuid(sale.customerId) ? sale.customerId : null,
+          customer_name: customerName,
+          customer_document: customerDoc,
+          sale_number: finalSaleNumber,
+          status: 'COMPLETED',
+          subtotal: sale.subtotal,
+          tax: sale.tax,
+          total: sale.total,
+          payment_method: sale.paymentMethod,
+          document_type: sale.documentType || 'BOLETA',
+          seller_name: sale.sellerName || currentUserName,
+        });
+        refreshPendingCount().catch(() => {});
+      } catch (queueErr) {
+        console.error('[salesService] Error queueing sale mutation:', queueErr);
       }
 
       auditService.logAction({
         action: 'VENTA POS',
         entityType: 'sales',
-        entityId: saleId,
+        entityId: localSaleId,
         branchId: targetBranch || undefined,
-        description: `Emisión de ${sale.documentType || 'BOLETA'} ${finalSaleNumber} por S/ ${sale.total.toFixed(2)} (${sale.paymentMethod}) al cliente "${customerName}" (${sale.items.length} ítems)`,
+        description: `Emisión de ${sale.documentType || 'BOLETA'} ${finalSaleNumber} por S/ ${sale.total.toFixed(2)} (${sale.paymentMethod}) al cliente "${customerName}" (Modo Offline)`,
         details: {
           sale_number: finalSaleNumber,
           total: sale.total,
@@ -2575,9 +3806,9 @@ export const salesService = {
         },
       });
 
-      return saleId;
+      return localSaleId;
     } catch (err) {
-      console.error('Error creating sale in database:', err);
+      console.error('Error creating sale:', err);
       return null;
     }
   },
@@ -3144,9 +4375,78 @@ export const expensesService = {
       const tenantId = getActiveTenantId();
       if (!tenantId) return null;
 
-      const { data, error } = await supabase
-        .from('expenses')
-        .insert({
+      if (isNetworkOnline()) {
+        try {
+          const { data, error } = await supabase
+            .from('expenses')
+            .insert({
+              tenant_id: tenantId,
+              description: expense.description,
+              expense_type: expense.expenseType,
+              frequency: expense.frequency || 'ONCE',
+              amount: expense.amount,
+              expense_date: expense.expenseDate,
+              voucher_url: expense.voucherUrl,
+              voucher_name: expense.voucherName,
+            })
+            .select()
+            .single();
+
+          if (!error && data) {
+            const created: Expense = {
+              id: data.id,
+              description: data.description,
+              expenseType: data.expense_type,
+              frequency: data.frequency,
+              amount: Number(data.amount) || 0,
+              expenseDate: data.expense_date,
+              voucherUrl: data.voucher_url || expense.voucherUrl,
+              voucherName: data.voucher_name || expense.voucherName,
+            };
+
+            try { await putRecord(STORES.EXPENSES, created); } catch { /* non-critical */ }
+
+            auditService.logAction({
+              action: 'GASTO OPERATIVO',
+              entityType: 'expenses',
+              entityId: data.id,
+              description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" (${expense.expenseType === 'FIXED' ? 'Fijo' : 'Variable'})`,
+              details: {
+                description: expense.description,
+                amount: expense.amount,
+                expense_type: expense.expenseType,
+              },
+            });
+
+            return created;
+          }
+        } catch (networkErr) {
+          console.warn('[expensesService] Online create failed, queueing offline mutation:', networkErr);
+        }
+      }
+
+      // Offline fallback
+      const localId = generateLocalId();
+      const localExpense: Expense = {
+        id: localId,
+        description: expense.description,
+        expenseType: expense.expenseType,
+        frequency: expense.frequency || 'ONCE',
+        amount: Number(expense.amount) || 0,
+        expenseDate: expense.expenseDate,
+        voucherUrl: expense.voucherUrl,
+        voucherName: expense.voucherName,
+      };
+
+      try {
+        await putRecord(STORES.EXPENSES, localExpense);
+      } catch (dbErr) {
+        console.error('[expensesService] Error saving to IndexedDB:', dbErr);
+      }
+
+      try {
+        await queueMutation('expenses', 'CREATE', {
+          id: localId,
           tenant_id: tenantId,
           description: expense.description,
           expense_type: expense.expenseType,
@@ -3155,20 +4455,17 @@ export const expensesService = {
           expense_date: expense.expenseDate,
           voucher_url: expense.voucherUrl,
           voucher_name: expense.voucherName,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error creating expense:', error);
-        return null;
+        });
+        refreshPendingCount().catch(() => {});
+      } catch (queueErr) {
+        console.error('[expensesService] Error queueing outbox mutation:', queueErr);
       }
 
       auditService.logAction({
         action: 'GASTO OPERATIVO',
         entityType: 'expenses',
-        entityId: data.id,
-        description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" (${expense.expenseType === 'FIXED' ? 'Fijo' : 'Variable'})`,
+        entityId: localId,
+        description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" (Modo Offline)`,
         details: {
           description: expense.description,
           amount: expense.amount,
@@ -3176,16 +4473,7 @@ export const expensesService = {
         },
       });
 
-      return {
-        id: data.id,
-        description: data.description,
-        expenseType: data.expense_type,
-        frequency: data.frequency,
-        amount: Number(data.amount) || 0,
-        expenseDate: data.expense_date,
-        voucherUrl: data.voucher_url || expense.voucherUrl,
-        voucherName: data.voucher_name || expense.voucherName,
-      };
+      return localExpense;
     } catch (err) {
       console.error(err);
       return null;
@@ -3194,6 +4482,20 @@ export const expensesService = {
 
   async updateExpense(id: string, expense: Partial<Omit<Expense, 'id'>>): Promise<boolean> {
     try {
+      // Update local cache
+      try {
+        const existing = await getRecord<Expense>(STORES.EXPENSES, id);
+        if (existing) {
+          const updated: Expense = {
+            ...existing,
+            ...expense,
+          };
+          await putRecord(STORES.EXPENSES, updated);
+        }
+      } catch (e) {
+        console.warn('[expensesService] Error updating local cache:', e);
+      }
+
       const updateData: any = {};
       if (expense.description !== undefined) updateData.description = expense.description;
       if (expense.expenseType !== undefined) updateData.expense_type = expense.expenseType;
@@ -3203,21 +4505,44 @@ export const expensesService = {
       if (expense.voucherUrl !== undefined) updateData.voucher_url = expense.voucherUrl;
       if (expense.voucherName !== undefined) updateData.voucher_name = expense.voucherName;
 
-      const { error } = await supabase
-        .from('expenses')
-        .update(updateData)
-        .eq('id', id);
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from('expenses')
+            .update(updateData)
+            .eq('id', id);
 
-      if (error) {
-        console.error('Error updating expense:', error);
-        return false;
+          if (!error) {
+            auditService.logAction({
+              action: 'MODIFICAR',
+              entityType: 'expenses',
+              entityId: id,
+              description: `Actualización de gasto operativo "${expense.description || id}"`,
+              details: { ...expense },
+            });
+            return true;
+          }
+        } catch (networkErr) {
+          console.warn('[expensesService] Online update failed, queueing offline mutation:', networkErr);
+        }
+      }
+
+      // Offline queue
+      try {
+        await queueMutation('expenses', 'UPDATE', {
+          _id: id,
+          ...updateData,
+        });
+        refreshPendingCount().catch(() => {});
+      } catch (queueErr) {
+        console.error('[expensesService] Error queueing update mutation:', queueErr);
       }
 
       auditService.logAction({
         action: 'MODIFICAR',
         entityType: 'expenses',
         entityId: id,
-        description: `Actualización de gasto operativo "${expense.description || id}"`,
+        description: `Actualización de gasto operativo "${expense.description || id}" (Modo Offline)`,
         details: { ...expense },
       });
 
@@ -3231,24 +4556,53 @@ export const expensesService = {
   async deleteExpense(id: string): Promise<boolean> {
     try {
       let expDesc = 'Gasto';
-      const { data: expRow } = await supabase.from('expenses').select('description, amount').eq('id', id).maybeSingle();
-      if (expRow) expDesc = `${expRow.description} (S/ ${Number(expRow.amount).toFixed(2)})`;
+      try {
+        const localExp = await getRecord<Expense>(STORES.EXPENSES, id);
+        if (localExp) expDesc = `${localExp.description} (S/ ${Number(localExp.amount).toFixed(2)})`;
+      } catch (_) {}
 
-      const { error } = await supabase
-        .from('expenses')
-        .delete()
-        .eq('id', id);
+      // Delete from local cache
+      try {
+        await deleteLocalRecord(STORES.EXPENSES, id);
+      } catch (e) {
+        console.warn('[expensesService] Error deleting local record:', e);
+      }
 
-      if (error) {
-        console.error('Error deleting expense:', error);
-        return false;
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from('expenses')
+            .delete()
+            .eq('id', id);
+
+          if (!error) {
+            auditService.logAction({
+              action: 'ELIMINAR',
+              entityType: 'expenses',
+              entityId: id,
+              description: `Eliminación de gasto operativo "${expDesc}"`,
+              details: { description: expDesc },
+            });
+            return true;
+          }
+        } catch (networkErr) {
+          console.warn('[expensesService] Online delete failed, queueing offline mutation:', networkErr);
+        }
+      }
+
+      // Offline queue
+      try {
+        await queueMutation('expenses', 'DELETE', { _id: id });
+        refreshPendingCount().catch(() => {});
+      } catch (queueErr) {
+        console.error('[expensesService] Error queueing delete mutation:', queueErr);
       }
 
       auditService.logAction({
         action: 'ELIMINAR',
         entityType: 'expenses',
         entityId: id,
-        description: `Eliminación de gasto "${expDesc}"`,
+        description: `Eliminación de gasto operativo "${expDesc}" (Modo Offline)`,
         details: { description: expDesc },
       });
 
@@ -3257,7 +4611,7 @@ export const expensesService = {
       console.error(err);
       return false;
     }
-  }
+  },
 };
 
 export const settingsService = {
@@ -3266,16 +4620,34 @@ export const settingsService = {
       const tenantId = getActiveTenantId();
       if (!tenantId) return {};
 
+      if (!isNetworkOnline()) {
+        try {
+          const localSettings = await getRecord<any>(STORES.SETTINGS, 'tenant_info');
+          if (localSettings) return localSettings;
+        } catch {}
+      }
+
       const { data, error } = await supabase
         .from('tenants')
         .select('*')
         .eq('id', tenantId)
         .maybeSingle();
 
-      if (data && Object.keys(data).length > 0) return data;
+      if (data && Object.keys(data).length > 0) {
+        try { await putRecord(STORES.SETTINGS, { key: 'tenant_info', ...data }); } catch {}
+        return data;
+      }
+
+      const localSettings = await getRecord<any>(STORES.SETTINGS, 'tenant_info');
+      if (localSettings) return localSettings;
+
       return {};
     } catch (err) {
       console.error('Error fetching tenant info:', err);
+      try {
+        const localSettings = await getRecord<any>(STORES.SETTINGS, 'tenant_info');
+        if (localSettings) return localSettings;
+      } catch {}
       return {};
     }
   },
@@ -3285,14 +4657,28 @@ export const settingsService = {
       const tenantId = getActiveTenantId();
       if (!tenantId) return false;
 
-      const { error } = await supabase
-        .from('tenants')
-        .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq('id', tenantId);
-      if (error) {
-        console.error('Error updating tenant info:', error);
-        return false;
+      try {
+        const existing = await getRecord<any>(STORES.SETTINGS, 'tenant_info') || {};
+        await putRecord(STORES.SETTINGS, { ...existing, ...updates, key: 'tenant_info' });
+      } catch {}
+
+      if (isNetworkOnline()) {
+        try {
+          const { error } = await supabase
+            .from('tenants')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', tenantId);
+          if (error) {
+            await queueMutation('tenants', 'UPDATE', { _id: tenantId, ...updates });
+          }
+        } catch {
+          await queueMutation('tenants', 'UPDATE', { _id: tenantId, ...updates });
+        }
+      } else {
+        await queueMutation('tenants', 'UPDATE', { _id: tenantId, ...updates });
       }
+
+      refreshPendingCount().catch(() => {});
 
       auditService.logAction({
         action: 'CONFIGURACIÓN',
@@ -3334,9 +4720,18 @@ export const settingsService = {
   },
 
   async getNextSeriesNumber(docType: 'BOLETA' | 'FACTURA'): Promise<{ series: string; number: number } | null> {
+    const defaultSeries = docType === 'FACTURA' ? 'F001' : 'B001';
+    const localKey = `series_${docType}`;
+    const localSaved = typeof window !== 'undefined' ? localStorage.getItem(localKey) : null;
+    const localNum = localSaved ? parseInt(localSaved, 10) : 1;
+
+    if (!isNetworkOnline()) {
+      return { series: defaultSeries, number: isNaN(localNum) ? 1 : localNum };
+    }
+
     try {
       const tenantId = getActiveTenantId();
-      if (!tenantId) return null;
+      if (!tenantId) return { series: defaultSeries, number: isNaN(localNum) ? 1 : localNum };
 
       const { data, error } = await supabase
         .from('invoice_series')
@@ -3346,26 +4741,32 @@ export const settingsService = {
         .maybeSingle();
 
       if (error || !data) {
-        const defaultSeries = docType === 'FACTURA' ? 'F001' : 'B001';
-        await supabase.from('invoice_series').insert({
-          tenant_id: tenantId,
-          document_type: docType,
-          series: defaultSeries,
-          next_number: 1,
-        });
-        return { series: defaultSeries, number: 1 };
+        return { series: defaultSeries, number: isNaN(localNum) ? 1 : localNum };
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(localKey, String(data.next_number));
       }
       return { series: data.series, number: data.next_number };
-    } catch (err) {
-      console.error('Error fetching next series number:', err);
-      return null;
+    } catch {
+      return { series: defaultSeries, number: isNaN(localNum) ? 1 : localNum };
     }
   },
 
   async incrementSeriesNumber(docType: 'BOLETA' | 'FACTURA', series: string): Promise<boolean> {
+    const localKey = `series_${docType}`;
+    const localSaved = typeof window !== 'undefined' ? localStorage.getItem(localKey) : null;
+    const currentNum = localSaved ? parseInt(localSaved, 10) : 1;
+    const nextNum = (isNaN(currentNum) ? 1 : currentNum) + 1;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(localKey, String(nextNum));
+    }
+
+    if (!isNetworkOnline()) return true;
+
     try {
       const tenantId = getActiveTenantId();
-      if (!tenantId) return false;
+      if (!tenantId) return true;
 
       const { error } = await supabase.rpc('increment_series_number', {
         p_tenant_id: tenantId,
@@ -3373,23 +4774,16 @@ export const settingsService = {
         p_series: series,
       });
       if (error) {
-        // Fallback: manual increment
-        const current = await this.getNextSeriesNumber(docType);
-        if (current) {
-          const { error: updateErr } = await supabase
-            .from('invoice_series')
-            .update({ next_number: current.number + 1 })
-            .eq('tenant_id', tenantId)
-            .eq('document_type', docType)
-            .eq('series', series);
-          return !updateErr;
-        }
-        return false;
+        await supabase
+          .from('invoice_series')
+          .update({ next_number: nextNum })
+          .eq('tenant_id', tenantId)
+          .eq('document_type', docType)
+          .eq('series', series);
       }
       return true;
-    } catch (err) {
-      console.error('Error incrementing series number:', err);
-      return false;
+    } catch {
+      return true;
     }
   },
 };
@@ -4744,6 +6138,75 @@ export const creditsService = {
       const tenantId = getActiveTenantId();
       if (!tenantId) return [];
 
+      if (!isNetworkOnline()) {
+        try {
+          const localCredits = await getAllRecords<any>(STORES.CREDITS);
+          const localIns = await getAllRecords<any>(STORES.CREDIT_INSTALLMENTS);
+          const insByCredit = new Map<string, CreditInstallment[]>();
+
+          localIns.forEach((ins: any) => {
+            const list = insByCredit.get(ins.credit_id || ins.creditId) || [];
+            const isOverdue = ins.status === 'PENDING' && new Date(ins.due_date) < new Date();
+            list.push({
+              id: ins.id,
+              creditId: ins.credit_id || ins.creditId,
+              installmentNumber: ins.installment_number || ins.installmentNumber,
+              dueDate: ins.due_date || ins.dueDate,
+              capitalAmount: Number(ins.capital_amount || ins.capitalAmount) || 0,
+              interestAmount: Number(ins.interest_amount || ins.interestAmount) || 0,
+              totalAmount: Number(ins.total_amount || ins.totalAmount) || 0,
+              paidAmount: Number(ins.paid_amount || ins.paidAmount) || 0,
+              paidDate: ins.paid_date || ins.paidDate,
+              paymentMethod: ins.payment_method || ins.paymentMethod,
+              receiptNumber: ins.receipt_number || ins.receiptNumber,
+              notes: ins.notes,
+              status: isOverdue ? 'OVERDUE' : (ins.status as any),
+            });
+            insByCredit.set(ins.credit_id || ins.creditId, list);
+          });
+
+          let filtered = localCredits;
+          if (branchId && branchId !== 'ALL' && isValidUuid(branchId)) {
+            filtered = localCredits.filter((c: any) => c.branch_id === branchId || c.branchId === branchId);
+          }
+
+          return filtered.map((c: any) => {
+            const rawInstallments = (insByCredit.get(c.id) || []).sort(
+              (a: any, b: any) => a.installmentNumber - b.installmentNumber
+            );
+            const hasOverdue = rawInstallments.some((ins) => ins.status === 'OVERDUE');
+            const calculatedStatus = hasOverdue && c.status !== 'PAID' ? 'OVERDUE' : (c.status || 'PENDING');
+
+            return {
+              id: c.id,
+              tenantId: c.tenant_id || c.tenantId || tenantId,
+              branchId: c.branch_id || c.branchId || '',
+              branchName: c.branches?.name || c.branchName || 'Sede Principal',
+              saleId: c.sale_id || c.saleId,
+              saleNumber: c.sale_number || c.saleNumber,
+              customerId: c.customer_id || c.customerId,
+              customerName: c.customer_name || c.customerName || 'Cliente',
+              customerDoc: c.customer_doc || c.customerDoc || '00000000',
+              totalAmount: Number(c.total_amount || c.totalAmount) || 0,
+              initialPayment: Number(c.initial_payment || c.initialPayment) || 0,
+              financedAmount: Number(c.financed_amount || c.financedAmount) || 0,
+              interestRate: Number(c.interest_rate || c.interestRate) || 0,
+              interestAmount: Number(c.interest_amount || c.interestAmount) || 0,
+              totalCredit: Number(c.total_credit || c.totalCredit) || 0,
+              installmentsCount: Number(c.installments_count || c.installmentsCount) || 1,
+              installmentFrequency: c.installment_frequency || c.installmentFrequency || 'MENSUAL',
+              amountPaid: Number(c.amount_paid || c.amountPaid) || 0,
+              balancePending: Number(c.balance_pending || c.balancePending) || 0,
+              status: calculatedStatus as any,
+              createdAt: c.created_at ? new Date(c.created_at).toISOString().split('T')[0] : (c.createdAt || new Date().toISOString().split('T')[0]),
+              installments: rawInstallments,
+            };
+          });
+        } catch {
+          return [];
+        }
+      }
+
       let query = supabase
         .from('credits')
         .select(`
@@ -4760,10 +6223,25 @@ export const creditsService = {
 
       const { data, error } = await query;
 
-      if (error) {
-        console.error('Error fetching credits:', error);
-        return [];
+      if (error || !data) {
+        console.error('Error fetching credits from online, loading local cache:', error);
+        const localCredits = await getAllRecords<any>(STORES.CREDITS);
+        return localCredits as any;
       }
+
+      // Cache records locally
+      try {
+        const allInstallments: any[] = [];
+        data.forEach((c: any) => {
+          if (Array.isArray(c.credit_installments)) {
+            allInstallments.push(...c.credit_installments);
+          }
+        });
+        await putManyRecords(STORES.CREDITS, data);
+        if (allInstallments.length > 0) {
+          await putManyRecords(STORES.CREDIT_INSTALLMENTS, allInstallments);
+        }
+      } catch {}
 
       return (data || []).map((c: any) => {
         const rawInstallments = (c.credit_installments || []).sort(
@@ -4819,7 +6297,12 @@ export const creditsService = {
       });
     } catch (err) {
       console.error('Exception in getCredits:', err);
-      return [];
+      try {
+        const localCredits = await getAllRecords<any>(STORES.CREDITS);
+        return localCredits as any;
+      } catch {
+        return [];
+      }
     }
   },
 
@@ -4837,54 +6320,21 @@ export const creditsService = {
       const count = Math.max(1, params.installmentsCount || 1);
       const freq = params.installmentFrequency || 'MENSUAL';
 
-      // 1. Insert master credit record
-      const { data: creditRow, error: cErr } = await supabase
-        .from('credits')
-        .insert({
-          id: creditId,
-          tenant_id: tenantId,
-          branch_id: params.branchId && isValidUuid(params.branchId) ? params.branchId : null,
-          sale_id: params.saleId && isValidUuid(params.saleId) ? params.saleId : null,
-          customer_id: params.customerId && isValidUuid(params.customerId) ? params.customerId : null,
-          customer_name: params.customerName,
-          customer_doc: params.customerDoc,
-          total_amount: totalSale,
-          initial_payment: initial,
-          financed_amount: capitalFinanced,
-          interest_rate: interestRate,
-          interest_amount: interestAmount,
-          total_credit: totalCredit,
-          installments_count: count,
-          installment_frequency: freq,
-          amount_paid: 0,
-          balance_pending: totalCredit,
-          status: 'PENDING',
-        })
-        .select()
-        .single();
-
-      if (cErr || !creditRow) {
-        console.error('Error creating credit:', cErr);
-        return null;
-      }
-
-      // 2. Generate installments schedule
-      const startDate = params.firstDueDate ? new Date(params.firstDueDate) : new Date();
-      if (!params.firstDueDate) {
-        startDate.setDate(startDate.getDate() + (freq === 'SEMANAL' ? 7 : freq === 'QUINCENAL' ? 15 : 30));
-      }
-
       const installmentCapital = Number((capitalFinanced / count).toFixed(2));
       const installmentInterest = Number((interestAmount / count).toFixed(2));
-      const installmentTotal = Number((installmentCapital + installmentInterest).toFixed(2));
+      const installmentTotal = Number((totalCredit / count).toFixed(2));
 
       const installmentsToInsert: any[] = [];
+      const startDate = params.firstDueDate ? new Date(params.firstDueDate) : new Date();
+
       for (let i = 1; i <= count; i++) {
         const dueDate = new Date(startDate);
-        if (i > 1) {
-          if (freq === 'SEMANAL') dueDate.setDate(dueDate.getDate() + (i - 1) * 7);
-          else if (freq === 'QUINCENAL') dueDate.setDate(dueDate.getDate() + (i - 1) * 15);
-          else dueDate.setMonth(dueDate.getMonth() + (i - 1));
+        if (freq === 'SEMANAL') {
+          dueDate.setDate(dueDate.getDate() + (i - 1) * 7);
+        } else if (freq === 'QUINCENAL') {
+          dueDate.setDate(dueDate.getDate() + (i - 1) * 15);
+        } else {
+          dueDate.setMonth(dueDate.getMonth() + (i - 1));
         }
 
         installmentsToInsert.push({
@@ -4901,13 +6351,54 @@ export const creditsService = {
         });
       }
 
-      const { data: insRows, error: insErr } = await supabase
-        .from('credit_installments')
-        .insert(installmentsToInsert)
-        .select();
+      const creditPayload = {
+        id: creditId,
+        tenant_id: tenantId,
+        branch_id: params.branchId,
+        sale_id: params.saleId || null,
+        sale_number: params.saleNumber || null,
+        customer_id: params.customerId || null,
+        customer_name: params.customerName,
+        customer_doc: params.customerDoc,
+        total_amount: totalSale,
+        initial_payment: initial,
+        financed_amount: capitalFinanced,
+        interest_rate: interestRate,
+        interest_amount: interestAmount,
+        total_credit: totalCredit,
+        installments_count: count,
+        installment_frequency: freq,
+        amount_paid: 0,
+        balance_pending: totalCredit,
+        status: 'PENDING',
+        created_at: new Date().toISOString(),
+      };
 
-      if (insErr) {
-        console.error('Error inserting credit installments:', insErr);
+      // Save locally to IndexedDB
+      try {
+        await putRecord(STORES.CREDITS, creditPayload);
+        await putManyRecords(STORES.CREDIT_INSTALLMENTS, installmentsToInsert);
+      } catch (_) {}
+
+      // Try online insert
+      if (isNetworkOnline()) {
+        try {
+          await supabase.from('credits').insert(creditPayload);
+          await supabase.from('credit_installments').insert(installmentsToInsert);
+        } catch (netErr) {
+          console.warn('[creditsService] Online credit create failed, queueing offline:', netErr);
+          await queueMutation('credits', 'CREATE', creditPayload);
+          for (const ins of installmentsToInsert) {
+            await queueMutation('credit_installments', 'CREATE', ins);
+          }
+          refreshPendingCount().catch(() => {});
+        }
+      } else {
+        await queueMutation('credits', 'CREATE', creditPayload);
+        for (const ins of installmentsToInsert) {
+          await queueMutation('credit_installments', 'CREATE', ins);
+        }
+        refreshPendingCount().catch(() => {});
       }
 
       auditService.logAction({
@@ -4947,7 +6438,7 @@ export const creditsService = {
         balancePending: totalCredit,
         status: 'PENDING',
         createdAt: new Date().toISOString().split('T')[0],
-        installments: (insRows || installmentsToInsert).map((ins: any) => ({
+        installments: installmentsToInsert.map((ins: any) => ({
           id: ins.id,
           creditId: ins.credit_id,
           installmentNumber: ins.installment_number,
@@ -4975,23 +6466,29 @@ export const creditsService = {
     try {
       const receiptNo = `REC-${Math.floor(100000 + Math.random() * 900000)}`;
 
-      // 1. Fetch all installments for this credit
-      const { data: allIns, error: allErr } = await supabase
-        .from('credit_installments')
-        .select('*')
-        .eq('credit_id', params.creditId)
-        .order('installment_number', { ascending: true });
+      // 1. Fetch installments from local IndexedDB or online
+      let allIns = await getAllRecords<any>(STORES.CREDIT_INSTALLMENTS);
+      allIns = allIns.filter((i: any) => (i.credit_id || i.creditId) === params.creditId);
 
-      if (allErr || !allIns || allIns.length === 0) {
+      if (isNetworkOnline() && allIns.length === 0) {
+        const { data } = await supabase
+          .from('credit_installments')
+          .select('*')
+          .eq('credit_id', params.creditId)
+          .order('installment_number', { ascending: true });
+        if (data) allIns = data;
+      }
+
+      if (allIns.length === 0) {
         return { success: false, message: 'No se encontraron cuotas para este crédito.' };
       }
 
-      let remainingToApply = params.amount;
+      allIns.sort((a: any, b: any) => (a.installment_number || a.installmentNumber) - (b.installment_number || b.installmentNumber));
 
-      // Determine order of installments to pay
+      let remainingToApply = params.amount;
       let targetInstallments = [...allIns];
       if (params.installmentId) {
-        const startIdx = allIns.findIndex((i) => i.id === params.installmentId);
+        const startIdx = allIns.findIndex((i: any) => i.id === params.installmentId);
         if (startIdx >= 0) {
           targetInstallments = [...allIns.slice(startIdx), ...allIns.slice(0, startIdx)];
         }
@@ -4999,8 +6496,8 @@ export const creditsService = {
 
       for (const ins of targetInstallments) {
         if (remainingToApply <= 0.001) break;
-        const total = Number(ins.total_amount) || 0;
-        const currentPaid = Number(ins.paid_amount) || 0;
+        const total = Number(ins.total_amount || ins.totalAmount) || 0;
+        const currentPaid = Number(ins.paid_amount || ins.paidAmount) || 0;
         const pending = Math.max(0, total - currentPaid);
 
         if (pending <= 0.001) continue;
@@ -5010,55 +6507,67 @@ export const creditsService = {
         const newStatus = newPaid >= (total - 0.01) ? 'PAID' : 'PARTIAL';
         remainingToApply -= payToThis;
 
-        await supabase
-          .from('credit_installments')
-          .update({
-            paid_amount: newPaid,
-            paid_date: new Date().toISOString(),
-            payment_method: params.paymentMethod,
-            receipt_number: receiptNo,
-            notes: params.notes || null,
-            status: newStatus,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', ins.id);
+        const updatePayload = {
+          paid_amount: newPaid,
+          paid_date: new Date().toISOString(),
+          payment_method: params.paymentMethod,
+          receipt_number: receiptNo,
+          notes: params.notes || null,
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        };
+
+        // Update local store
+        try {
+          await putRecord(STORES.CREDIT_INSTALLMENTS, { ...ins, ...updatePayload });
+        } catch (_) {}
+
+        if (isNetworkOnline()) {
+          try {
+            await supabase.from('credit_installments').update(updatePayload).eq('id', ins.id);
+          } catch {
+            await queueMutation('credit_installments', 'UPDATE', { _id: ins.id, ...updatePayload });
+          }
+        } else {
+          await queueMutation('credit_installments', 'UPDATE', { _id: ins.id, ...updatePayload });
+        }
       }
 
-      // 2. Re-fetch all installments to calculate total master balance
-      const { data: updatedAllIns } = await supabase
-        .from('credit_installments')
-        .select('paid_amount, total_amount, status')
-        .eq('credit_id', params.creditId);
+      // Update credit balance
+      const updatedLocalIns = (await getAllRecords<any>(STORES.CREDIT_INSTALLMENTS)).filter(
+        (i: any) => (i.credit_id || i.creditId) === params.creditId
+      );
+      const totalPaidAll = updatedLocalIns.reduce((sum, item) => sum + (Number(item.paid_amount || item.paidAmount) || 0), 0);
 
-      const totalPaidAll = (updatedAllIns || []).reduce((sum, item) => sum + (Number(item.paid_amount) || 0), 0);
-
-      const { data: masterCredit } = await supabase
-        .from('credits')
-        .select('total_credit, customer_name, customer_doc, sale_id')
-        .eq('id', params.creditId)
-        .single();
-
-      const totalCreditVal = Number(masterCredit?.total_credit) || 0;
+      const masterCredit = await getRecord<any>(STORES.CREDITS, params.creditId);
+      const totalCreditVal = Number(masterCredit?.total_credit || masterCredit?.totalCredit) || 0;
       const newBalance = Math.max(0, totalCreditVal - totalPaidAll);
       const masterStatus = newBalance <= 0.01 ? 'PAID' : 'PARTIAL';
 
-      await supabase
-        .from('credits')
-        .update({
-          amount_paid: totalPaidAll,
-          balance_pending: newBalance,
-          status: masterStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', params.creditId);
+      const creditUpdatePayload = {
+        amount_paid: totalPaidAll,
+        balance_pending: newBalance,
+        status: masterStatus,
+        updated_at: new Date().toISOString(),
+      };
 
-      // If fully paid, also update corresponding sale status to COMPLETED
-      if (masterStatus === 'PAID' && masterCredit?.sale_id) {
-        await supabase
-          .from('sales')
-          .update({ status: 'COMPLETED' })
-          .eq('id', masterCredit.sale_id);
+      try {
+        if (masterCredit) {
+          await putRecord(STORES.CREDITS, { ...masterCredit, ...creditUpdatePayload });
+        }
+      } catch (_) {}
+
+      if (isNetworkOnline()) {
+        try {
+          await supabase.from('credits').update(creditUpdatePayload).eq('id', params.creditId);
+        } catch {
+          await queueMutation('credits', 'UPDATE', { _id: params.creditId, ...creditUpdatePayload });
+        }
+      } else {
+        await queueMutation('credits', 'UPDATE', { _id: params.creditId, ...creditUpdatePayload });
       }
+
+      refreshPendingCount().catch(() => {});
 
       auditService.logAction({
         action: 'ABONO DE CUOTA',
@@ -5084,6 +6593,3 @@ export const creditsService = {
     }
   },
 };
-
-
-

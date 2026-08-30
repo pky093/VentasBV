@@ -29,6 +29,8 @@ import AuditPage from './pages/AuditPage';
 import NotificationsPage from './pages/NotificationsPage';
 import SettingsPage from './pages/SettingsPage';
 import ProfilePage from './pages/ProfilePage';
+import DigitalCatalogPage from './pages/DigitalCatalogPage';
+import PublicCatalogPage from './pages/PublicCatalogPage';
 
 import { BranchProvider } from './context/BranchContext';
 import { PermissionProvider } from './context/PermissionContext';
@@ -52,6 +54,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/set-password" element={<SetPasswordPage />} />
+            <Route path="/catalog/showcase" element={<PublicCatalogPage />} />
             <Route
               path="/platform"
               element={
@@ -74,6 +77,7 @@ export default function App() {
               <Route path="users" element={<PermissionRoute permission="users.read"><UsersPage /></PermissionRoute>} />
               <Route path="roles" element={<PermissionRoute permission="roles.manage"><RolesPage /></PermissionRoute>} />
               <Route path="catalog" element={<PermissionRoute permission="catalog.read"><CatalogPage /></PermissionRoute>} />
+              <Route path="digital-catalog" element={<PermissionRoute permission="products.read"><DigitalCatalogPage /></PermissionRoute>} />
               <Route path="products" element={<PermissionRoute permission="products.read"><ProductsPage /></PermissionRoute>} />
               <Route path="products/:id" element={<PermissionRoute permission="products.read"><ProductDetailPage /></PermissionRoute>} />
               <Route path="inventory" element={<PermissionRoute permission="inventory.read"><InventoryPage /></PermissionRoute>} />

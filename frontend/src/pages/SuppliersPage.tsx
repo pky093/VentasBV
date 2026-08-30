@@ -39,8 +39,19 @@ export default function SuppliersPage() {
           await loadSuppliers();
           setIsModalOpen(false);
           setSelectedSupplier(null);
+          Swal.fire({
+            title: '¡Proveedor Actualizado!',
+            text: 'Los datos del proveedor se guardaron correctamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('Error al actualizar proveedor en Supabase.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo actualizar el proveedor.',
+            icon: 'error',
+          });
         }
       } else {
         const created = await suppliersService.createSupplier({
@@ -56,13 +67,28 @@ export default function SuppliersPage() {
           await loadSuppliers();
           setIsModalOpen(false);
           setSelectedSupplier(null);
+          Swal.fire({
+            title: '¡Proveedor Guardado!',
+            text: 'El proveedor fue registrado exitosamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('Error al crear proveedor en la base de datos.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo crear el proveedor.',
+            icon: 'error',
+          });
         }
       }
     } catch (err) {
       console.error('Error saving supplier:', err);
-      alert('Error al comunicarse con Supabase.');
+      Swal.fire({
+        title: 'Error',
+        text: 'Ocurrió un error al guardar el proveedor.',
+        icon: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }

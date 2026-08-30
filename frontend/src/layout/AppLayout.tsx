@@ -8,7 +8,7 @@ import {
   Archive, Truck, ShoppingCart, Users2, DollarSign, MonitorSmartphone, 
   CreditCard, FileText, BarChart3, Activity, Bell, Settings,
   Sun, Moon, Search, ChevronDown, ArrowRight, Receipt, Menu, LogOut, User,
-  FileCheck, Calendar
+  FileCheck, Calendar, Sparkles
 } from 'lucide-react';
 import { usePermissions } from '../context/PermissionContext';
 import SyncStatusIndicator from '../components/ui/SyncStatusIndicator';
@@ -26,6 +26,7 @@ const MENU_ITEMS = [
     { label: 'Caja Chica / Registro', icon: CreditCard, path: '/app/cash', perm: 'cash.read' }
   ]},
   { section: 'CATÁLOGO', items: [
+    { label: 'Catálogo Digital & WhatsApp', icon: Sparkles, path: '/app/digital-catalog', perm: 'products.read' },
     { label: 'Productos', icon: Package, path: '/app/products', perm: 'products.read' },
     { label: 'Categorías & Atributos', icon: BookOpen, path: '/app/catalog', perm: 'catalog.read' }
   ]},

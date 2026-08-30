@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search, ArrowRightLeft, Building2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search, ArrowRightLeft, Building2, MessageCircle, Sparkles } from 'lucide-react';
 import { PageHeader, Button, Badge, Modal, DataTable, Tabs, SuggestionChip } from '../components/ui';
 import { productsService, catalogService, Product, Category, Brand, Model } from '../lib/db-services';
 import { useBranch } from '../context/BranchContext';
 import { TransferModal } from '../components/inventory/TransferModal';
+import { WhatsAppShareModal } from '../components/catalog/WhatsAppShareModal';
 import Swal from 'sweetalert2';
 
 export default function ProductsPage() {
+  const navigate = useNavigate();
   const { activeBranchId, activeBranch, branches: contextBranches } = useBranch();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -16,6 +19,10 @@ export default function ProductsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Partial<Product> | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // WhatsApp Share Modal State
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [whatsappProduct, setWhatsappProduct] = useState<Product | null>(null);
 
   // Inter-branch Transfer Modal State
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -249,8 +256,19 @@ export default function ProductsPage() {
           await loadData();
           setIsModalOpen(false);
           setSelectedProduct(null);
+          Swal.fire({
+            title: '¡Producto Actualizado!',
+            text: 'Los cambios se guardaron correctamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('Error al actualizar el producto en Supabase.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo actualizar el producto.',
+            icon: 'error',
+          });
         }
       } else {
         // Create new
@@ -280,13 +298,28 @@ export default function ProductsPage() {
           await loadData();
           setIsModalOpen(false);
           setSelectedProduct(null);
+          Swal.fire({
+            title: '¡Producto Registrado!',
+            text: 'El producto se guardó exitosamente.',
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } else {
-          alert('Error al guardar el nuevo producto en la base de datos.');
+          Swal.fire({
+            title: 'Error',
+            text: 'No se pudo registrar el nuevo producto.',
+            icon: 'error',
+          });
         }
       }
     } catch (err) {
       console.error('Error saving product:', err);
-      alert('Error de procesamiento con Supabase.');
+      Swal.fire({
+        title: 'Error',
+        text: 'Ocurrió un error al guardar el producto.',
+        icon: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -443,7 +476,14 @@ export default function ProductsPage() {
         title="Gestión de Productos"
         subtitle={`Catálogo de inventario ${activeBranchId === 'ALL' ? '(Consolidado - Todas las Sedes)' : `• ${activeBranch?.name || 'Sede Principal'}`}`}
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              icon={<Sparkles size={16} className="text-amber-500" />}
+              onClick={() => navigate('/app/digital-catalog')}
+            >
+              Catálogo Digital (SomosMoto)
+            </Button>
             <Button
               variant="secondary"
               icon={<ArrowRightLeft size={16} />}
@@ -470,6 +510,16 @@ export default function ProductsPage() {
           searchPlaceholder="Buscar por código SKU, nombre, marca o categoría..."
           actions={(row) => (
             <div className="flex gap-2 justify-end">
+              <button
+                className="icon-btn icon-btn-sm text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border-none"
+                title="Compartir por WhatsApp"
+                onClick={() => {
+                  setWhatsappProduct(row);
+                  setIsWhatsAppModalOpen(true);
+                }}
+              >
+                <MessageCircle size={14} />
+              </button>
               <button
                 className="icon-btn icon-btn-sm btn-action-secondary border-none"
                 title="Traspasar entre Sedes"
@@ -1201,6 +1251,17 @@ export default function ProductsPage() {
         onSuccess={() => {
           loadData();
         }}
+      />
+
+      {/* WhatsApp Share Modal for Single Product or Full Catalog */}
+      <WhatsAppShareModal
+        isOpen={isWhatsAppModalOpen}
+        onClose={() => {
+          setIsWhatsAppModalOpen(false);
+          setWhatsappProduct(null);
+        }}
+        product={whatsappProduct}
+        allProducts={products}
       />
     </div>
   );

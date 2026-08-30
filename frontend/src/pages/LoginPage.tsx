@@ -17,6 +17,7 @@ import Swal from 'sweetalert2';
 
 import { usersService, auditService } from '../lib/db-services';
 import { usePermissions } from '../context/PermissionContext';
+import { pullAllData } from '../lib/sync-engine';
 
 interface StaffCredentials {
   taxId: string;
@@ -112,6 +113,9 @@ export default function LoginPage() {
           branch_name: user.branchName,
         },
       });
+
+      // Trigger initial pull of tenant database into local IndexedDB
+      pullAllData().catch((err) => console.warn('[LoginPage] Initial sync pull warning:', err));
 
       navigate('/app');
     } catch (loginError) {
