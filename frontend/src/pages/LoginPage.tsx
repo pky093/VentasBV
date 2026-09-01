@@ -211,7 +211,11 @@ export default function LoginPage() {
         {/* Center Hero Logo */}
         <div className="login-story__hero">
           <img
-            src="/bv-hero-logo.png"
+            src="./bv-hero-logo.png"
+            onError={(e) => {
+              // Fallback if direct file loading
+              (e.currentTarget as HTMLImageElement).src = './ventas-bv-logo.png';
+            }}
             alt="B&V Ventas Logo"
             className="login-story__hero-img"
           />

@@ -51,10 +51,19 @@ export default function App() {
       <BranchProvider>
         <PermissionProvider>
           <Routes>
+            {/* Public Customer Routes (No Login Required) */}
+            <Route path="/catalog/showcase" element={<PublicCatalogPage />} />
+            <Route path="/catalog" element={<PublicCatalogPage />} />
+            <Route path="/catalogo" element={<PublicCatalogPage />} />
+            <Route path="/showcase" element={<PublicCatalogPage />} />
+            <Route path="/motos" element={<PublicCatalogPage />} />
+            <Route path="/products/:id" element={<ProductDetailPage />} />
+            <Route path="/product/:id" element={<ProductDetailPage />} />
+            <Route path="/motos/:id" element={<ProductDetailPage />} />
+
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/set-password" element={<SetPasswordPage />} />
-            <Route path="/catalog/showcase" element={<PublicCatalogPage />} />
             <Route
               path="/platform"
               element={

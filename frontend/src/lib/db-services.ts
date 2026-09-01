@@ -1,4 +1,4 @@
-import { supabase, DEFAULT_TENANT_ID, DEFAULT_BRANCH_ID, getActiveTenantId, getActiveBranchId } from './supabase';
+import { supabase, DEFAULT_TENANT_ID, DEFAULT_BRANCH_ID, getActiveTenantId, getActiveBranchId, resolveTenantId } from './supabase';
 import {
   STORES,
   getAllRecords,
@@ -23,6 +23,7 @@ export interface ColorVariant {
   color: string;
   hex?: string;
   stock: number;
+  branchStocks?: Record<string, number>;
 }
 
 export interface Product {
@@ -135,8 +136,11 @@ export interface UserMember {
 // ---------------- PRODUCTS ----------------
 export const productsService = {
   async getProducts(branchId?: string): Promise<Product[]> {
-    const tenantId = getActiveTenantId();
-    if (!tenantId) return [];
+    let tenantId = getActiveTenantId();
+    if (!tenantId) {
+      tenantId = await resolveTenantId();
+    }
+    if (!tenantId && !isNetworkOnline()) return [];
 
     // ─── OFFLINE FALLBACK: If not online, serve from IndexedDB ───
     if (!isNetworkOnline()) {
@@ -165,30 +169,50 @@ export const productsService = {
         .select('id, name')
         .eq('tenant_id', tenantId);
 
+      const branchList = branches || [];
       const branchNameMap = new Map<string, string>();
-      branches?.forEach((b) => branchNameMap.set(b.id, b.name));
+      branchList.forEach((b) => branchNameMap.set(b.id, b.name));
 
       const { data: stocks } = await supabase
         .from('branch_inventory')
         .select('product_id, branch_id, quantity')
         .eq('tenant_id', tenantId);
 
-      const productStocksMap = new Map<string, BranchStock[]>();
+      const productStocksMap = new Map<string, Map<string, number>>();
       stocks?.forEach((s) => {
         const pid = s.product_id;
         const bId = s.branch_id;
-        const bName = branchNameMap.get(bId) || 'Sede Principal';
         const qty = Number(s.quantity) || 0;
-
-        const list = productStocksMap.get(pid) || [];
-        list.push({ branchId: bId, branchName: bName, stock: qty });
-        productStocksMap.set(pid, list);
+        if (!productStocksMap.has(pid)) {
+          productStocksMap.set(pid, new Map());
+        }
+        productStocksMap.get(pid)!.set(bId, qty);
       });
 
       const result = (prods || []).map((p: any) => {
-        const branchStocks = productStocksMap.get(p.id) || [];
-        let calculatedStock = 0;
+        const pStocksMap = productStocksMap.get(p.id);
+        const colorsList = Array.isArray(p.colors) ? p.colors : [];
+        const hasColors = colorsList.length > 0;
+        const colorsTotalStock = hasColors ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0) : null;
 
+        const branchStocks: BranchStock[] = branchList.map((b, idx) => {
+          let bStock = pStocksMap?.get(b.id) ?? 0;
+          if (hasColors && colorsTotalStock !== null && colorsTotalStock > 0) {
+            const totalRecordedBranchStock = Array.from(pStocksMap?.values() || []).reduce((a, c) => a + c, 0);
+            if (totalRecordedBranchStock < colorsTotalStock) {
+              if (bStock > 0 || (totalRecordedBranchStock === 0 && idx === 0)) {
+                bStock = Math.max(bStock, colorsTotalStock - (totalRecordedBranchStock - bStock));
+              }
+            }
+          }
+          return {
+            branchId: b.id,
+            branchName: b.name,
+            stock: bStock,
+          };
+        });
+
+        let calculatedStock = 0;
         if (branchId && branchId !== 'ALL') {
           const found = branchStocks.find((bs) => bs.branchId === branchId);
           calculatedStock = found ? found.stock : 0;
@@ -196,21 +220,40 @@ export const productsService = {
           calculatedStock = branchStocks.reduce((sum, bs) => sum + bs.stock, 0);
         }
 
-        const colorsList = Array.isArray(p.colors) ? p.colors : [];
-        const hasColors = colorsList.length > 0;
-        const colorsTotalStock = hasColors ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0) : null;
-
         let finalStock = calculatedStock;
-        if (hasColors && colorsTotalStock !== null) {
+        if (hasColors && colorsTotalStock !== null && colorsTotalStock > 0) {
           if (!branchId || branchId === 'ALL') {
-            finalStock = colorsTotalStock;
-          } else {
-            finalStock = calculatedStock > 0 ? calculatedStock : colorsTotalStock;
+            finalStock = Math.max(calculatedStock, colorsTotalStock);
           }
         }
 
+        const formattedColors: ColorVariant[] = colorsList.map((c: any) => {
+          const bs = typeof c.branchStocks === 'object' && c.branchStocks !== null ? { ...c.branchStocks } : {};
+          let colorStock = Number(c.stock) || 0;
+          if (branchId && branchId !== 'ALL') {
+            if (bs[branchId] !== undefined) {
+              colorStock = Number(bs[branchId]) || 0;
+            } else {
+              const mainBranchId = branchList[0]?.id;
+              if (branchId === mainBranchId) {
+                colorStock = Number(c.stock) || 0;
+              } else {
+                colorStock = 0;
+              }
+            }
+          }
+          return {
+            color: c.color,
+            hex: c.hex,
+            stock: colorStock,
+            branchStocks: bs,
+          };
+        });
+
         return {
           id: p.id,
+          tenantId: p.tenant_id || tenantId,
+          tenant_id: p.tenant_id || tenantId,
           code: p.code || p.sku || 'PROD',
           sku: p.sku || p.code || '',
           name: p.name,
@@ -226,7 +269,7 @@ export const productsService = {
           minStock: Number(p.min_stock) || 5,
           status: p.status === 'INACTIVE' ? 'INACTIVE' as const : 'ACTIVE' as const,
           imagePath: p.image_path || '',
-          colors: colorsList,
+          colors: formattedColors,
           branchStocks,
         };
       });
@@ -244,7 +287,8 @@ export const productsService = {
   /** Read products from IndexedDB cache */
   async _getProductsFromCache(branchId?: string): Promise<Product[]> {
     try {
-      const [cached, branchInv, categories, brands, models, branches] = await Promise.all([
+      const tenantId = getActiveTenantId();
+      let [cached, branchInv, categories, brands, models, branches] = await Promise.all([
         getAllRecords<any>(STORES.PRODUCTS),
         getAllRecords<any>(STORES.BRANCH_INVENTORY),
         getAllRecords<any>(STORES.CATEGORIES),
@@ -252,6 +296,11 @@ export const productsService = {
         getAllRecords<any>(STORES.MODELS),
         getAllRecords<any>(STORES.BRANCHES),
       ]);
+
+      if (tenantId) {
+        cached = cached.filter((p: any) => !p.tenantId && !p.tenant_id || p.tenantId === tenantId || p.tenant_id === tenantId);
+        branches = branches.filter((b: any) => !b.tenantId && !b.tenant_id || b.tenantId === tenantId || b.tenant_id === tenantId);
+      }
 
       const catMap = new Map<string, string>();
       categories.forEach((c: any) => catMap.set(c.id, c.name));
@@ -266,22 +315,43 @@ export const productsService = {
       branches.forEach((b: any) => branchNameMap.set(b.id, b.name));
 
       // Build productStocksMap from STORES.BRANCH_INVENTORY
-      const productStocksMap = new Map<string, BranchStock[]>();
+      const productStocksMap = new Map<string, Map<string, number>>();
       branchInv.forEach((s: any) => {
         const pid = s.product_id;
         const bId = s.branch_id;
-        const bName = branchNameMap.get(bId) || 'Sede Principal';
         const qty = Number(s.quantity) || 0;
-
-        const list = productStocksMap.get(pid) || [];
-        list.push({ branchId: bId, branchName: bName, stock: qty });
-        productStocksMap.set(pid, list);
+        if (!productStocksMap.has(pid)) {
+          productStocksMap.set(pid, new Map());
+        }
+        productStocksMap.get(pid)!.set(bId, qty);
       });
 
       return cached.map((p: any) => {
-        const branchStocks = p.branchStocks && p.branchStocks.length > 0
-          ? p.branchStocks
-          : (productStocksMap.get(p.id) || []);
+        const pStocksMap = productStocksMap.get(p.id);
+        const colorsList = Array.isArray(p.colors) ? p.colors : [];
+        const hasColors = colorsList.length > 0;
+        const colorsTotalStock = hasColors
+          ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0)
+          : null;
+
+        const branchStocks: BranchStock[] = branches.length > 0
+          ? branches.map((b: any, idx: number) => {
+              let bStock = pStocksMap?.get(b.id) ?? (p.branchStocks?.find((bs: any) => bs.branchId === b.id)?.stock ?? 0);
+              if (hasColors && colorsTotalStock !== null && colorsTotalStock > 0) {
+                const totalRecorded = branches.reduce((acc: number, cur: any) => acc + (pStocksMap?.get(cur.id) ?? 0), 0);
+                if (totalRecorded < colorsTotalStock) {
+                  if (bStock > 0 || (totalRecorded === 0 && idx === 0)) {
+                    bStock = Math.max(bStock, colorsTotalStock - (totalRecorded - bStock));
+                  }
+                }
+              }
+              return {
+                branchId: b.id,
+                branchName: b.name,
+                stock: bStock,
+              };
+            })
+          : (p.branchStocks || []);
 
         let calculatedStock = 0;
         if (branchId && branchId !== 'ALL') {
@@ -293,39 +363,56 @@ export const productsService = {
             : (Number(p.stock) || 0);
         }
 
-        const colorsList = Array.isArray(p.colors) ? p.colors : [];
-        const hasColors = colorsList.length > 0;
-        const colorsTotalStock = hasColors
-          ? colorsList.reduce((sum: number, c: any) => sum + (Number(c.stock) || 0), 0)
-          : null;
-
         let finalStock = calculatedStock;
-        if (hasColors && colorsTotalStock !== null) {
+        if (hasColors && colorsTotalStock !== null && colorsTotalStock > 0) {
           if (!branchId || branchId === 'ALL') {
-            finalStock = colorsTotalStock;
-          } else {
-            finalStock = calculatedStock > 0 ? calculatedStock : colorsTotalStock;
+            finalStock = Math.max(calculatedStock, colorsTotalStock);
           }
         }
 
+        const formattedColors: ColorVariant[] = colorsList.map((c: any) => {
+          const bs = typeof c.branchStocks === 'object' && c.branchStocks !== null ? { ...c.branchStocks } : {};
+          let colorStock = Number(c.stock) || 0;
+          if (branchId && branchId !== 'ALL') {
+            if (bs[branchId] !== undefined) {
+              colorStock = Number(bs[branchId]) || 0;
+            } else {
+              const mainBranchId = branches[0]?.id;
+              if (branchId === mainBranchId) {
+                colorStock = Number(c.stock) || 0;
+              } else {
+                colorStock = 0;
+              }
+            }
+          }
+          return {
+            color: c.color,
+            hex: c.hex,
+            stock: colorStock,
+            branchStocks: bs,
+          };
+        });
+
         return {
           id: p.id,
+          tenantId: p.tenant_id || tenantId,
+          tenant_id: p.tenant_id || tenantId,
           code: p.code || p.sku || 'PROD',
           sku: p.sku || p.code || '',
           name: p.name,
-          category: p.category || catMap.get(p.category_id) || 'Sin categoría',
-          categoryId: p.category_id || p.categoryId,
-          brand: p.brand || brandMap.get(p.brand_id) || 'Sin marca',
-          brandId: p.brand_id || p.brandId,
-          model: p.model || modelMap.get(p.model_id) || '',
-          modelId: p.model_id || p.modelId,
+          category: catMap.get(p.category_id) || p.category || 'Sin categoría',
+          categoryId: p.category_id,
+          brand: brandMap.get(p.brand_id) || p.brand || 'Sin marca',
+          brandId: p.brand_id,
+          model: modelMap.get(p.model_id) || p.model || '',
+          modelId: p.model_id,
           price: Number(p.price) || 0,
           cost: Number(p.cost) || 0,
           stock: finalStock,
-          minStock: Number(p.min_stock || p.minStock) || 5,
-          status: p.status === 'INACTIVE' ? ('INACTIVE' as const) : ('ACTIVE' as const),
-          imagePath: p.image_path || p.imagePath || '',
-          colors: colorsList,
+          minStock: Number(p.min_stock) || 5,
+          status: p.status === 'INACTIVE' ? 'INACTIVE' as const : 'ACTIVE' as const,
+          imagePath: p.image_path || '',
+          colors: formattedColors,
           branchStocks,
         };
       });
@@ -901,8 +988,11 @@ export const branchesService = {
 // ---------------- CATEGORIES & BRANDS ----------------
 export const catalogService = {
   async getCategories(): Promise<Category[]> {
-    const tenantId = getActiveTenantId();
-    if (!tenantId) return [];
+    let tenantId = getActiveTenantId();
+    if (!tenantId) {
+      tenantId = await resolveTenantId();
+    }
+    if (!tenantId && !isNetworkOnline()) return [];
 
     if (!isNetworkOnline()) {
       try {
@@ -2935,6 +3025,10 @@ export const inventoryService = {
 
       const { data, error } = await query;
 
+      const branchList = await branchesService.getBranches();
+      const branchMap = new Map<string, string>();
+      branchList.forEach((b) => branchMap.set(b.id, b.name));
+
       if (error || !data) {
         try {
           const localMovs = await getAllRecords<any>(STORES.INVENTORY_MOVEMENTS);
@@ -2945,12 +3039,16 @@ export const inventoryService = {
             product: m.product || 'Producto',
             productSku: m.product_sku || '',
             branchId: m.branch_id,
-            branchName: 'Sede Principal',
+            branchName: branchMap.get(m.branch_id) || 'Sede Principal',
             type: m.movement_type as any,
             qty: Number(m.quantity) || 0,
             prevStock: Number(m.previous_stock) || 0,
             newStock: Number(m.resulting_stock) || 0,
             reason: m.reason || 'Sin motivo especificado',
+            sourceBranchId: m.source_branch_id,
+            sourceBranchName: branchMap.get(m.source_branch_id) || (m.source_branch_id ? 'Sede Origen' : undefined),
+            targetBranchId: m.target_branch_id,
+            targetBranchName: branchMap.get(m.target_branch_id) || (m.target_branch_id ? 'Sede Destino' : undefined),
           }));
         } catch {
           return [];
@@ -2966,14 +3064,16 @@ export const inventoryService = {
         product: m.products?.name || 'Producto',
         productSku: m.products?.code || m.products?.sku || '',
         branchId: m.branch_id,
-        branchName: m.branches?.name || 'Sede Principal',
+        branchName: branchMap.get(m.branch_id) || m.branches?.name || 'Sede Principal',
         type: m.movement_type as any,
         qty: Number(m.quantity) || 0,
         prevStock: Number(m.previous_stock) || 0,
         newStock: Number(m.resulting_stock) || 0,
         reason: m.reason || 'Sin motivo especificado',
         sourceBranchId: m.source_branch_id,
+        sourceBranchName: branchMap.get(m.source_branch_id) || (m.source_branch_id ? 'Sede Origen' : undefined),
         targetBranchId: m.target_branch_id,
+        targetBranchName: branchMap.get(m.target_branch_id) || (m.target_branch_id ? 'Sede Destino' : undefined),
       }));
     } catch (err) {
       console.error('Error fetching inventory movements:', err);
@@ -3002,21 +3102,20 @@ export const inventoryService = {
   async registerMovement(params: {
     productId: string;
     productName: string;
-    colorVariant?: string;
-    branchId: string;
-    branchName: string;
+    branchId?: string;
+    branchName?: string;
     type: 'IN' | 'OUT' | 'ADJUSTMENT';
     qty: number;
     reason: string;
     referenceType?: string;
+    colorVariant?: string;
   }): Promise<boolean> {
-    let { productId, productName, colorVariant, branchId, branchName, type, qty, reason } = params;
-
+    const { productName, type, qty, reason, referenceType, colorVariant } = params;
+    let { productId, branchId, branchName } = params;
     const tenantId = getActiveTenantId();
     if (!tenantId) return false;
 
-    // Ensure clean 36-character UUID
-    if (productId && productId.includes('-') && productId.length > 36) {
+    if (productId && productId.length > 36) {
       productId = productId.substring(0, 36);
     }
     if (!isValidUuid(productId)) {
@@ -3077,9 +3176,12 @@ export const inventoryService = {
           if (targetColor) {
             localProd.colors = localProd.colors.map((c: any) => {
               if (c && c.color && c.color.trim().toLowerCase() === targetColor!.toLowerCase()) {
-                const curVarStock = Number(c.stock) || 0;
-                const newVarStock = type === 'OUT' ? Math.max(0, curVarStock - qtyChange) : (type === 'IN' ? curVarStock + qtyChange : qty);
-                return { ...c, stock: newVarStock };
+                const bs = typeof c.branchStocks === 'object' && c.branchStocks !== null ? { ...c.branchStocks } : {};
+                const curBranchVarStock = bs[targetBranch] !== undefined ? Number(bs[targetBranch]) : (Number(c.stock) || 0);
+                const newBranchVarStock = type === 'OUT' ? Math.max(0, curBranchVarStock - qtyChange) : (type === 'IN' ? curBranchVarStock + qtyChange : qty);
+                bs[targetBranch] = newBranchVarStock;
+                const totalColorStock = Object.values(bs).reduce((a: number, b: any) => a + (Number(b) || 0), 0);
+                return { ...c, stock: totalColorStock, branchStocks: bs };
               }
               return c;
             });
@@ -3149,91 +3251,57 @@ export const inventoryService = {
           if (anyInv) {
             invRecordId = anyInv.id;
             onlineCurrentStock = Number(anyInv.quantity) || 0;
+            if (!targetBranch) targetBranch = anyInv.branch_id;
           }
         }
 
-        let onlineResultingStock = onlineCurrentStock;
-        if (type === 'IN') onlineResultingStock = onlineCurrentStock + qtyChange;
-        else if (type === 'OUT') onlineResultingStock = Math.max(0, onlineCurrentStock - qtyChange);
-        else if (type === 'ADJUSTMENT') onlineResultingStock = qty;
+        let newOnlineStock = onlineCurrentStock;
+        if (type === 'IN') newOnlineStock = onlineCurrentStock + qtyChange;
+        else if (type === 'OUT') newOnlineStock = Math.max(0, onlineCurrentStock - qtyChange);
+        else if (type === 'ADJUSTMENT') newOnlineStock = qty;
 
         if (invRecordId) {
-          await supabase.from('branch_inventory').update({ quantity: onlineResultingStock }).eq('id', invRecordId);
+          await supabase
+            .from('branch_inventory')
+            .update({ quantity: newOnlineStock, updated_at: new Date().toISOString() })
+            .eq('id', invRecordId);
         } else if (targetBranch) {
           await supabase.from('branch_inventory').insert({
             tenant_id: tenantId,
             branch_id: targetBranch,
             product_id: productId,
-            quantity: onlineResultingStock,
+            quantity: newOnlineStock,
           });
         }
 
+        // Update product colors online if colorVariant was provided and modified
         if (localProd && Array.isArray(localProd.colors) && localProd.colors.length > 0) {
           await supabase.from('products').update({ colors: localProd.colors }).eq('id', productId);
         }
 
-        const { data: movData, error: movErr } = await supabase.from('inventory_movements').insert({
+        // Insert inventory movement
+        await supabase.from('inventory_movements').insert({
           tenant_id: tenantId,
-          branch_id: targetBranch || null,
+          branch_id: targetBranch || DEFAULT_BRANCH_ID,
           product_id: productId,
           movement_type: type,
           quantity: qtyChange,
           previous_stock: onlineCurrentStock,
-          resulting_stock: onlineResultingStock,
-          reason: reason || 'Movimiento de inventario',
-          reference_type: params.referenceType || 'MANUAL',
-        }).select().single();
-
-        if (!movErr && movData) {
-          try { await putRecord(STORES.INVENTORY_MOVEMENTS, movData); } catch {}
-          auditService.logAction({
-            action: type === 'IN' ? 'ENTRADA STOCK' : type === 'OUT' ? 'SALIDA STOCK' : 'AJUSTE STOCK',
-            entityType: 'inventory',
-            entityId: productId,
-            branchId: targetBranch || undefined,
-            description: `${type === 'IN' ? 'Entrada' : type === 'OUT' ? 'Salida' : 'Ajuste'} de ${qtyChange} unidades para "${productName}". Motivo: ${reason}`,
-            details: {
-              product_name: productName,
-              movement_type: type,
-              quantity: qtyChange,
-              previous_stock: onlineCurrentStock,
-            }
-          });
-          return true;
-        }
-      } catch (onlineErr) {
-        console.warn('[inventoryService] Online movement registration failed, processing offline:', onlineErr);
+          resulting_stock: newOnlineStock,
+          reason: reason || `${type} de stock`,
+          reference_type: referenceType || 'MANUAL',
+        });
+      } catch (err) {
+        console.error('Error updating stock online in Supabase:', err);
       }
     }
 
-    // 5. Offline Fallback: Save local movement and queue outbox mutation
-    const localMovId = generateLocalId();
-    const localMovement = {
-      id: localMovId,
-      tenant_id: tenantId,
-      branch_id: targetBranch || null,
-      product_id: productId,
-      movement_type: type,
-      quantity: qtyChange,
-      previous_stock: currentStock,
-      resulting_stock: resultingStock,
-      reason: reason || 'Movimiento de inventario',
-      reference_type: params.referenceType || 'MANUAL',
-      created_at: new Date().toISOString(),
-    };
-
-    try {
-      await putRecord(STORES.INVENTORY_MOVEMENTS, localMovement);
-      await queueMutation('inventory_movements', 'CREATE', localMovement);
-      refreshPendingCount().catch(() => {});
-    } catch (_) {}
-
     auditService.logAction({
-      action: type === 'IN' ? 'ENTRADA STOCK' : type === 'OUT' ? 'SALIDA STOCK' : 'AJUSTE STOCK',
+      action: 'MOVIMIENTO INVENTARIO',
       entityType: 'inventory',
       entityId: productId,
-      branchId: targetBranch || undefined,
-      description: `${type === 'IN' ? 'Entrada' : type === 'OUT' ? 'Salida' : 'Ajuste'} de ${qtyChange} unidades para "${productName}" (Modo Offline). Motivo: ${reason}`,
+      branchId: targetBranch,
+      description: `${type === 'IN' ? 'Ingreso' : type === 'OUT' ? 'Salida' : 'Ajuste'} de ${qtyChange} unid. en "${productName}" (${branchName || 'Sede Principal'})`,
       details: {
         product_name: productName,
         movement_type: type,
@@ -3254,93 +3322,245 @@ export const inventoryService = {
     targetBranchName: string;
     qty: number;
     reason: string;
+    colorVariant?: string;
   }): Promise<boolean> {
-    const { productId, productName, sourceBranchId, sourceBranchName, targetBranchId, targetBranchName, qty, reason } = params;
+    const { productId, productName, sourceBranchId, sourceBranchName, targetBranchId, targetBranchName, qty, reason, colorVariant } = params;
     const tenantId = getActiveTenantId();
     if (!tenantId) return false;
 
     // 1. Check & reduce source branch
     let sourceStock = 0;
-    const { data: sourceInv } = await supabase
-      .from('branch_inventory')
-      .select('id, quantity')
-      .eq('product_id', productId)
-      .eq('branch_id', sourceBranchId)
-      .maybeSingle();
+    let sourceInvId: string | null = null;
+    if (isNetworkOnline()) {
+      const { data: sourceInv } = await supabase
+        .from('branch_inventory')
+        .select('id, quantity')
+        .eq('product_id', productId)
+        .eq('branch_id', sourceBranchId)
+        .maybeSingle();
 
-    if (sourceInv) {
-      sourceStock = Number(sourceInv.quantity) || 0;
+      if (sourceInv) {
+        sourceInvId = sourceInv.id;
+        sourceStock = Number(sourceInv.quantity) || 0;
+      }
+    } else {
+      try {
+        const allLocalInv = await getAllRecords<any>(STORES.BRANCH_INVENTORY);
+        const localSource = allLocalInv.find((bi: any) => bi.product_id === productId && bi.branch_id === sourceBranchId);
+        if (localSource) {
+          sourceInvId = localSource.id;
+          sourceStock = Number(localSource.quantity) || 0;
+        }
+      } catch (_) {}
+    }
+
+    // Fallback check against product record if branch_inventory was not initialized
+    if (sourceStock < qty) {
+      try {
+        const localProd = await getRecord<Product>(STORES.PRODUCTS, productId);
+        if (localProd) {
+          const bs = localProd.branchStocks?.find(b => b.branchId === sourceBranchId);
+          if (bs && bs.stock >= qty) {
+            sourceStock = bs.stock;
+          } else if (Array.isArray(localProd.colors) && localProd.colors.length > 0) {
+            const colorStockSum = localProd.colors.reduce((sum, c) => sum + (Number(c.stock) || 0), 0);
+            if (colorStockSum >= qty) {
+              sourceStock = colorStockSum;
+            }
+          }
+        }
+      } catch (_) {}
     }
 
     if (sourceStock < qty) {
-      console.error('Stock insuficiente en sucursal origen');
+      console.error('Stock insuficiente en sucursal origen:', { sourceStock, qty, productId, sourceBranchId });
       return false;
     }
 
-    const newSourceStock = sourceStock - qty;
-    if (sourceInv) {
-      await supabase.from('branch_inventory').update({ quantity: newSourceStock }).eq('id', sourceInv.id);
-    } else {
-      await supabase.from('branch_inventory').insert({
-        tenant_id: tenantId,
-        branch_id: sourceBranchId,
-        product_id: productId,
-        quantity: newSourceStock,
-      });
-    }
+    const newSourceStock = Math.max(0, sourceStock - qty);
 
-    // 2. Increase target branch
+    // 2. Fetch target branch current stock
     let targetStock = 0;
-    const { data: targetInv } = await supabase
-      .from('branch_inventory')
-      .select('id, quantity')
-      .eq('product_id', productId)
-      .eq('branch_id', targetBranchId)
-      .maybeSingle();
+    let targetInvId: string | null = null;
+    if (isNetworkOnline()) {
+      const { data: targetInv } = await supabase
+        .from('branch_inventory')
+        .select('id, quantity')
+        .eq('product_id', productId)
+        .eq('branch_id', targetBranchId)
+        .maybeSingle();
 
-    if (targetInv) {
-      targetStock = Number(targetInv.quantity) || 0;
+      if (targetInv) {
+        targetInvId = targetInv.id;
+        targetStock = Number(targetInv.quantity) || 0;
+      }
+    } else {
+      try {
+        const allLocalInv = await getAllRecords<any>(STORES.BRANCH_INVENTORY);
+        const localTarget = allLocalInv.find((bi: any) => bi.product_id === productId && bi.branch_id === targetBranchId);
+        if (localTarget) {
+          targetInvId = localTarget.id;
+          targetStock = Number(localTarget.quantity) || 0;
+        }
+      } catch (_) {}
     }
 
     const newTargetStock = targetStock + qty;
-    if (targetInv) {
-      await supabase.from('branch_inventory').update({ quantity: newTargetStock }).eq('id', targetInv.id);
-    } else {
-      await supabase.from('branch_inventory').insert({
-        tenant_id: tenantId,
-        branch_id: targetBranchId,
-        product_id: productId,
-        quantity: newTargetStock,
-      });
+
+    // 3. Update Supabase if online
+    if (isNetworkOnline()) {
+      try {
+        // Update/insert source
+        if (sourceInvId) {
+          await supabase
+            .from('branch_inventory')
+            .update({ quantity: newSourceStock, updated_at: new Date().toISOString() })
+            .eq('id', sourceInvId);
+        } else {
+          await supabase.from('branch_inventory').insert({
+            tenant_id: tenantId,
+            branch_id: sourceBranchId,
+            product_id: productId,
+            quantity: newSourceStock,
+          });
+        }
+
+        // Update/insert target
+        if (targetInvId) {
+          await supabase
+            .from('branch_inventory')
+            .update({ quantity: newTargetStock, updated_at: new Date().toISOString() })
+            .eq('id', targetInvId);
+        } else {
+          await supabase.from('branch_inventory').insert({
+            tenant_id: tenantId,
+            branch_id: targetBranchId,
+            product_id: productId,
+            quantity: newTargetStock,
+          });
+        }
+
+        // Log transfer in inventory_movements
+        await supabase.from('inventory_movements').insert({
+          tenant_id: tenantId,
+          branch_id: sourceBranchId,
+          source_branch_id: sourceBranchId,
+          target_branch_id: targetBranchId,
+          product_id: productId,
+          movement_type: 'TRANSFER',
+          quantity: qty,
+          previous_stock: sourceStock,
+          resulting_stock: newSourceStock,
+          reason: reason || `Traslado de ${sourceBranchName} a ${targetBranchName}${colorVariant ? ` (Variante: ${colorVariant})` : ''}`,
+          reference_type: 'TRANSFER',
+        });
+      } catch (dbErr) {
+        console.error('Error saving transfer in Supabase:', dbErr);
+      }
     }
 
-    // 3. Register transfer movement log
-    await supabase.from('inventory_movements').insert({
-      tenant_id: tenantId,
-      branch_id: sourceBranchId,
-      source_branch_id: sourceBranchId,
-      target_branch_id: targetBranchId,
-      product_id: productId,
-      movement_type: 'TRANSFER',
-      quantity: qty,
-      previous_stock: sourceStock,
-      resulting_stock: newSourceStock,
-      reason: reason || `Traslado de ${sourceBranchName} a ${targetBranchName}`,
-      reference_type: 'TRANSFER',
-    });
+    // 4. Update local IndexedDB cache
+    try {
+      const localProd = await getRecord<Product>(STORES.PRODUCTS, productId);
+      if (localProd) {
+        if (Array.isArray(localProd.branchStocks)) {
+          const sIdx = localProd.branchStocks.findIndex(b => b.branchId === sourceBranchId);
+          if (sIdx >= 0) {
+            localProd.branchStocks[sIdx].stock = newSourceStock;
+          } else {
+            localProd.branchStocks.push({ branchId: sourceBranchId, branchName: sourceBranchName, stock: newSourceStock });
+          }
+
+          const tIdx = localProd.branchStocks.findIndex(b => b.branchId === targetBranchId);
+          if (tIdx >= 0) {
+            localProd.branchStocks[tIdx].stock = newTargetStock;
+          } else {
+            localProd.branchStocks.push({ branchId: targetBranchId, branchName: targetBranchName, stock: newTargetStock });
+          }
+        }
+
+        // Update color variant per-branch stocks
+        if (colorVariant && Array.isArray(localProd.colors) && localProd.colors.length > 0) {
+          const targetColor = colorVariant.trim().toLowerCase();
+          localProd.colors = localProd.colors.map((c: any) => {
+            if (c.color?.trim().toLowerCase() === targetColor) {
+              const bs = typeof c.branchStocks === 'object' && c.branchStocks !== null ? { ...c.branchStocks } : {};
+              const curSourceVal = bs[sourceBranchId] !== undefined ? Number(bs[sourceBranchId]) : (Number(c.stock) || 0);
+              const curTargetVal = bs[targetBranchId] !== undefined ? Number(bs[targetBranchId]) : 0;
+
+              const newSourceVal = Math.max(0, curSourceVal - qty);
+              const newTargetVal = curTargetVal + qty;
+
+              bs[sourceBranchId] = newSourceVal;
+              bs[targetBranchId] = newTargetVal;
+
+              const totalVarStock = Object.values(bs).reduce((a: number, b: any) => a + (Number(b) || 0), 0);
+              return {
+                ...c,
+                stock: totalVarStock,
+                branchStocks: bs,
+              };
+            }
+            return c;
+          });
+
+          if (isNetworkOnline()) {
+            try {
+              await supabase.from('products').update({ colors: localProd.colors }).eq('id', productId);
+            } catch (_) {}
+          }
+        }
+
+        await putRecord(STORES.PRODUCTS, localProd);
+      }
+
+      const allBranchInv = await getAllRecords<any>(STORES.BRANCH_INVENTORY);
+      const sBi = allBranchInv.find((bi: any) => bi.product_id === productId && bi.branch_id === sourceBranchId);
+      if (sBi) {
+        await putRecord(STORES.BRANCH_INVENTORY, { ...sBi, quantity: newSourceStock });
+      }
+      const tBi = allBranchInv.find((bi: any) => bi.product_id === productId && bi.branch_id === targetBranchId);
+      if (tBi) {
+        await putRecord(STORES.BRANCH_INVENTORY, { ...tBi, quantity: newTargetStock });
+      } else {
+        await putRecord(STORES.BRANCH_INVENTORY, {
+          id: generateLocalId(),
+          tenant_id: tenantId,
+          branch_id: targetBranchId,
+          product_id: productId,
+          quantity: newTargetStock,
+        });
+      }
+
+      await putRecord(STORES.INVENTORY_MOVEMENTS, {
+        id: generateLocalId(),
+        tenant_id: tenantId,
+        branch_id: sourceBranchId,
+        source_branch_id: sourceBranchId,
+        target_branch_id: targetBranchId,
+        product_id: productId,
+        movement_type: 'TRANSFER',
+        quantity: qty,
+        previous_stock: sourceStock,
+        resulting_stock: newSourceStock,
+        reason: reason || `Traslado de ${sourceBranchName} a ${targetBranchName}`,
+        created_at: new Date().toISOString(),
+      });
+    } catch (_) {}
 
     auditService.logAction({
       action: 'TRANSFERENCIA STOCK',
       entityType: 'inventory',
       entityId: productId,
       branchId: sourceBranchId,
-      description: `Traslado de ${qty} und. de "${productName}" desde ${sourceBranchName} hacia ${targetBranchName}`,
+      description: `Traslado de ${qty} und. de "${productName}" desde ${sourceBranchName} hacia ${targetBranchName}${colorVariant ? ` (Color: ${colorVariant})` : ''}`,
       details: {
         product_name: productName,
         quantity: qty,
         source_branch: sourceBranchName,
         target_branch: targetBranchName,
         reason,
+        colorVariant,
       },
     });
 
@@ -3357,6 +3577,7 @@ export const inventoryService = {
     qty: number;
     estimatedDays?: number;
     reason: string;
+    colorVariant?: string;
   }): Promise<boolean> {
     return this.transferStock(params);
   },
@@ -4617,8 +4838,11 @@ export const expensesService = {
 export const settingsService = {
   async getTenantInfo(): Promise<Record<string, any>> {
     try {
-      const tenantId = getActiveTenantId();
-      if (!tenantId) return {};
+      let tenantId = getActiveTenantId();
+      if (!tenantId) {
+        tenantId = await resolveTenantId();
+      }
+      if (!tenantId && !isNetworkOnline()) return {};
 
       if (!isNetworkOnline()) {
         try {

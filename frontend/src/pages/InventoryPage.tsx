@@ -13,6 +13,7 @@ import {
   Building2,
   Package,
   Sparkles,
+  Layers,
 } from 'lucide-react';
 import { PageHeader, Button, Badge, Tabs, DataTable, Modal, SuggestionChip } from '../components/ui';
 import {
@@ -43,10 +44,12 @@ export default function InventoryPage() {
   const [movementType, setMovementType] = useState<'IN' | 'OUT' | 'ADJUSTMENT'>('IN');
 
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferTargetProduct, setTransferTargetProduct] = useState<Product | null>(null);
 
   // Form inputs for Movement Modal
   const [selectedProductId, setSelectedProductId] = useState('');
   const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [selectedMovementColor, setSelectedMovementColor] = useState('');
   const [movementQty, setMovementQty] = useState(1);
   const [movementReason, setMovementReason] = useState('');
   const [adjustmentMode, setAdjustmentMode] = useState<'DELTA' | 'SET'>('DELTA');
@@ -90,10 +93,14 @@ export default function InventoryPage() {
 
   const openMovementModal = (type: 'IN' | 'OUT' | 'ADJUSTMENT', preselectedProdId?: string) => {
     setMovementType(type);
-    if (preselectedProdId) {
-      setSelectedProductId(preselectedProdId);
-    } else if (products.length > 0 && !selectedProductId) {
-      setSelectedProductId(products[0].id);
+    const targetProdId = preselectedProdId || (products.length > 0 ? products[0].id : '');
+    setSelectedProductId(targetProdId);
+
+    const prod = products.find((p) => p.id === targetProdId);
+    if (prod?.colors && prod.colors.length > 0) {
+      setSelectedMovementColor(prod.colors[0].color || '');
+    } else {
+      setSelectedMovementColor('');
     }
 
     if (activeBranchId && activeBranchId !== 'ALL') {
@@ -116,7 +123,13 @@ export default function InventoryPage() {
     setIsMovementModalOpen(true);
   };
 
-  const openTransferModal = (_preselectedProdId?: string) => {
+  const openTransferModal = (preselectedProdId?: string) => {
+    if (preselectedProdId) {
+      const found = products.find((p) => p.id === preselectedProdId);
+      setTransferTargetProduct(found || null);
+    } else {
+      setTransferTargetProduct(null);
+    }
     setIsTransferModalOpen(true);
   };
 
@@ -136,8 +149,13 @@ export default function InventoryPage() {
       let finalQty = Number(movementQty);
 
       if (movementType === 'ADJUSTMENT' && adjustmentMode === 'SET') {
-        finalQty = Number(movementQty) - prod.stock;
+        const curBranchStock = prod.branchStocks?.find(b => b.branchId === targetBranchId)?.stock ?? prod.stock;
+        finalQty = Number(movementQty) - curBranchStock;
       }
+
+      const finalReason = selectedMovementColor
+        ? `${movementReason} (Variante: ${selectedMovementColor})`
+        : movementReason;
 
       const success = await inventoryService.registerMovement({
         productId: prod.id,
@@ -146,7 +164,8 @@ export default function InventoryPage() {
         branchName: branch?.name || activeBranch?.name || 'Sucursal',
         type: movementType,
         qty: finalQty,
-        reason: movementReason || `${movementType === 'IN' ? 'Ingreso' : movementType === 'OUT' ? 'Salida' : 'Ajuste'} de stock`,
+        reason: finalReason || `${movementType === 'IN' ? 'Ingreso' : movementType === 'OUT' ? 'Salida' : 'Ajuste'} de stock`,
+        colorVariant: selectedMovementColor || undefined,
       });
 
       if (success) {
@@ -156,7 +175,17 @@ export default function InventoryPage() {
 
         Swal.fire({
           title: '¡Movimiento Registrado!',
-          text: `Se registró correctamente ${actionLabel} de "${prod.name}" en la sucursal "${branchLabel}".`,
+          html: `
+            <div style="text-align:center; padding: 6px;">
+              <p style="font-size:14px; margin-bottom:10px; color:var(--text-primary);">
+                Se registró ${actionLabel} de <b>${Math.abs(finalQty)} unid.</b> en <b>${prod.name}</b>
+                ${selectedMovementColor ? `<br/><span style="font-size:12px; color:var(--text-secondary);">(Color: <b>${selectedMovementColor}</b>)</span>` : ''}
+              </p>
+              <div style="display:inline-block; background:var(--bg-surface-hover); padding:6px 14px; border-radius:10px; border:1px solid var(--border-color); font-size:12px; font-weight:bold; color:var(--primary-600);">
+                Sucursal: ${branchLabel}
+              </div>
+            </div>
+          `,
           icon: 'success',
           timer: 2200,
           showConfirmButton: false,
@@ -311,16 +340,8 @@ export default function InventoryPage() {
     },
     {
       key: 'branch',
-      header: 'SUCURSAL',
+      header: 'STOCK POR SUCURSAL',
       render: (r: Product) => {
-        if (activeBranchId && activeBranchId !== 'ALL') {
-          return (
-            <SuggestionChip
-              label={activeBranch?.name || 'Sucursal Seleccionada'}
-              count={`${r.stock} unid.`}
-            />
-          );
-        }
         if (r.branchStocks && r.branchStocks.length > 0) {
           return (
             <div className="flex flex-wrap gap-1.5 items-center">
@@ -335,7 +356,7 @@ export default function InventoryPage() {
             </div>
           );
         }
-        return <span className="text-xs text-secondary font-medium">Todas las Sedes</span>;
+        return <span className="text-xs text-secondary font-medium">{activeBranch?.name || 'Sede Principal'}</span>;
       },
     },
     {
@@ -389,9 +410,10 @@ export default function InventoryPage() {
       key: 'route',
       header: 'ORIGEN → DESTINO',
       render: (r: InventoryMovement) => (
-        <span className="text-xs text-primary font-medium">
-          {r.sourceBranchName || 'Sede Principal'} &rarr;{' '}
-          <strong className="text-primary-700">{r.targetBranchName || 'Sucursal Miraflores'}</strong>
+        <span className="text-xs text-primary font-medium flex items-center gap-1.5">
+          <span className="font-semibold">{r.sourceBranchName || r.branchName || 'Sede Origen'}</span>
+          <span className="text-primary-600 font-bold">&rarr;</span>
+          <span className="text-emerald-700 dark:text-emerald-300 font-bold">{r.targetBranchName || 'Sede Destino'}</span>
         </span>
       ),
     },
@@ -549,164 +571,342 @@ export default function InventoryPage() {
         }
         size="lg"
       >
-        <form onSubmit={handleSaveMovement} className="space-y-4">
-          <div className="p-3 bg-surface border border-color rounded-lg text-xs flex items-center justify-between">
-            <span className="text-secondary font-medium">Operación Seleccionada:</span>
-            {movementType === 'IN' ? (
-              <Badge variant="success">+ INGRESO / ENTRADA DE STOCK</Badge>
-            ) : movementType === 'OUT' ? (
-              <Badge variant="danger">- SALIDA / RETIRO DE STOCK</Badge>
-            ) : (
-              <Badge variant="warning">AJUSTE FÍSICO DE KARDEX</Badge>
-            )}
-          </div>
+        {(() => {
+          const currentMovementProduct = products.find((p) => p.id === selectedProductId) || products[0] || null;
+          const currentMovementBranch = branches.find((b) => b.id === selectedBranchId) || branches[0] || null;
+          const currentMovementBranchStock =
+            currentMovementProduct?.branchStocks?.find((bs) => bs.branchId === (currentMovementBranch?.id || ''))?.stock ??
+            (currentMovementProduct?.stock || 0);
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="form-group">
-              <label className="form-label font-bold">Seleccionar Producto</label>
-              <select
-                className="form-control"
-                value={selectedProductId}
-                onChange={(e) => setSelectedProductId(e.target.value)}
-                required
-              >
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.code}) — Stock Actual: {p.stock}
-                  </option>
-                ))}
-              </select>
-            </div>
+          const selectedMovementColorObj = currentMovementProduct?.colors?.find(
+            (c) => c.color?.toLowerCase() === selectedMovementColor?.toLowerCase()
+          );
+          const selectedMovementColorStock =
+            selectedMovementColorObj?.stock !== undefined ? Number(selectedMovementColorObj.stock) : null;
 
-            <div className="form-group">
-              <label className="form-label font-bold">Sede / Sucursal</label>
-              <select
-                className="form-control"
-                value={selectedBranchId}
-                onChange={(e) => setSelectedBranchId(e.target.value)}
-                required
-              >
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name} {b.isMain ? '(Principal)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          let resultingMovementStock = currentMovementBranchStock;
+          if (movementType === 'IN') {
+            resultingMovementStock = currentMovementBranchStock + (Number(movementQty) || 0);
+          } else if (movementType === 'OUT') {
+            resultingMovementStock = Math.max(0, currentMovementBranchStock - (Number(movementQty) || 0));
+          } else if (movementType === 'ADJUSTMENT') {
+            if (adjustmentMode === 'SET') {
+              resultingMovementStock = Number(movementQty) || 0;
+            } else {
+              resultingMovementStock = currentMovementBranchStock + (Number(movementQty) || 0);
+            }
+          }
 
-          {movementType === 'ADJUSTMENT' && (
-            <div className="form-group">
-              <label className="form-label font-bold">Modo de Ajuste</label>
-              <div className="grid grid-cols-2 gap-3">
-                <label
-                  className={`p-3 border rounded-lg cursor-pointer text-xs font-semibold flex items-center gap-2 ${
-                    adjustmentMode === 'DELTA' ? 'border-primary-600 bg-primary-50 dark:bg-primary-950/40' : 'border-color'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="adjMode"
-                    checked={adjustmentMode === 'DELTA'}
-                    onChange={() => setAdjustmentMode('DELTA')}
-                  />
-                  <span>Diferencia (+/- cantidad)</span>
-                </label>
-                <label
-                  className={`p-3 border rounded-lg cursor-pointer text-xs font-semibold flex items-center gap-2 ${
-                    adjustmentMode === 'SET' ? 'border-primary-600 bg-primary-50 dark:bg-primary-950/40' : 'border-color'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="adjMode"
-                    checked={adjustmentMode === 'SET'}
-                    onChange={() => setAdjustmentMode('SET')}
-                  />
-                  <span>Establecer Stock Físico Real</span>
-                </label>
+          return (
+            <form onSubmit={handleSaveMovement} className="space-y-4">
+              <div className="p-3 bg-surface border border-color rounded-xl text-xs flex items-center justify-between">
+                <span className="text-secondary font-medium">Operación Seleccionada:</span>
+                {movementType === 'IN' ? (
+                  <Badge variant="success" className="font-bold flex items-center gap-1">
+                    <ArrowDownLeft size={13} /> + INGRESO / ENTRADA DE STOCK
+                  </Badge>
+                ) : movementType === 'OUT' ? (
+                  <Badge variant="danger" className="font-bold flex items-center gap-1">
+                    <ArrowUpRight size={13} /> - SALIDA / RETIRO DE STOCK
+                  </Badge>
+                ) : (
+                  <Badge variant="warning" className="font-bold flex items-center gap-1">
+                    <Sliders size={13} /> AJUSTE FÍSICO DE KARDEX
+                  </Badge>
+                )}
               </div>
-            </div>
-          )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="form-group">
-              <label className="form-label font-bold">
-                {movementType === 'IN'
-                  ? 'Cantidad a Ingresar (+)'
-                  : movementType === 'OUT'
-                  ? 'Cantidad a Retirar (-)'
-                  : adjustmentMode === 'SET'
-                  ? 'Nuevo Stock Físico Real Total'
-                  : 'Variación de Stock (ej. -2 o +5)'}
-              </label>
-              <input
-                type="number"
-                step="1"
-                className="form-control font-bold text-lg"
-                value={movementQty}
-                onChange={(e) => setMovementQty(parseInt(e.target.value) || 0)}
-                required
-              />
-            </div>
+              {/* 1. SELECCIÓN DE PRODUCTO */}
+              <div className="form-group space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="form-label font-bold flex items-center gap-1.5 mb-0">
+                    <Package size={15} className="text-primary-600" />
+                    Seleccionar Producto
+                  </label>
+                  <span className="text-xs text-secondary font-medium">
+                    Stock Total:{' '}
+                    <strong className="text-primary font-bold">
+                      {currentMovementProduct
+                        ? (currentMovementProduct.branchStocks || []).reduce((sum, bs) => sum + bs.stock, 0) || currentMovementProduct.stock
+                        : 0}{' '}
+                      unid.
+                    </strong>
+                  </span>
+                </div>
 
-            <div className="form-group">
-              <label className="form-label font-bold">Motivo / Referencia</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Ej. Guía de Remisión GR-004, Merma, etc."
-                value={movementReason}
-                onChange={(e) => setMovementReason(e.target.value)}
-                required
-              />
-            </div>
-          </div>
+                <select
+                  className="form-control"
+                  value={selectedProductId}
+                  onChange={(e) => {
+                    const pId = e.target.value;
+                    setSelectedProductId(pId);
+                    const pObj = products.find((p) => p.id === pId);
+                    if (pObj?.colors && pObj.colors.length > 0) {
+                      setSelectedMovementColor(pObj.colors[0].color || '');
+                    } else {
+                      setSelectedMovementColor('');
+                    }
+                  }}
+                  required
+                >
+                  {products.map((p) => {
+                    const pTotal = (p.branchStocks || []).reduce((sum, bs) => sum + bs.stock, 0) || p.stock;
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.code ? `[${p.code}] ` : ''}{p.name} {p.brand ? `• ${p.brand}` : ''} — Stock Total: {pTotal} unid.
+                      </option>
+                    );
+                  })}
+                </select>
 
-          {/* Motivo suggestions */}
-          <div className="flex gap-1.5 flex-wrap items-center pt-1.5">
-            <span className="text-[11px] font-semibold text-secondary flex items-center gap-1">
-              <Sparkles size={13} className="text-primary-600 dark:text-primary-400" />
-              Sugerencias:
-            </span>
-            {[
-              movementType === 'IN' ? 'Orden de Compra OC-005' : 'Merma por Rotura',
-              movementType === 'IN' ? 'Ingreso por Importación' : 'Uso Interno de Oficina',
-              'Inventario Físico Mensual',
-              'Corrección de Kardex',
-              ...(movementType === 'IN' ? ['Devolución de Cliente'] : movementType === 'OUT' ? ['Venta Directa'] : ['Ajuste por Auditoría']),
-            ].map((chip) => (
-              <SuggestionChip
-                key={chip}
-                label={chip}
-                selected={movementReason === chip}
-                onClick={() => setMovementReason(chip)}
-                size="sm"
-              />
-            ))}
-          </div>
+                {/* Variante de Color pills */}
+                {currentMovementProduct?.colors && currentMovementProduct.colors.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <label className="form-label text-xs font-bold text-secondary flex items-center gap-1.5 mb-0">
+                      <Layers size={14} className="text-primary-600" /> Variante de Color:
+                    </label>
+                    <div className="tab-list-pills p-1 inline-flex gap-1 flex-wrap">
+                      {currentMovementProduct.colors.map((c) => {
+                        const isActive = selectedMovementColor?.toLowerCase() === c.color?.toLowerCase();
+                        return (
+                          <button
+                            key={c.color}
+                            type="button"
+                            onClick={() => setSelectedMovementColor(c.color)}
+                            className={`tab-btn-pill ${isActive ? 'active' : ''}`}
+                          >
+                            {c.hex && (
+                              <span
+                                className="w-2.5 h-2.5 rounded-full border border-black/10 shrink-0"
+                                style={{ backgroundColor: c.hex }}
+                              />
+                            )}
+                            <span>{c.color}</span>
+                            {c.stock !== undefined && (
+                              <span className="text-[11px] opacity-75 font-mono">({c.stock} unid.)</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
-          <div className="flex justify-end gap-2 pt-4 border-t border-color">
-            <Button variant="secondary" type="button" onClick={() => setIsMovementModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              variant={movementType === 'IN' ? 'success' : movementType === 'OUT' ? 'danger' : 'warning'}
-              type="submit"
-              loading={isSubmitting}
-            >
-              Guardar Movimiento
-            </Button>
-          </div>
-        </form>
+                {/* Stock por sede pills */}
+                <div className="space-y-1.5 pt-1">
+                  <label className="form-label text-xs font-bold text-secondary flex items-center gap-1.5 mb-0">
+                    <Building2 size={14} className="text-primary-600" /> Sede / Sucursal de Operación:
+                  </label>
+                  <div className="tab-list-pills p-1 inline-flex gap-1 flex-wrap">
+                    {branches.map((b) => {
+                      const bStock =
+                        currentMovementProduct?.branchStocks?.find((bs) => bs.branchId === b.id)?.stock ?? 0;
+                      const isActive = b.id === (selectedBranchId || (activeBranchId !== 'ALL' ? activeBranchId : branches[0]?.id));
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setSelectedBranchId(b.id)}
+                          className={`tab-btn-pill ${isActive ? 'active' : ''}`}
+                        >
+                          <Building2 size={13} className="tab-icon" />
+                          <span>{b.name}:</span>
+                          <strong className="font-mono">{bStock} unid.</strong>
+                          {isActive && (
+                            <span className="text-[10px] font-bold text-primary-700 dark:text-primary-300 ml-0.5">
+                              (Seleccionada)
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {movementType === 'ADJUSTMENT' && (
+                <div className="form-group">
+                  <label className="form-label font-bold text-xs mb-1.5">Modo de Ajuste</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label
+                      className={`p-3 border rounded-xl cursor-pointer text-xs font-semibold flex items-center gap-2 transition-all ${
+                        adjustmentMode === 'DELTA'
+                          ? 'border-primary-600 bg-primary-50 dark:bg-primary-950/40 text-primary-700 dark:text-primary-300'
+                          : 'border-color bg-surface'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="adjMode"
+                        checked={adjustmentMode === 'DELTA'}
+                        onChange={() => setAdjustmentMode('DELTA')}
+                      />
+                      <span>Diferencia (+/- cantidad)</span>
+                    </label>
+                    <label
+                      className={`p-3 border rounded-xl cursor-pointer text-xs font-semibold flex items-center gap-2 transition-all ${
+                        adjustmentMode === 'SET'
+                          ? 'border-primary-600 bg-primary-50 dark:bg-primary-950/40 text-primary-700 dark:text-primary-300'
+                          : 'border-color bg-surface'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="adjMode"
+                        checked={adjustmentMode === 'SET'}
+                        onChange={() => setAdjustmentMode('SET')}
+                      />
+                      <span>Establecer Stock Físico Real</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Balance Preview Card */}
+              <div className="p-3.5 bg-surface border border-color rounded-xl flex items-center justify-between gap-3 text-xs w-full">
+                <div className="flex-1 min-w-0">
+                  <span className="text-[10px] uppercase tracking-wider font-semibold text-secondary block mb-0.5">
+                    Sede Seleccionada
+                  </span>
+                  <span className="font-bold text-primary text-sm truncate block">
+                    {currentMovementBranch?.name || 'Sede'}
+                  </span>
+                  <div className="text-secondary text-xs mt-0.5">
+                    Stock actual: <strong className="text-primary font-mono">{currentMovementBranchStock} unid.</strong>
+                    {selectedMovementColor && selectedMovementColorStock !== null && (
+                      <span className="ml-1 text-[11px] text-secondary font-medium">
+                        (Var. {selectedMovementColor}: {selectedMovementColorStock})
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="shrink-0 px-3.5 py-1.5 rounded-full bg-surface-hover border border-color font-bold text-xs font-mono">
+                  {movementType === 'IN'
+                    ? `+${movementQty}`
+                    : movementType === 'OUT'
+                    ? `-${movementQty}`
+                    : `Ajuste: ${movementQty}`}
+                </div>
+
+                <div className="flex-1 min-w-0 text-right">
+                  <span className="text-[10px] uppercase tracking-wider font-semibold text-secondary block mb-0.5">
+                    Stock Resultante
+                  </span>
+                  <strong
+                    className={`font-mono text-sm ${
+                      resultingMovementStock < 0 ? 'text-danger-600' : 'text-emerald-600'
+                    }`}
+                  >
+                    {resultingMovementStock} unid.
+                  </strong>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="form-group">
+                  <label className="form-label font-bold mb-1">
+                    {movementType === 'IN'
+                      ? 'Cantidad a Ingresar (+)'
+                      : movementType === 'OUT'
+                      ? 'Cantidad a Retirar (-)'
+                      : adjustmentMode === 'SET'
+                      ? 'Nuevo Stock Físico Real Total'
+                      : 'Variación de Stock (ej. -2 o +5)'}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMovementQty((q) => Math.max(1, q - 1))}
+                      className="btn btn-secondary px-3 py-2 shrink-0 font-bold"
+                    >
+                      <Minus size={14} />
+                    </button>
+                    <input
+                      type="number"
+                      step="1"
+                      className="form-control font-bold text-center text-sm"
+                      value={movementQty}
+                      onChange={(e) => setMovementQty(parseInt(e.target.value) || 0)}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setMovementQty((q) => q + 1)}
+                      className="btn btn-secondary px-3 py-2 shrink-0 font-bold"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label font-bold mb-1">Motivo / Referencia</label>
+                  <input
+                    type="text"
+                    className="form-control text-xs"
+                    placeholder="Ej. Guía de Remisión GR-004, Merma, etc."
+                    value={movementReason}
+                    onChange={(e) => setMovementReason(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Motivo suggestions */}
+              <div className="flex gap-1.5 flex-wrap items-center pt-1">
+                <span className="text-xs font-semibold text-secondary flex items-center gap-1">
+                  <Sparkles size={12} className="text-primary-600 dark:text-primary-400" />
+                  Sugerencias:
+                </span>
+                {[
+                  movementType === 'IN' ? 'Orden de Compra OC-005' : 'Merma por Rotura',
+                  movementType === 'IN' ? 'Ingreso por Importación' : 'Uso Interno de Oficina',
+                  'Inventario Físico Mensual',
+                  'Corrección de Kardex',
+                  ...(movementType === 'IN'
+                    ? ['Devolución de Cliente']
+                    : movementType === 'OUT'
+                    ? ['Venta Directa']
+                    : ['Ajuste por Auditoría']),
+                ].map((chip) => (
+                  <SuggestionChip
+                    key={chip}
+                    label={chip}
+                    selected={movementReason === chip}
+                    onClick={() => setMovementReason(chip)}
+                    size="xs"
+                  />
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-color">
+                <Button variant="secondary" type="button" onClick={() => setIsMovementModalOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  variant={movementType === 'IN' ? 'success' : movementType === 'OUT' ? 'danger' : 'warning'}
+                  type="submit"
+                  loading={isSubmitting}
+                >
+                  Guardar Movimiento
+                </Button>
+              </div>
+            </form>
+          );
+        })()}
       </Modal>
 
       {/* Inter-Branch Transfer Modal */}
       <TransferModal
         isOpen={isTransferModalOpen}
-        onClose={() => setIsTransferModalOpen(false)}
+        onClose={() => {
+          setIsTransferModalOpen(false);
+          setTransferTargetProduct(null);
+        }}
         products={products}
-        branches={contextBranches}
+        branches={contextBranches.length > 0 ? contextBranches : branches}
+        preselectedProduct={transferTargetProduct}
         targetBranchId={activeBranchId}
         onSuccess={() => {
           loadData();

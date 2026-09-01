@@ -14,6 +14,16 @@ node_modules/
 dist/
 build/
 out/
+dist-electron/
+release/
+frontend/dist-electron/
+frontend/release/
+*win32-x64/
+frontend/--win32-x64/
+*.exe
+*.msi
+*.nupkg
+*.asar
 
 # Logs
 logs

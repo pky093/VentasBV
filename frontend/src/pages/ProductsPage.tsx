@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search, ArrowRightLeft, Building2, MessageCircle, Sparkles } from 'lucide-react';
+import { Plus, Edit2, Trash2, Image as ImageIcon, Upload, Link as LinkIcon, X, CheckCircle2, Search, ArrowRightLeft, Building2, MessageCircle, Sparkles, Eye } from 'lucide-react';
 import { PageHeader, Button, Badge, Modal, DataTable, Tabs, SuggestionChip } from '../components/ui';
 import { productsService, catalogService, Product, Category, Brand, Model } from '../lib/db-services';
 import { useBranch } from '../context/BranchContext';
@@ -510,6 +510,13 @@ export default function ProductsPage() {
           searchPlaceholder="Buscar por código SKU, nombre, marca o categoría..."
           actions={(row) => (
             <div className="flex gap-2 justify-end">
+              <button
+                className="icon-btn icon-btn-sm text-[#f3c623] hover:bg-yellow-50 dark:hover:bg-yellow-950/40 border-none"
+                title="Ver Ficha de Detalle"
+                onClick={() => navigate(`/app/products/${row.id}`)}
+              >
+                <Eye size={14} />
+              </button>
               <button
                 className="icon-btn icon-btn-sm text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border-none"
                 title="Compartir por WhatsApp"

@@ -8,9 +8,31 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 export const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
 export const DEFAULT_BRANCH_ID = '00000000-0000-0000-0000-000000000000';
 
+let cachedPublicTenantId = '';
+
 export const getActiveTenantId = (): string => {
   if (typeof window !== 'undefined') {
-    return localStorage.getItem('tenant_id') || '';
+    return localStorage.getItem('tenant_id') || cachedPublicTenantId || '';
+  }
+  return cachedPublicTenantId || '';
+};
+
+export const resolveTenantId = async (): Promise<string> => {
+  const current = getActiveTenantId();
+  if (current) return current;
+  if (cachedPublicTenantId) return cachedPublicTenantId;
+
+  try {
+    const { data } = await supabase.from('tenants').select('id').limit(1).maybeSingle();
+    if (data?.id) {
+      cachedPublicTenantId = data.id;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('tenant_id', data.id);
+      }
+      return data.id;
+    }
+  } catch (e) {
+    console.warn('Error resolving public tenant ID:', e);
   }
   return '';
 };
@@ -21,4 +43,3 @@ export const getActiveBranchId = (): string => {
   }
   return '';
 };
-
