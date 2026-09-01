@@ -198,10 +198,24 @@ export const productsService = {
         const branchStocks: BranchStock[] = branchList.map((b, idx) => {
           let bStock = pStocksMap?.get(b.id) ?? 0;
           if (hasColors && colorsTotalStock !== null && colorsTotalStock > 0) {
-            const totalRecordedBranchStock = Array.from(pStocksMap?.values() || []).reduce((a, c) => a + c, 0);
-            if (totalRecordedBranchStock < colorsTotalStock) {
-              if (bStock > 0 || (totalRecordedBranchStock === 0 && idx === 0)) {
-                bStock = Math.max(bStock, colorsTotalStock - (totalRecordedBranchStock - bStock));
+            // Check if colors have per-branch allocations
+            const hasBranchColorMap = colorsList.some(
+              (c: any) => c.branchStocks && typeof c.branchStocks === 'object' && Object.keys(c.branchStocks).length > 0
+            );
+            if (hasBranchColorMap) {
+              const branchColorSum = colorsList.reduce((sum: number, c: any) => {
+                if (c.branchStocks && typeof c.branchStocks === 'object' && c.branchStocks[b.id] !== undefined) {
+                  return sum + (Number(c.branchStocks[b.id]) || 0);
+                }
+                return sum;
+              }, 0);
+              bStock = branchColorSum;
+            } else {
+              const totalRecordedBranchStock = Array.from(pStocksMap?.values() || []).reduce((a, c) => a + c, 0);
+              if (totalRecordedBranchStock < colorsTotalStock) {
+                if (bStock > 0 || (totalRecordedBranchStock === 0 && idx === 0)) {
+                  bStock = Math.max(bStock, colorsTotalStock - (totalRecordedBranchStock - bStock));
+                }
               }
             }
           }
@@ -338,10 +352,23 @@ export const productsService = {
           ? branches.map((b: any, idx: number) => {
               let bStock = pStocksMap?.get(b.id) ?? (p.branchStocks?.find((bs: any) => bs.branchId === b.id)?.stock ?? 0);
               if (hasColors && colorsTotalStock !== null && colorsTotalStock > 0) {
-                const totalRecorded = branches.reduce((acc: number, cur: any) => acc + (pStocksMap?.get(cur.id) ?? 0), 0);
-                if (totalRecorded < colorsTotalStock) {
-                  if (bStock > 0 || (totalRecorded === 0 && idx === 0)) {
-                    bStock = Math.max(bStock, colorsTotalStock - (totalRecorded - bStock));
+                const hasBranchColorMap = colorsList.some(
+                  (c: any) => c.branchStocks && typeof c.branchStocks === 'object' && Object.keys(c.branchStocks).length > 0
+                );
+                if (hasBranchColorMap) {
+                  const branchColorSum = colorsList.reduce((sum: number, c: any) => {
+                    if (c.branchStocks && typeof c.branchStocks === 'object' && c.branchStocks[b.id] !== undefined) {
+                      return sum + (Number(c.branchStocks[b.id]) || 0);
+                    }
+                    return sum;
+                  }, 0);
+                  bStock = branchColorSum;
+                } else {
+                  const totalRecorded = branches.reduce((acc: number, cur: any) => acc + (pStocksMap?.get(cur.id) ?? 0), 0);
+                  if (totalRecorded < colorsTotalStock) {
+                    if (bStock > 0 || (totalRecorded === 0 && idx === 0)) {
+                      bStock = Math.max(bStock, colorsTotalStock - (totalRecorded - bStock));
+                    }
                   }
                 }
               }
