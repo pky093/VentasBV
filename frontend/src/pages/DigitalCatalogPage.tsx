@@ -1,54 +1,128 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Sparkles, MessageCircle, Share2, FileDown, ExternalLink, 
-  Search, Filter, Grid, MonitorPlay, RefreshCw, SlidersHorizontal, 
-  Layers, Tag, CheckCircle2, ChevronRight, Fuel, Gauge, Disc, Eye
+  Sparkles, Save, ExternalLink, RefreshCw, Layers, Palette, 
+  Image as ImageIcon, Plus, Trash2, Check, Upload, Sliders, 
+  Zap, Shield, Award, Flame, Sun, Grid, Eye, RotateCw, Gauge, 
+  Disc, ArrowRight, Search, ChevronDown, CheckCircle2, Fuel, Pencil, X
 } from 'lucide-react';
-import { productsService, catalogService, settingsService, Product, Category, Brand } from '../lib/db-services';
+import { PageHeader, Button, Badge, Card, CardHeader, CardBody, Tabs, Modal, SearchInput } from '../components/ui';
+import { productsService, catalogService, settingsService, Product, Category, ColorVariant } from '../lib/db-services';
 import { useBranch } from '../context/BranchContext';
-import { SomomotoHeroShowcase } from '../components/catalog/SomomotoHeroShowcase';
-import { WhatsAppShareModal } from '../components/catalog/WhatsAppShareModal';
-import { exportProductFlyerPdf } from '../lib/catalog-flyer';
+import { SomomotoHeroShowcase, ShowcaseFeatureItem, ShowcaseGlobeItem } from '../components/catalog/SomomotoHeroShowcase';
+import { ColorAngleManager } from '../components/catalog/ColorAngleManager';
 import Swal from 'sweetalert2';
+
+const DEFAULT_COLOR_PRESETS = [
+  { name: 'Dorado Tech', hex: '#f3c623' },
+  { name: 'Cyan Neón', hex: '#06b6d4' },
+  { name: 'Rojo Racing', hex: '#ef4444' },
+];
+
+const AVAILABLE_ICONS = [
+  { id: 'zap', label: 'Rayo / Energía', icon: <Zap size={15} /> },
+  { id: 'grid', label: 'Matriz / Diseño', icon: <Grid size={15} /> },
+  { id: 'shield', label: 'Escudo / Durabilidad', icon: <Shield size={15} /> },
+  { id: 'ergonomics', label: 'Ergonomía / Confort', icon: <Sliders size={15} /> },
+  { id: 'award', label: 'Premio / Garantía', icon: <Award size={15} /> },
+  { id: 'flame', label: 'Fuego / Potencia', icon: <Flame size={15} /> },
+  { id: 'layers', label: 'Capas / Material', icon: <Layers size={15} /> },
+  { id: 'sun', label: 'Brillo / Visibilidad', icon: <Sun size={15} /> },
+  { id: 'sparkles', label: 'Premium / Destacado', icon: <Sparkles size={15} /> },
+  { id: 'gauge', label: 'Velocidad / Control', icon: <Gauge size={15} /> },
+];
+
+const GLOBE_ICONS = [
+  { id: 'displacement', label: 'Cilindrada / Motor', icon: <Gauge size={15} /> },
+  { id: 'power', label: 'Potencia / Rendimiento', icon: <Zap size={15} /> },
+  { id: 'brakes', label: 'Frenos / ABS', icon: <Disc size={15} /> },
+  { id: 'fuel', label: 'Sistema / Inyección', icon: <Fuel size={15} /> },
+  { id: 'flame', label: 'Torque / Fuego', icon: <Flame size={15} /> },
+  { id: 'shield', label: 'Seguridad / Chasis', icon: <Shield size={15} /> },
+  { id: 'sliders', label: 'Suspensión / Confort', icon: <Sliders size={15} /> },
+  { id: 'award', label: 'Garantía / Calidad', icon: <Award size={15} /> },
+];
 
 export default function DigitalCatalogPage() {
   const { activeBranchId } = useBranch();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
   const [tenantInfo, setTenantInfo] = useState<any>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // View mode: 'SHOWCASE' (SomosMoto 1-on-1 Hero) or 'GRID' (Full Gallery)
-  const [viewMode, setViewMode] = useState<'SHOWCASE' | 'GRID'>('SHOWCASE');
-  const [currentShowcaseIndex, setCurrentShowcaseIndex] = useState(0);
+  // Selected Product & Product Picker Modal State
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+  const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [selectedBrand, setSelectedBrand] = useState<string>('ALL');
-  const [onlyInStock, setOnlyInStock] = useState(false);
-  const [exchangeRate, setExchangeRate] = useState<number>(3.75);
+  // Top Tabs State (using standard UI Tabs)
+  const [activeTab, setActiveTab] = useState<string>('COLORS_ANGLES');
+  const [selectedColorTabIdx, setSelectedColorTabIdx] = useState<number>(0);
 
-  // WhatsApp Modal
-  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
-  const [whatsappTargetProduct, setWhatsappTargetProduct] = useState<Product | null>(null);
+  // Color Presets (persisted in localStorage)
+  const [colorPresets, setColorPresets] = useState<Array<{ name: string; hex: string }>>(() => {
+    try {
+      const saved = localStorage.getItem('showcase_color_presets');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return DEFAULT_COLOR_PRESETS;
+  });
 
+  const [newPresetName, setNewPresetName] = useState<string>('');
+  const [customPresetInput, setCustomPresetInput] = useState<string>('#10b981');
+
+  // Preset editing state
+  const [editingPresetIdx, setEditingPresetIdx] = useState<number | null>(null);
+  const [editingPresetName, setEditingPresetName] = useState<string>('');
+  const [editingPresetHex, setEditingPresetHex] = useState<string>('');
+
+  // Customization Form State per product
+  const [primaryColor, setPrimaryColor] = useState<string>('#f3c623');
+  const [editorialDescription, setEditorialDescription] = useState<string>('');
+  const [colors, setColors] = useState<ColorVariant[]>([]);
+
+  const [features, setFeatures] = useState<ShowcaseFeatureItem[]>([
+    { id: 'f1', title: 'AGARRE SUPERIOR', icon: 'zap' },
+    { id: 'f2', title: 'DISEÑO ANTIDESLIZANTE', icon: 'grid' },
+    { id: 'f3', title: 'MÁXIMA DURABILIDAD', icon: 'shield' },
+    { id: 'f4', title: 'ERGONOMÍA PERFECTA', icon: 'ergonomics' },
+  ]);
+
+  const [globes, setGlobes] = useState<ShowcaseGlobeItem[]>([
+    { id: 'g1', label: 'CILINDRADA', value: '373.2 CC', icon: 'displacement' },
+    { id: 'g2', label: 'POTENCIA', value: '40.0 HP', icon: 'power' },
+    { id: 'g3', label: 'FRENOS', value: 'ABS DOBLE CANAL', icon: 'brakes' },
+    { id: 'g4', label: 'SISTEMA', value: 'INYECCIÓN ELECTRÓNICA FI BOSCH', icon: 'fuel' },
+  ]);
+
+  // Load Initial Data
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [prods, cats, brs, tInfo] = await Promise.all([
+      const [prods, cats, tInfo] = await Promise.all([
         productsService.getProducts(activeBranchId),
         catalogService.getCategories(),
-        catalogService.getBrands(),
         settingsService.getTenantInfo(),
       ]);
-      setProducts(prods || []);
+
+      const productList = prods || [];
+      setProducts(productList);
       setCategories(cats || []);
-      setBrands(brs || []);
       setTenantInfo(tInfo || {});
+
+      if (productList.length > 0) {
+        const searchParams = new URLSearchParams(window.location.hash.split('?')[1] || window.location.search);
+        const urlPid = searchParams.get('p') || searchParams.get('productId');
+        const targetId = selectedProductId || urlPid || productList[0].id;
+        const targetProd = productList.find(p => String(p.id) === String(targetId)) || productList[0];
+        setSelectedProductId(targetProd.id);
+        populateProductForm(targetProd);
+      }
     } catch (err) {
-      console.error('Error loading digital catalog data:', err);
+      console.error('Error loading catalog maintainer data:', err);
     } finally {
       setIsLoading(false);
     }
@@ -58,422 +132,1029 @@ export default function DigitalCatalogPage() {
     loadData();
   }, [activeBranchId]);
 
-  // Active products filtered list
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      // Must be active
-      if (p.status === 'INACTIVE') return false;
+  // Populate form when selected product changes
+  const populateProductForm = (prod: Product) => {
+    if (!prod) return;
 
-      // Stock filter
-      if (onlyInStock && Number(p.stock) <= 0) return false;
+    let localBackup: any = null;
+    try {
+      const raw = localStorage.getItem(`showcase_config_${prod.id}`);
+      if (raw) localBackup = JSON.parse(raw);
+    } catch (e) {}
 
-      // Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchName = p.name?.toLowerCase().includes(q);
-        const matchBrand = p.brand?.toLowerCase().includes(q);
-        const matchModel = p.model?.toLowerCase().includes(q);
-        const matchCode = p.code?.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q);
-        if (!matchName && !matchBrand && !matchModel && !matchCode) return false;
-      }
+    // Load colors with their respective 3 angle photos
+    const sourceColors = (prod.colors && prod.colors.length > 0) ? prod.colors : (localBackup?.colors || []);
+    if (sourceColors.length > 0) {
+      setColors(sourceColors.map((c: any, idx: number) => {
+        const angles = c.galleryAngles && c.galleryAngles.length === 3 ? c.galleryAngles : [
+          { id: 0, label: 'Vista Principal', is360: true, img: c.imagePath || (idx === 0 ? prod.imagePath || '' : '') },
+          { id: 1, label: 'Detalle Lateral', is360: false, img: c.imagePath || (idx === 0 ? prod.imagePath || '' : '') },
+          { id: 2, label: 'Detalle Chasis', is360: false, img: c.imagePath || (idx === 0 ? prod.imagePath || '' : '') },
+        ];
+        return {
+          color: c.color,
+          hex: c.hex,
+          stock: c.stock ?? 1,
+          imagePath: c.imagePath || (idx === 0 ? prod.imagePath || '' : ''),
+          galleryAngles: angles,
+        };
+      }));
+    } else {
+      setColors([
+        { 
+          color: 'Rojo Racing', 
+          hex: '#dc2626', 
+          stock: 2, 
+          imagePath: prod.imagePath || '',
+          galleryAngles: [
+            { id: 0, label: 'Vista Principal', is360: true, img: prod.imagePath || '' },
+            { id: 1, label: 'Detalle Lateral', is360: false, img: prod.imagePath || '' },
+            { id: 2, label: 'Detalle Chasis', is360: false, img: prod.imagePath || '' },
+          ]
+        },
+        { 
+          color: 'Negro Ébano', 
+          hex: '#111827', 
+          stock: 3, 
+          imagePath: '',
+          galleryAngles: [
+            { id: 0, label: 'Vista Principal', is360: true, img: '' },
+            { id: 1, label: 'Detalle Lateral', is360: false, img: '' },
+            { id: 2, label: 'Detalle Chasis', is360: false, img: '' },
+          ]
+        },
+      ]);
+    }
 
-      // Category filter
-      if (selectedCategory !== 'ALL') {
-        if (p.category !== selectedCategory && p.categoryId !== selectedCategory) {
-          return false;
-        }
-      }
+    setSelectedColorTabIdx(0);
 
-      // Brand filter
-      if (selectedBrand !== 'ALL') {
-        if (p.brand !== selectedBrand && p.brandId !== selectedBrand) {
-          return false;
-        }
-      }
+    // Load Features
+    const savedFeatures = (prod as any).showcaseFeatures || (prod as any).features || localBackup?.features;
+    if (savedFeatures && Array.isArray(savedFeatures) && savedFeatures.length >= 4) {
+      setFeatures(savedFeatures.slice(0, 4));
+    } else {
+      setFeatures([
+        { id: 'f1', title: 'AGARRE SUPERIOR', icon: 'zap' },
+        { id: 'f2', title: 'DISEÑO ANTIDESLIZANTE', icon: 'grid' },
+        { id: 'f3', title: 'MÁXIMA DURABILIDAD', icon: 'shield' },
+        { id: 'f4', title: 'ERGONOMÍA PERFECTA', icon: 'ergonomics' },
+      ]);
+    }
 
-      return true;
-    });
-  }, [products, searchQuery, selectedCategory, selectedBrand, onlyInStock]);
+    // Load Globes
+    const savedGlobes = (prod as any).showcaseGlobes || (prod as any).globes || localBackup?.globes;
+    const defaultSpecs = (prod as any).specs || {};
+    if (savedGlobes && Array.isArray(savedGlobes) && savedGlobes.length >= 4) {
+      setGlobes(savedGlobes.slice(0, 4));
+    } else {
+      setGlobes([
+        { id: 'g1', label: 'CILINDRADA', value: defaultSpecs.displacement || '373.2 CC', icon: 'displacement' },
+        { id: 'g2', label: 'POTENCIA', value: defaultSpecs.power || '40.0 HP', icon: 'power' },
+        { id: 'g3', label: 'FRENOS', value: defaultSpecs.brakes || 'ABS DOBLE CANAL', icon: 'brakes' },
+        { id: 'g4', label: 'SISTEMA', value: defaultSpecs.fuelSystem || 'INYECCIÓN ELECTRÓNICA FI BOSCH', icon: 'fuel' },
+      ]);
+    }
 
-  // Handle WhatsApp Share for single product
-  const handleOpenWhatsAppSingle = (product: Product) => {
-    setWhatsappTargetProduct(product);
-    setIsWhatsAppModalOpen(true);
+    // Primary Color
+    const savedPrimary = (prod as any).primaryColor || (prod as any).showcasePrimaryColor || localBackup?.primaryColor || '#f3c623';
+    setPrimaryColor(savedPrimary);
+
+    // Editorial Description
+    const savedDesc = (prod as any).editorialDescription || prod.description || localBackup?.editorialDescription || '';
+    setEditorialDescription(savedDesc);
   };
 
-  // Handle WhatsApp Share for full catalog
-  const handleOpenWhatsAppCatalog = () => {
-    setWhatsappTargetProduct(null);
-    setIsWhatsAppModalOpen(true);
+  const selectedProduct = useMemo(() => {
+    return products.find(p => String(p.id) === String(selectedProductId)) || products[0] || null;
+  }, [products, selectedProductId]);
+
+  const handleSelectProduct = (id: string) => {
+    setSelectedProductId(id);
+    const prod = products.find(p => String(p.id) === String(id));
+    if (prod) {
+      populateProductForm(prod);
+    }
+    setIsProductPickerOpen(false);
   };
 
-  // Handle PDF Flyer Download
-  const handleExportPdf = async (product: Product) => {
-    Swal.fire({
-      title: 'Generando Flyer PDF...',
-      text: `Diseñando ficha técnica en alta resolución para ${product.name}`,
-      allowOutsideClick: false,
-      didOpen: () => {
-        Swal.showLoading();
-      },
+  // Filter products for the picker modal
+  const filteredProductsForPicker = useMemo(() => {
+    if (!productSearchQuery.trim()) return products;
+    const q = productSearchQuery.toLowerCase();
+    return products.filter(p => 
+      p.name?.toLowerCase().includes(q) ||
+      p.brand?.toLowerCase().includes(q) ||
+      p.model?.toLowerCase().includes(q) ||
+      p.code?.toLowerCase().includes(q) ||
+      p.sku?.toLowerCase().includes(q)
+    );
+  }, [products, productSearchQuery]);
+
+  // Color Preset Storage & Handlers
+  const savePresetsToStorage = (updated: Array<{ name: string; hex: string }>) => {
+    setColorPresets(updated);
+    try {
+      localStorage.setItem('showcase_color_presets', JSON.stringify(updated));
+    } catch (e) {}
+  };
+
+  const handleStartEditPreset = (idx: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingPresetIdx(idx);
+    setEditingPresetName(colorPresets[idx].name);
+    setEditingPresetHex(colorPresets[idx].hex);
+  };
+
+  const handleSaveEditPreset = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (editingPresetIdx === null) return;
+    const updated = [...colorPresets];
+    const oldHex = updated[editingPresetIdx].hex;
+    updated[editingPresetIdx] = {
+      name: editingPresetName.trim() || `Tono ${editingPresetIdx + 1}`,
+      hex: editingPresetHex,
+    };
+    savePresetsToStorage(updated);
+    if (primaryColor.toLowerCase() === oldHex.toLowerCase()) {
+      setPrimaryColor(editingPresetHex);
+    }
+    setEditingPresetIdx(null);
+  };
+
+  const handleCancelEditPreset = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingPresetIdx(null);
+  };
+
+  const handleDeletePreset = (idx: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (colorPresets.length <= 1) {
+      Swal.fire({ icon: 'warning', title: 'Atención', text: 'Debe existir al menos un color registrado.' });
+      return;
+    }
+    const target = colorPresets[idx];
+    const updated = colorPresets.filter((_, i) => i !== idx);
+    savePresetsToStorage(updated);
+    if (primaryColor.toLowerCase() === target.hex.toLowerCase()) {
+      setPrimaryColor(updated[0].hex);
+    }
+  };
+
+  const handleAddCustomColorPreset = () => {
+    if (!customPresetInput) return;
+    const name = newPresetName.trim() || `Tono ${colorPresets.length + 1}`;
+    const exists = colorPresets.some(p => p.hex.toLowerCase() === customPresetInput.toLowerCase());
+    if (!exists) {
+      const updated = [...colorPresets, { name, hex: customPresetInput }];
+      savePresetsToStorage(updated);
+    }
+    setPrimaryColor(customPresetInput);
+    setNewPresetName('');
+  };
+
+  // Color Management Helpers
+  const handleAddColor = () => {
+    const newColor: ColorVariant = {
+      color: 'Nuevo Color',
+      hex: '#2563eb',
+      stock: 1,
+      imagePath: selectedProduct?.imagePath || '',
+      galleryAngles: [
+        { id: 0, label: 'Vista Principal', is360: true, img: selectedProduct?.imagePath || '' },
+        { id: 1, label: 'Detalle Lateral', is360: false, img: selectedProduct?.imagePath || '' },
+        { id: 2, label: 'Detalle Chasis', is360: false, img: selectedProduct?.imagePath || '' },
+      ]
+    };
+    setColors(prev => [...prev, newColor]);
+    setSelectedColorTabIdx(colors.length);
+  };
+
+  const handleUpdateColor = (index: number, field: keyof ColorVariant, value: any) => {
+    setColors(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
     });
+  };
+
+  const handleUpdateColorAngle = (colorIdx: number, angleIdx: number, field: 'label' | 'img' | 'is360', value: any) => {
+    setColors(prev => {
+      const next = [...prev];
+      const currentColor = { ...next[colorIdx] };
+      const currentAngles = currentColor.galleryAngles ? [...currentColor.galleryAngles] : [
+        { id: 0, label: 'Vista Principal', is360: true, img: '' },
+        { id: 1, label: 'Detalle Lateral', is360: false, img: '' },
+        { id: 2, label: 'Detalle Chasis', is360: false, img: '' },
+      ];
+      currentAngles[angleIdx] = { ...currentAngles[angleIdx], [field]: value };
+      currentColor.galleryAngles = currentAngles;
+      if (angleIdx === 0 && field === 'img') {
+        currentColor.imagePath = value;
+      }
+      next[colorIdx] = currentColor;
+      return next;
+    });
+  };
+
+  const handleRemoveColor = (index: number) => {
+    if (colors.length <= 1) {
+      Swal.fire({ icon: 'warning', title: 'Atención', text: 'Debe existir al menos un color registrado.' });
+      return;
+    }
+    setColors(prev => prev.filter((_, idx) => idx !== index));
+    if (selectedColorTabIdx >= colors.length - 1) {
+      setSelectedColorTabIdx(Math.max(0, colors.length - 2));
+    }
+  };
+
+  // Save changes to Database
+  const handleSaveShowcaseSettings = async () => {
+    if (!selectedProduct) return;
+    setIsSaving(true);
 
     try {
-      await exportProductFlyerPdf(product, tenantInfo, exchangeRate);
-      Swal.close();
+      const updatedProductData: Partial<Product> = {
+        ...selectedProduct,
+        colors: colors,
+        imagePath: colors[0]?.imagePath || selectedProduct.imagePath,
+        galleryAngles: colors[0]?.galleryAngles as any,
+        showcaseFeatures: features as any,
+        showcaseGlobes: globes as any,
+        primaryColor: primaryColor as any,
+        editorialDescription: editorialDescription,
+        description: editorialDescription,
+      } as any;
+
+      await productsService.updateProduct(selectedProduct.id, updatedProductData);
+
+      try {
+        localStorage.setItem(`showcase_config_${selectedProduct.id}`, JSON.stringify({
+          colors,
+          galleryAngles: colors[0]?.galleryAngles,
+          features,
+          globes,
+          primaryColor,
+          editorialDescription,
+        }));
+      } catch (e) {}
+
+      setProducts(prev => prev.map(p => p.id === selectedProduct.id ? { ...p, ...updatedProductData } : p));
+
       Swal.fire({
         icon: 'success',
-        title: '¡Flyer Generado!',
-        text: 'El archivo PDF se ha descargado correctamente en tu equipo.',
+        title: '¡Showcase Guardado!',
+        text: `Configuraciones guardadas para el modelo ${selectedProduct.name}.`,
         timer: 2000,
         showConfirmButton: false,
       });
     } catch (err) {
-      console.error(err);
+      console.error('Error saving showcase settings:', err);
       Swal.fire({
         icon: 'error',
-        title: 'Error',
-        text: 'No se pudo generar el flyer PDF.',
+        title: 'Error al Guardar',
+        text: 'Ocurrió un inconveniente al actualizar los datos.',
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  // Switch to showcase on specific product from grid
-  const handleViewInShowcase = (product: Product) => {
-    const idx = filteredProducts.findIndex((p) => p.id === product.id);
-    if (idx !== -1) {
-      setCurrentShowcaseIndex(idx);
-    }
-    setViewMode('SHOWCASE');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const previewProduct = useMemo(() => {
+    if (!selectedProduct) return null;
+    return {
+      ...selectedProduct,
+      colors: colors,
+      imagePath: colors[0]?.imagePath || selectedProduct.imagePath,
+      editorialDescription: editorialDescription,
+      description: editorialDescription,
+    };
+  }, [selectedProduct, colors, editorialDescription]);
+
+  const tabsConfig = [
+    { id: 'COLORS_ANGLES', label: `Fotos por Color & Vistas (${colors.length})`, icon: <Palette size={15} /> },
+    { id: 'FEATURES', label: 'Texto & Características', icon: <Zap size={15} /> },
+    { id: 'GLOBES', label: '4 Globos Telemetría', icon: <Gauge size={15} /> },
+    { id: 'PREVIEW', label: 'Vista Previa en Vivo', icon: <Eye size={15} /> },
+  ];
 
   return (
-    <div className="space-y-6 pb-12">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl text-white">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="p-2 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400">
-              <Sparkles size={20} />
-            </span>
-            <h1 className="text-2xl font-black tracking-tight text-white">
-              Catálogo Digital de Motocicletas
-            </h1>
-            <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              Estilo SomosMoto
-            </span>
+    <div className="space-y-6 pb-16 font-sans">
+      
+      {/* Standard Reusable PageHeader Component */}
+      <PageHeader
+        eyebrow="CATÁLOGO & SHOWCASE"
+        title="Mantenedor de Catálogo Digital"
+        description="Personaliza fotografías por variante de color, vistas 360°, características destacadas y especificaciones técnicas para la vista pública de clientes."
+        actions={
+          <div className="flex flex-wrap items-center gap-2.5">
+            <a
+              href={`#/catalog/showcase?p=${selectedProductId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<ExternalLink size={14} style={{ color: primaryColor }} />}
+              >
+                Abrir Vista Cliente
+              </Button>
+            </a>
+
+            <Button
+              variant="primary"
+              size="sm"
+              loading={isSaving}
+              onClick={handleSaveShowcaseSettings}
+              icon={<Save size={15} />}
+            >
+              Guardar Configuración
+            </Button>
           </div>
-          <p className="text-xs md:text-sm text-slate-400">
-            Showcase visual de alta gama para cotizar, mostrar modelos activos y compartir fichas técnicas por WhatsApp.
-          </p>
-        </div>
+        }
+      />
 
-        <div className="flex flex-wrap items-center gap-3">
-          <a
-            href="/catalog/showcase"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition-all shadow-md"
-          >
-            <ExternalLink size={15} className="text-cyan-400" />
-            <span>Vista Cliente (Pública)</span>
-          </a>
-
-          <button
-            onClick={handleOpenWhatsAppCatalog}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-lg shadow-emerald-900/40 hover:-translate-y-0.5"
-          >
-            <MessageCircle size={16} />
-            <span>Enviar Catálogo por WhatsApp</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Control Bar: Search, Category Chips, Brands, T/C and View Switcher */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg space-y-4">
-        <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
+      {/* Main Maintainer Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* LEFT PANEL (4 Cols): Clickable Product Card & 3 Default Colors */}
+        <div className="lg:col-span-4 space-y-5">
           
-          {/* Search Box */}
-          <div className="relative w-full lg:w-96">
-            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar por modelo, marca o código..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setCurrentShowcaseIndex(0);
-              }}
-              className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+          {/* Clickable Product Card */}
+          <Card>
+            <CardHeader
+              title="1. Producto Seleccionado"
+              subtitle="Haz clic en la tarjeta para cambiar"
+              action={
+                <Badge variant="primary">
+                  {selectedProduct?.brand || 'Catálogo'}
+                </Badge>
+              }
             />
-          </div>
-
-          {/* Controls: Stock, T/C, View Mode */}
-          <div className="flex flex-wrap items-center justify-between w-full lg:w-auto gap-3">
-            
-            {/* Exchange Rate Input */}
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-300">
-              <span className="font-semibold text-slate-400">T/C Dólar:</span>
-              <span className="font-mono text-emerald-400 font-bold">S/</span>
-              <input
-                type="number"
-                step="0.01"
-                min="1"
-                value={exchangeRate}
-                onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 3.75)}
-                className="w-14 bg-transparent border-none p-0 text-xs font-mono font-bold text-white focus:outline-none text-right"
-              />
-            </div>
-
-            {/* In-Stock Only Toggle */}
-            <label className="flex items-center gap-2 text-xs text-slate-300 bg-slate-950 border border-slate-700/80 px-3 py-2 rounded-xl cursor-pointer hover:border-slate-600 transition-colors">
-              <input
-                type="checkbox"
-                checked={onlyInStock}
-                onChange={(e) => {
-                  setOnlyInStock(e.target.checked);
-                  setCurrentShowcaseIndex(0);
-                }}
-                className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4 bg-slate-900 border-slate-700"
-              />
-              <span>Solo en Stock</span>
-            </label>
-
-            {/* View Mode Switcher */}
-            <div className="flex p-1 bg-slate-950 rounded-xl border border-slate-800">
-              <button
-                type="button"
-                onClick={() => setViewMode('SHOWCASE')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  viewMode === 'SHOWCASE'
-                    ? 'bg-amber-400 text-black shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <MonitorPlay size={14} />
-                <span>Showcase SomosMoto</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('GRID')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  viewMode === 'GRID'
-                    ? 'bg-amber-400 text-black shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Grid size={14} />
-                <span>Galería ({filteredProducts.length})</span>
-              </button>
-            </div>
-
-          </div>
-        </div>
-
-        {/* Category and Brand Filter Chips */}
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800 text-xs">
-          <span className="text-slate-400 font-semibold uppercase tracking-wider text-[11px] mr-1">
-            Categorías:
-          </span>
-          <button
-            type="button"
-            onClick={() => { setSelectedCategory('ALL'); setCurrentShowcaseIndex(0); }}
-            className={`px-3 py-1 rounded-lg font-medium transition-all ${
-              selectedCategory === 'ALL'
-                ? 'bg-amber-400 text-black font-bold'
-                : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700'
-            }`}
-          >
-            Todas ({products.filter(p => p.status !== 'INACTIVE').length})
-          </button>
-          {categories.map((c) => {
-            const count = products.filter(p => p.status !== 'INACTIVE' && (p.category === c.name || p.categoryId === c.id)).length;
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => { setSelectedCategory(c.name); setCurrentShowcaseIndex(0); }}
-                className={`px-3 py-1 rounded-lg font-medium transition-all ${
-                  selectedCategory === c.name
-                    ? 'bg-amber-400 text-black font-bold'
-                    : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700'
-                }`}
-              >
-                {c.name} {count > 0 ? `(${count})` : ''}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Loading State */}
-      {isLoading ? (
-        <div className="rounded-3xl bg-slate-900 border border-slate-800 p-16 text-center text-slate-400 flex flex-col items-center justify-center gap-3">
-          <RefreshCw size={28} className="animate-spin text-amber-400" />
-          <span className="text-sm font-semibold">Cargando catálogo interactivo...</span>
-        </div>
-      ) : filteredProducts.length === 0 ? (
-        <div className="rounded-3xl bg-slate-900 border border-slate-800 p-16 text-center text-slate-400 space-y-3">
-          <div className="w-16 h-16 rounded-2xl bg-slate-800 mx-auto flex items-center justify-center text-slate-500">
-            <Search size={28} />
-          </div>
-          <h3 className="text-lg font-bold text-white">No se encontraron motocicletas activas</h3>
-          <p className="text-xs text-slate-400 max-w-md mx-auto">
-            Prueba ajustando los filtros de búsqueda, categorías o marcas para explorar los productos registrados en el sistema.
-          </p>
-          <button
-            onClick={() => {
-              setSearchQuery('');
-              setSelectedCategory('ALL');
-              setSelectedBrand('ALL');
-              setOnlyInStock(false);
-            }}
-            className="px-4 py-2 rounded-xl bg-amber-400 text-black text-xs font-bold hover:bg-amber-300"
-          >
-            Limpiar Filtros
-          </button>
-        </div>
-      ) : viewMode === 'SHOWCASE' ? (
-        /* Showcase Hero View (SomosMoto Style) */
-        <SomomotoHeroShowcase
-          products={filteredProducts}
-          currentIndex={currentShowcaseIndex < filteredProducts.length ? currentShowcaseIndex : 0}
-          onSelectIndex={setCurrentShowcaseIndex}
-          onOpenWhatsApp={handleOpenWhatsAppSingle}
-          onExportPdf={handleExportPdf}
-          exchangeRate={exchangeRate}
-        />
-      ) : (
-        /* Grid Gallery View */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredProducts.map((p, idx) => {
-            const usdPrice = p.price > 0 && exchangeRate > 0 ? Math.round(p.price / exchangeRate) : 0;
-            return (
-              <div
-                key={p.id || idx}
-                className="group rounded-3xl bg-slate-900 border border-slate-800 hover:border-slate-700 shadow-xl overflow-hidden flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl"
-              >
-                {/* Image & Badges Container */}
-                <div className="relative h-60 bg-gradient-to-b from-slate-950 to-slate-900 p-6 flex items-center justify-center overflow-hidden">
-                  {/* Brand Tag Top Left */}
-                  <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
-                    <span className="px-2.5 py-1 rounded-md bg-white text-black font-black text-[10px] uppercase tracking-wider">
-                      {p.brand}
-                    </span>
-                    <span className="text-[10px] font-semibold text-slate-400">
-                      {p.category}
-                    </span>
-                  </div>
-
-                  {/* Stock Badge Top Right */}
-                  <div className="absolute top-4 right-4 z-10">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                      Number(p.stock) > 0
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                        : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                    }`}>
-                      {Number(p.stock) > 0 ? `${p.stock} en stock` : 'Agotado'}
-                    </span>
-                  </div>
-
-                  {/* Motorcycle Image */}
-                  {p.imagePath ? (
+            <CardBody className="space-y-3">
+              {selectedProduct ? (
+                <div
+                  onClick={() => setIsProductPickerOpen(true)}
+                  className="group relative p-3.5 rounded-2xl flex items-center gap-3.5 transition-all cursor-pointer border"
+                  style={{
+                    backgroundColor: 'var(--bg-app)',
+                    borderColor: 'var(--border-color)',
+                  }}
+                  title="Clic para seleccionar otro producto del catálogo"
+                >
+                  {selectedProduct.imagePath ? (
                     <img
-                      src={p.imagePath}
-                      alt={p.name}
-                      className="max-h-48 w-auto object-contain drop-shadow-[0_15px_20px_rgba(0,0,0,0.8)] group-hover:scale-105 transition-transform duration-500"
+                      src={selectedProduct.imagePath}
+                      alt={selectedProduct.name}
+                      className="w-16 h-16 object-contain rounded-xl p-1 border group-hover:scale-105 transition-transform"
+                      style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-color)' }}
                     />
                   ) : (
-                    <div className="text-slate-600 text-xs font-semibold flex flex-col items-center gap-2">
-                      <Sparkles size={24} className="text-slate-700" />
-                      Sin imagen
+                    <div 
+                      className="w-16 h-16 rounded-xl flex items-center justify-center border"
+                      style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}
+                    >
+                      <ImageIcon size={22} />
                     </div>
                   )}
-                </div>
 
-                {/* Content Body */}
-                <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-widest text-amber-400">
-                      {p.model || p.brand}
+                  <div className="flex-1 min-w-0 pr-6">
+                    <span 
+                      style={{ color: primaryColor }}
+                      className="text-[10px] font-black uppercase tracking-wider block truncate"
+                    >
+                      {selectedProduct.category || 'MOTOS'}
+                    </span>
+                    <div className="text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+                      {selectedProduct.brand} {selectedProduct.name}
                     </div>
-                    <h3 className="text-lg font-black text-white uppercase tracking-tight group-hover:text-amber-400 transition-colors">
-                      {p.name}
-                    </h3>
+                    <div className="text-xs font-mono text-emerald-600 font-bold mt-0.5">
+                      S/ {selectedProduct.price.toLocaleString('es-PE', { minimumFractionDigits: 0 })}
+                    </div>
                   </div>
 
-                  {/* Color Chips */}
-                  {p.colors && p.colors.length > 0 && (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-slate-400 font-semibold uppercase">Colores:</span>
-                      {p.colors.slice(0, 4).map((c, cIdx) => (
-                        <div
-                          key={cIdx}
-                          title={c.color}
-                          className="w-4 h-4 rounded-full border border-white/20 shadow-sm"
-                          style={{ backgroundColor: c.hex || (cIdx === 0 ? '#fff' : '#000') }}
-                        />
-                      ))}
-                      {p.colors.length > 4 && (
-                        <span className="text-[10px] text-slate-500 font-mono">+{p.colors.length - 4}</span>
-                      )}
-                    </div>
-                  )}
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-secondary)' }}>
+                    <ChevronDown size={18} />
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsProductPickerOpen(true)}
+                  className="w-full py-4 text-center border-2 border-dashed rounded-2xl text-xs font-bold transition-colors"
+                  style={{ borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
+                >
+                  + Seleccionar Producto
+                </button>
+              )}
+            </CardBody>
+          </Card>
 
-                  {/* Pricing Box */}
-                  <div className="pt-2 border-t border-slate-800 flex items-baseline justify-between">
-                    <div>
-                      <div className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Precio Contado</div>
-                      <div className="text-2xl font-black text-white font-sans">
-                        S/ {p.price.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </div>
-                    </div>
-                    {usdPrice > 0 && (
-                      <div className="text-right">
-                        <div className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Ref. Dólares</div>
-                        <div className="text-xs font-bold text-amber-400 font-mono">
-                          USD $ {usdPrice.toLocaleString('en-US')}
+          {/* Primary Color Palette Card (with full edit & delete capabilities) */}
+          <Card>
+            <CardHeader
+              title="2. Color Primario de Marca"
+              subtitle="Colores predefinidos o personalizados"
+              action={
+                <div 
+                  className="w-5 h-5 rounded-full border shadow-xs"
+                  style={{ backgroundColor: primaryColor, borderColor: 'var(--border-color)' }}
+                />
+              }
+            />
+            <CardBody className="space-y-4">
+              
+              {/* Preset Color Pills Grid with Edit & Delete */}
+              <div className="space-y-2">
+                <span className="text-[10.5px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                  Tonos Guardados:
+                </span>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {colorPresets.map((preset, idx) => {
+                    const isSelected = primaryColor.toLowerCase() === preset.hex.toLowerCase();
+                    const isEditing = editingPresetIdx === idx;
+
+                    if (isEditing) {
+                      return (
+                        <div 
+                          key={idx}
+                          className="col-span-full p-2.5 rounded-xl border space-y-2 shadow-xs"
+                          style={{ backgroundColor: 'var(--bg-app)', borderColor: primaryColor }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={editingPresetHex}
+                              onChange={(e) => setEditingPresetHex(e.target.value)}
+                              className="w-8 h-8 rounded-lg border cursor-pointer shrink-0"
+                              style={{ borderColor: 'var(--border-color)' }}
+                            />
+                            <input
+                              type="text"
+                              value={editingPresetName}
+                              onChange={(e) => setEditingPresetName(e.target.value)}
+                              placeholder="Nombre del tono"
+                              className="platform-input flex-1 text-xs font-semibold"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleSaveEditPreset}
+                              className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
+                              title="Guardar cambios"
+                            >
+                              <Check size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleCancelEditPreset}
+                              className="p-2 bg-neutral-200 dark:bg-neutral-800 text-secondary hover:text-primary rounded-lg transition-colors cursor-pointer"
+                              title="Cancelar"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={idx}
+                        onClick={() => setPrimaryColor(preset.hex)}
+                        title={`Clic para activar ${preset.name} (${preset.hex})`}
+                        style={{
+                          backgroundColor: isSelected ? 'var(--bg-app)' : 'var(--bg-surface)',
+                          borderColor: isSelected ? primaryColor : 'var(--border-color)',
+                          color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        }}
+                        className={`group relative flex items-center justify-between gap-1.5 py-2 px-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                          isSelected ? 'ring-2 shadow-xs' : 'hover:border-color'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span 
+                            className="w-3.5 h-3.5 rounded-full shadow-xs shrink-0 border" 
+                            style={{ backgroundColor: preset.hex, borderColor: 'rgba(0,0,0,0.15)' }} 
+                          />
+                          <span className="text-[11px] font-bold truncate">
+                            {preset.name}
+                          </span>
+                        </div>
+
+                        {/* Action buttons (Edit / Delete) */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => handleStartEditPreset(idx, e)}
+                            title="Editar este color"
+                            className="p-1 hover:text-amber-500 rounded transition-colors"
+                          >
+                            <Pencil size={11} />
+                          </button>
+                          {colorPresets.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeletePreset(idx, e)}
+                              title="Eliminar este color"
+                              className="p-1 hover:text-rose-500 rounded transition-colors"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          )}
                         </div>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="grid grid-cols-2 gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleViewInShowcase(p)}
-                      className="inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors"
-                    >
-                      <Eye size={14} className="text-amber-400" />
-                      Showcase
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleOpenWhatsAppSingle(p)}
-                      className="inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-950/40"
-                    >
-                      <MessageCircle size={14} />
-                      WhatsApp
-                    </button>
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
-            );
-          })}
+
+              {/* Add Custom Color / Native Color Picker */}
+              <div className="pt-3 border-t space-y-2" style={{ borderColor: 'var(--border-color)' }}>
+                <span className="text-[10.5px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                  Añadir nuevo tono:
+                </span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={customPresetInput}
+                    onChange={(e) => setCustomPresetInput(e.target.value)}
+                    className="w-9 h-9 rounded-xl border cursor-pointer shrink-0"
+                    style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-surface)' }}
+                    title="Elegir color personalizado"
+                  />
+                  <input
+                    type="text"
+                    value={newPresetName}
+                    onChange={(e) => setNewPresetName(e.target.value)}
+                    placeholder="Nombre (ej. Naranja Solar)"
+                    className="platform-input flex-1 text-xs font-semibold"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleAddCustomColorPreset}
+                    icon={<Plus size={13} />}
+                  >
+                    Añadir
+                  </Button>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
         </div>
+
+        {/* RIGHT PANEL (8 Cols): Configuration Tabs (Colors & 3 Angles per Color, Features, Globes, Live Preview) */}
+        <div className="lg:col-span-8 space-y-5">
+          
+          {/* Standard Navigation Tabs using project's native Tabs component */}
+          <Tabs
+            tabs={tabsConfig}
+            activeTab={activeTab}
+            onChange={(tabId) => setActiveTab(tabId)}
+            variant="pills"
+          />
+
+          {/* TAB 1: FOTOS POR COLOR & 3 VISTAS POR CADA COLOR */}
+          {activeTab === 'COLORS_ANGLES' && (
+            <ColorAngleManager
+              colors={colors}
+              selectedColorIndex={selectedColorTabIdx}
+              onSelectColorIndex={setSelectedColorTabIdx}
+              onAddColor={handleAddColor}
+              onUpdateColor={handleUpdateColor}
+              onUpdateColorAngle={handleUpdateColorAngle}
+              onRemoveColor={handleRemoveColor}
+              primaryColor={primaryColor}
+            />
+          )}
+
+          {/* TAB 2: TEXTO EDITORIAL & 4 CARACTERÍSTICAS DESTACADAS */}
+          {activeTab === 'FEATURES' && (
+            <div className="space-y-5">
+              {/* Card Párrafo Editorial de Cabecera */}
+              <Card>
+                <CardHeader
+                  title="Texto Editorial / Descripción de Cabecera"
+                  subtitle="Personaliza el texto explicativo que aparece debajo del título y precio del modelo en el showcase"
+                />
+                <CardBody className="space-y-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                        Párrafo Editorial del Modelo:
+                      </label>
+                      <span className="text-[10.5px] font-semibold" style={{ color: primaryColor }}>
+                        {editorialDescription ? `${editorialDescription.length} caracteres` : 'Texto automático activo'}
+                      </span>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={editorialDescription}
+                      onChange={(e) => setEditorialDescription(e.target.value)}
+                      placeholder={`Ej. La nueva ${selectedProduct?.brand || ''} ${selectedProduct?.model || selectedProduct?.name || ''} no solo tiene un motor potente con tecnología de vanguardia, sino que viene equipada con frenado de alta precisión y suspensión para máximo confort.`}
+                      className="platform-input text-xs leading-relaxed rounded-xl w-full p-3 font-medium resize-y"
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                    <span>💡 <em>Si lo dejas vacío, el sistema generará automáticamente el texto predeterminado según la marca, modelo y especificaciones.</em></span>
+                    {editorialDescription && (
+                      <button
+                        type="button"
+                        onClick={() => setEditorialDescription('')}
+                        className="text-xs font-semibold hover:underline text-rose-500 cursor-pointer self-start sm:self-auto shrink-0"
+                      >
+                        Restablecer a texto automático
+                      </button>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* Card 4 Características Destacadas */}
+              <Card>
+                <CardHeader
+                  title="4 Características Destacadas"
+                  subtitle="Personaliza el título e icono de las 4 tarjetas que aparecen en la cabecera del modelo"
+                />
+                <CardBody className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {features.map((feat, idx) => {
+                    const currentIconObj = AVAILABLE_ICONS.find(i => i.id === feat.icon);
+                    return (
+                      <div 
+                        key={feat.id || idx} 
+                        className="p-4 rounded-2xl space-y-3.5 border transition-all"
+                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-color)' }}
+                      >
+                        {/* Header */}
+                        <div className="flex items-center justify-between pb-2 border-b" style={{ borderColor: 'var(--border-color)' }}>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: primaryColor }} />
+                            <span 
+                              style={{ color: primaryColor }}
+                              className="text-xs font-black uppercase tracking-wider"
+                            >
+                              Tarjeta {idx + 1}
+                            </span>
+                          </div>
+                          <div 
+                            style={{ 
+                              backgroundColor: `${primaryColor}18`, 
+                              borderColor: `${primaryColor}50`,
+                              color: primaryColor,
+                            }}
+                            className="p-1.5 rounded-xl border flex items-center justify-center shadow-2xs"
+                            title={currentIconObj?.label || 'Icono actual'}
+                          >
+                            {currentIconObj?.icon || <Zap size={15} />}
+                          </div>
+                        </div>
+
+                        {/* Title input */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10.5px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                            Título de Característica:
+                          </label>
+                          <input
+                            type="text"
+                            value={feat.title}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setFeatures(prev => {
+                                const next = [...prev];
+                                next[idx].title = val;
+                                return next;
+                              });
+                            }}
+                            placeholder="ej. AGARRE SUPERIOR"
+                            className="platform-input text-xs font-bold uppercase rounded-xl"
+                          />
+                        </div>
+
+                        {/* Visual Icon Picker Grid */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10.5px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                              Elegir Icono:
+                            </label>
+                            <span className="text-[10px] font-semibold" style={{ color: primaryColor }}>
+                              {currentIconObj?.label}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-xl border" style={{ backgroundColor: 'var(--bg-app)', borderColor: 'var(--border-color)' }}>
+                            {AVAILABLE_ICONS.map((iconOpt) => {
+                              const isSelected = feat.icon === iconOpt.id;
+                              return (
+                                <button
+                                  key={iconOpt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setFeatures(prev => {
+                                      const next = [...prev];
+                                      next[idx].icon = iconOpt.id;
+                                      return next;
+                                    });
+                                  }}
+                                  title={iconOpt.label}
+                                  style={{
+                                    backgroundColor: isSelected ? 'var(--bg-surface)' : 'transparent',
+                                    borderColor: isSelected ? primaryColor : 'transparent',
+                                    color: isSelected ? primaryColor : 'var(--text-secondary)',
+                                  }}
+                                  className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all cursor-pointer ${
+                                    isSelected 
+                                      ? 'shadow-xs scale-105 ring-1' 
+                                      : 'hover:bg-surface hover:text-primary hover:border-border-color'
+                                  }`}
+                                >
+                                  {iconOpt.icon}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardBody>
+            </Card>
+            </div>
+          )}
+
+          {/* TAB 3: 4 GLOBOS DE TELEMETRÍA */}
+          {activeTab === 'GLOBES' && (
+            <Card>
+              <CardHeader
+                title="4 Globos Flotantes de Telemetría"
+                subtitle="Edita las etiquetas, valores e iconos de los 4 globos orbitales que rodean la imagen central"
+              />
+              <CardBody className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {globes.map((globe, idx) => {
+                    const globePositions = [
+                      'Globo 1 (Superior Izquierda)',
+                      'Globo 2 (Inferior Izquierda)',
+                      'Globo 3 (Superior Derecha)',
+                      'Globo 4 (Inferior Derecha)'
+                    ];
+                    const currentGlobeIconObj = GLOBE_ICONS.find(i => i.id === globe.icon);
+                    return (
+                      <div 
+                        key={globe.id || idx} 
+                        className="p-4 rounded-2xl space-y-3.5 border transition-all"
+                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-color)' }}
+                      >
+                        {/* Header */}
+                        <div className="flex items-center justify-between pb-2 border-b" style={{ borderColor: 'var(--border-color)' }}>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: primaryColor }} />
+                            <span 
+                              style={{ color: primaryColor }}
+                              className="text-xs font-black uppercase tracking-wider"
+                            >
+                              {globePositions[idx]}
+                            </span>
+                          </div>
+                          <div 
+                            style={{ 
+                              backgroundColor: `${primaryColor}18`, 
+                              borderColor: `${primaryColor}50`,
+                              color: primaryColor,
+                            }}
+                            className="p-1.5 rounded-xl border flex items-center justify-center shadow-2xs"
+                            title={currentGlobeIconObj?.label || 'Icono actual'}
+                          >
+                            {currentGlobeIconObj?.icon || <Gauge size={15} />}
+                          </div>
+                        </div>
+
+                        {/* Label input */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10.5px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                            Etiqueta:
+                          </label>
+                          <input
+                            type="text"
+                            value={globe.label}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setGlobes(prev => {
+                                const next = [...prev];
+                                next[idx].label = val;
+                                return next;
+                              });
+                            }}
+                            placeholder="ej. CILINDRADA"
+                            className="platform-input text-xs font-bold uppercase rounded-xl"
+                          />
+                        </div>
+
+                        {/* Value input */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10.5px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                            Valor a Mostrar:
+                          </label>
+                          <input
+                            type="text"
+                            value={globe.value}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setGlobes(prev => {
+                                const next = [...prev];
+                                next[idx].value = val;
+                                return next;
+                              });
+                            }}
+                            placeholder="ej. 373.2 CC"
+                            className="platform-input text-xs font-mono font-bold rounded-xl"
+                          />
+                        </div>
+
+                        {/* Visual Icon Picker Grid */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10.5px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-secondary)' }}>
+                              Elegir Icono:
+                            </label>
+                            <span className="text-[10px] font-semibold" style={{ color: primaryColor }}>
+                              {currentGlobeIconObj?.label}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-xl border" style={{ backgroundColor: 'var(--bg-app)', borderColor: 'var(--border-color)' }}>
+                            {GLOBE_ICONS.map((opt) => {
+                              const isSelected = globe.icon === opt.id;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setGlobes(prev => {
+                                      const next = [...prev];
+                                      next[idx].icon = opt.id;
+                                      return next;
+                                    });
+                                  }}
+                                  title={opt.label}
+                                  style={{
+                                    backgroundColor: isSelected ? 'var(--bg-surface)' : 'transparent',
+                                    borderColor: isSelected ? primaryColor : 'transparent',
+                                    color: isSelected ? primaryColor : 'var(--text-secondary)',
+                                  }}
+                                  className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all cursor-pointer ${
+                                    isSelected 
+                                      ? 'shadow-xs scale-105 ring-1' 
+                                      : 'hover:bg-surface hover:text-primary hover:border-border-color'
+                                  }`}
+                                >
+                                  {opt.icon}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardBody>
+            </Card>
+          )}
+
+          {/* TAB 4: VISTA PREVIA EN VIVO */}
+          {activeTab === 'PREVIEW' && (
+            <Card>
+              <CardHeader
+                title="Vista Previa del Showcase en Tiempo Real"
+                subtitle="Comprueba cómo verá el cliente final todas tus configuraciones aplicadas"
+                action={
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    loading={isSaving}
+                    onClick={handleSaveShowcaseSettings}
+                    icon={<Save size={14} />}
+                  >
+                    Guardar Cambios
+                  </Button>
+                }
+              />
+              <CardBody className="p-0 sm:p-2">
+                {previewProduct ? (
+                  <div className="rounded-2xl overflow-hidden border" style={{ borderColor: 'var(--border-color)' }}>
+                    <SomomotoHeroShowcase
+                      products={[previewProduct]}
+                      currentIndex={0}
+                      onSelectIndex={() => {}}
+                      onOpenWhatsApp={() => {}}
+                      primaryColor={primaryColor}
+                      customFeatures={features}
+                      customGlobes={globes}
+                      customEditorialDescription={editorialDescription}
+                      companyName={tenantInfo.trade_name || tenantInfo.name || 'VENTAS B&V'}
+                    />
+                  </div>
+                ) : (
+                  <div className="p-12 text-center text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    Selecciona un producto para ver la vista previa.
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+          )}
+
+        </div>
+
+      </div>
+
+      {/* Product Selector Search Modal */}
+      {isProductPickerOpen && (
+        <Modal
+          isOpen={isProductPickerOpen}
+          onClose={() => setIsProductPickerOpen(false)}
+          title="Seleccionar Producto del Catálogo"
+          size="lg"
+        >
+          <div className="space-y-4">
+            <SearchInput
+              value={productSearchQuery}
+              onChangeValue={setProductSearchQuery}
+              placeholder="Buscar por modelo, marca o código..."
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+              {filteredProductsForPicker.map((p) => {
+                const isSelected = p.id === selectedProductId;
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => handleSelectProduct(p.id)}
+                    className="p-3 rounded-2xl border flex items-center gap-3 transition-all cursor-pointer"
+                    style={{
+                      backgroundColor: isSelected ? 'var(--bg-app)' : 'var(--bg-surface)',
+                      borderColor: isSelected ? primaryColor : 'var(--border-color)',
+                    }}
+                  >
+                    {p.imagePath ? (
+                      <img
+                        src={p.imagePath}
+                        alt={p.name}
+                        className="w-14 h-14 object-contain rounded-xl p-1 border shrink-0"
+                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-color)' }}
+                      />
+                    ) : (
+                      <div 
+                        className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0 border"
+                        style={{ backgroundColor: 'var(--bg-app)', borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}
+                      >
+                        <ImageIcon size={20} />
+                      </div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <span 
+                        style={{ color: primaryColor }}
+                        className="text-[10px] font-bold uppercase tracking-wider block truncate"
+                      >
+                        {p.category || 'MOTOS'}
+                      </span>
+                      <div className="text-xs font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+                        {p.brand} {p.name}
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-xs font-mono font-bold text-emerald-600">
+                          S/ {p.price.toLocaleString('es-PE', { minimumFractionDigits: 0 })}
+                        </span>
+                        {p.code && (
+                          <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                            {p.code}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {isSelected && (
+                      <CheckCircle2 size={18} style={{ color: primaryColor }} className="shrink-0" />
+                    )}
+                  </div>
+                );
+              })}
+
+              {filteredProductsForPicker.length === 0 && (
+                <div className="col-span-2 py-10 text-center text-xs" style={{ color: 'var(--text-secondary)' }}>
+                  No se encontraron productos con el término "{productSearchQuery}".
+                </div>
+              )}
+            </div>
+          </div>
+        </Modal>
       )}
 
-      {/* WhatsApp Share Modal */}
-      <WhatsAppShareModal
-        isOpen={isWhatsAppModalOpen}
-        onClose={() => setIsWhatsAppModalOpen(false)}
-        product={whatsappTargetProduct}
-        allProducts={products}
-        exchangeRate={exchangeRate}
-      />
     </div>
   );
 }

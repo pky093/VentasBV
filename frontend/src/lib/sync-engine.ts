@@ -163,7 +163,7 @@ interface PullTableConfig {
 }
 
 const PULL_TABLES: PullTableConfig[] = [
-  { storeName: STORES.PRODUCTS, tableName: 'products', select: 'id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors, tenant_id, created_at', filterTenant: true },
+  { storeName: STORES.PRODUCTS, tableName: 'products', select: 'id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors, showcase_features, showcase_globes, primary_color, gallery_angles, tenant_id, created_at', filterTenant: true },
   { storeName: STORES.BRANCH_INVENTORY, tableName: 'branch_inventory', select: 'id, tenant_id, branch_id, product_id, quantity', filterTenant: true },
   { storeName: STORES.CATEGORIES, tableName: 'categories', select: 'id, name, active, tenant_id', filterTenant: true },
   { storeName: STORES.BRANDS, tableName: 'brands', select: 'id, name, category_id, active, tenant_id', filterTenant: true },

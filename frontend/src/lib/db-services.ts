@@ -23,6 +23,8 @@ export interface ColorVariant {
   color: string;
   hex?: string;
   stock: number;
+  imagePath?: string;
+  galleryAngles?: Array<{ id: number; label: string; is360: boolean; img: string }>;
   branchStocks?: Record<string, number>;
 }
 
@@ -45,6 +47,12 @@ export interface Product {
   imagePath?: string;
   colors?: ColorVariant[];
   branchStocks?: BranchStock[];
+  galleryAngles?: Array<{ id: number; label: string; is360: boolean; img: string }>;
+  showcaseFeatures?: any[];
+  showcaseGlobes?: any[];
+  primaryColor?: string;
+  description?: string;
+  editorialDescription?: string;
 }
 
 export interface Branch {
@@ -151,7 +159,7 @@ export const productsService = {
       const { data: prods, error: pError } = await supabase
         .from('products')
         .select(`
-          id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors,
+          id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors, showcase_features, showcase_globes, primary_color, gallery_angles,
           categories ( name ),
           brands ( name ),
           models ( name )
@@ -260,6 +268,8 @@ export const productsService = {
             color: c.color,
             hex: c.hex,
             stock: colorStock,
+            imagePath: c.imagePath || c.image_path || '',
+            galleryAngles: c.galleryAngles || c.gallery_angles || [],
             branchStocks: bs,
           };
         });
@@ -285,6 +295,12 @@ export const productsService = {
           imagePath: p.image_path || '',
           colors: formattedColors,
           branchStocks,
+          showcaseFeatures: p.showcase_features || (p as any).showcaseFeatures || undefined,
+          showcaseGlobes: p.showcase_globes || (p as any).showcaseGlobes || undefined,
+          primaryColor: p.primary_color || (p as any).primaryColor || undefined,
+          galleryAngles: p.gallery_angles || (p as any).galleryAngles || undefined,
+          description: p.description || p.editorial_description || undefined,
+          editorialDescription: p.editorial_description || p.description || undefined,
         };
       });
 
@@ -416,6 +432,8 @@ export const productsService = {
             color: c.color,
             hex: c.hex,
             stock: colorStock,
+            imagePath: c.imagePath || c.image_path || '',
+            galleryAngles: c.galleryAngles || c.gallery_angles || [],
             branchStocks: bs,
           };
         });
@@ -441,6 +459,12 @@ export const productsService = {
           imagePath: p.image_path || '',
           colors: formattedColors,
           branchStocks,
+          showcaseFeatures: p.showcase_features || (p as any).showcaseFeatures || undefined,
+          showcaseGlobes: p.showcase_globes || (p as any).showcaseGlobes || undefined,
+          primaryColor: p.primary_color || (p as any).primaryColor || undefined,
+          galleryAngles: p.gallery_angles || (p as any).galleryAngles || undefined,
+          description: p.description || p.editorial_description || undefined,
+          editorialDescription: p.editorial_description || p.description || undefined,
         };
       });
     } catch {
@@ -625,6 +649,15 @@ export const productsService = {
       if (prod.status) updateData.status = prod.status === 'ACTIVE' ? 'AVAILABLE' : 'INACTIVE';
       if (prod.imagePath !== undefined) updateData.image_path = prod.imagePath || null;
       if (prod.colors !== undefined) updateData.colors = prod.colors;
+      if ((prod as any).showcaseFeatures !== undefined) updateData.showcase_features = (prod as any).showcaseFeatures;
+      if ((prod as any).showcaseGlobes !== undefined) updateData.showcase_globes = (prod as any).showcaseGlobes;
+      if ((prod as any).primaryColor !== undefined) updateData.primary_color = (prod as any).primaryColor;
+      if ((prod as any).galleryAngles !== undefined) updateData.gallery_angles = (prod as any).galleryAngles;
+      if (prod.description !== undefined) updateData.description = prod.description;
+      if ((prod as any).editorialDescription !== undefined) {
+        updateData.editorial_description = (prod as any).editorialDescription;
+        if (!updateData.description) updateData.description = (prod as any).editorialDescription;
+      }
 
       if (isNetworkOnline()) {
         try {

@@ -347,7 +347,7 @@ export const ShowcaseActionGroup: React.FC<ShowcaseActionGroupProps> = ({
   const [copied, setCopied] = useState(false);
 
   const handleShareLink = async () => {
-    const url = `${window.location.origin}/catalog/showcase?p=${product.id}`;
+    const url = `${window.location.origin}/#/catalog/showcase?p=${product.id}`;
     try {
       if (navigator.share) {
         await navigator.share({
@@ -379,7 +379,7 @@ export const ShowcaseActionGroup: React.FC<ShowcaseActionGroupProps> = ({
         className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-yellow-400 via-amber-400 to-yellow-500 hover:from-yellow-300 hover:to-amber-300 text-black font-black text-sm uppercase tracking-wider shadow-[0_10px_30px_rgba(250,204,21,0.35)] transition-all hover:scale-[1.01] active:scale-[0.98] flex items-center justify-center gap-2.5 group cursor-pointer"
       >
         <MessageCircle size={19} className="group-hover:scale-110 transition-transform" />
-        <span>QUIERO ESTA MOTO &bull; COTIZAR POR WHATSAPP</span>
+        <span>QUIERO ESTE PRODUCTO &bull; COTIZAR POR WHATSAPP</span>
       </button>
 
       {/* Secondary CTAs */}

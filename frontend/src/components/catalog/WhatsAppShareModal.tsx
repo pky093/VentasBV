@@ -80,7 +80,7 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
   };
 
   // Generate public catalog URL
-  const publicBaseUrl = window.location.origin;
+  const publicBaseUrl = `${window.location.origin}/#`;
   const publicCatalogUrl = useMemo(() => {
     if (shareMode === 'SINGLE' && product?.id) {
       return `${publicBaseUrl}/catalog/showcase?p=${product.id}`;

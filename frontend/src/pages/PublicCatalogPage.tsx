@@ -192,19 +192,6 @@ export default function PublicCatalogPage() {
               <Grid size={13} />
               <span>Galería</span>
             </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (products.length > 0) {
-                  handleClientQuotationWhatsApp(products[currentShowcaseIndex] || products[0]);
-                }
-              }}
-              className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-[#25d366] hover:bg-[#20bd5a] text-black font-black text-xs uppercase tracking-wider rounded-lg transition-all shadow-md cursor-pointer"
-            >
-              <MessageCircle size={14} className="fill-black" />
-              <span>WhatsApp Asesor</span>
-            </button>
           </div>
         </div>
       </header>
@@ -228,16 +215,49 @@ export default function PublicCatalogPage() {
             </button>
           </div>
         ) : viewMode === 'SHOWCASE' ? (
-          <SomomotoHeroShowcase
-            products={filteredProducts}
-            currentIndex={currentShowcaseIndex < filteredProducts.length ? currentShowcaseIndex : 0}
-            onSelectIndex={setCurrentShowcaseIndex}
-            onOpenWhatsApp={handleClientQuotationWhatsApp}
-            onExportPdf={handleExportPdf}
-            exchangeRate={exchangeRate}
-            isPublicView={true}
-            companyName={dealerName}
-          />
+          (() => {
+            const activePublicProduct = filteredProducts[currentShowcaseIndex < filteredProducts.length ? currentShowcaseIndex : 0];
+            let activeConfig: any = {};
+            if (activePublicProduct) {
+              try {
+                const cached = localStorage.getItem(`showcase_config_${activePublicProduct.id}`);
+                if (cached) activeConfig = JSON.parse(cached);
+              } catch (e) {}
+            }
+
+            const mergedProducts = filteredProducts.map((p) => {
+              if (p.id === activePublicProduct?.id) {
+                return {
+                  ...p,
+                  colors: (activeConfig.colors && activeConfig.colors.length > 0) ? activeConfig.colors : p.colors,
+                  showcaseFeatures: activeConfig.features || (p as any).showcaseFeatures,
+                  showcaseGlobes: activeConfig.globes || (p as any).showcaseGlobes,
+                  primaryColor: activeConfig.primaryColor || (p as any).primaryColor,
+                  galleryAngles: activeConfig.galleryAngles || (p as any).galleryAngles,
+                  editorialDescription: activeConfig.editorialDescription || (p as any).editorialDescription || p.description,
+                };
+              }
+              return p;
+            });
+
+            return (
+              <SomomotoHeroShowcase
+                products={mergedProducts}
+                currentIndex={currentShowcaseIndex < filteredProducts.length ? currentShowcaseIndex : 0}
+                onSelectIndex={setCurrentShowcaseIndex}
+                onOpenWhatsApp={handleClientQuotationWhatsApp}
+                onExportPdf={handleExportPdf}
+                exchangeRate={exchangeRate}
+                isPublicView={true}
+                companyName={dealerName}
+                primaryColor={activeConfig.primaryColor || (activePublicProduct as any)?.primaryColor || '#f3c623'}
+                customFeatures={activeConfig.features || (activePublicProduct as any)?.showcaseFeatures}
+                customGlobes={activeConfig.globes || (activePublicProduct as any)?.showcaseGlobes}
+                customEditorialDescription={activeConfig.editorialDescription || (activePublicProduct as any)?.editorialDescription || (activePublicProduct as any)?.description}
+                galleryAngles={activeConfig.galleryAngles || (activePublicProduct as any)?.galleryAngles}
+              />
+            );
+          })()
         ) : (
           /* Grid Gallery View */
           <div className="p-6 sm:p-10 max-w-[1650px] mx-auto w-full space-y-6">
@@ -368,42 +388,29 @@ export default function PublicCatalogPage() {
 
       </main>
 
-      {/* Floating WhatsApp Button */}
-      <div className="fixed bottom-6 right-6 z-40">
-        <button
-          onClick={() => {
-            if (filteredProducts.length > 0) {
-              handleClientQuotationWhatsApp(filteredProducts[currentShowcaseIndex] || filteredProducts[0]);
-            }
-          }}
-          title="Cotizar por WhatsApp"
-          className="w-14 h-14 rounded-full bg-[#25d366] hover:bg-[#20bd5a] text-black flex items-center justify-center shadow-2xl shadow-emerald-950/80 hover:scale-110 active:scale-95 transition-all p-3 cursor-pointer"
-        >
-          <MessageCircle size={30} className="fill-black text-[#25d366]" />
-        </button>
-      </div>
+      {/* Footer matching reference design (shown in Grid mode) */}
+      {viewMode === 'GRID' && (
+        <footer className="border-t border-white/10 bg-[#07090e] py-4 px-4 text-xs text-slate-400">
+          <div className="max-w-[1650px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+            
+            <div className="flex items-center gap-2 text-slate-400">
+              <MapPin size={14} className="text-[#f3c623] shrink-0" />
+              <span><strong className="text-white">{dealerName}</strong> &bull; {dealerAddress}</span>
+            </div>
 
-      {/* Footer matching reference design */}
-      <footer className="border-t border-white/10 bg-[#07090e] py-6 px-4 text-xs text-slate-400">
-        <div className="max-w-[1650px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          
-          <div className="flex items-center gap-2 text-slate-400">
-            <MapPin size={14} className="text-[#f3c623] shrink-0" />
-            <span><strong className="text-white">{dealerName}</strong> &bull; {dealerAddress}</span>
+            <div>
+              <p>&copy; {new Date().getFullYear()} Catálogo Oficial. Precios sujetos a disponibilidad.</p>
+            </div>
+
+            <div className="flex items-center gap-3 text-slate-400">
+              <a href="#facebook" className="hover:text-[#f3c623] transition-colors"><Facebook size={16} /></a>
+              <a href="#instagram" className="hover:text-[#f3c623] transition-colors"><Instagram size={16} /></a>
+              <a href="#youtube" className="hover:text-[#f3c623] transition-colors"><Youtube size={16} /></a>
+            </div>
+
           </div>
-
-          <div>
-            <p>&copy; {new Date().getFullYear()} Catálogo Oficial. Precios sujetos a disponibilidad.</p>
-          </div>
-
-          <div className="flex items-center gap-3 text-slate-400">
-            <a href="#facebook" className="hover:text-[#f3c623] transition-colors"><Facebook size={16} /></a>
-            <a href="#instagram" className="hover:text-[#f3c623] transition-colors"><Instagram size={16} /></a>
-            <a href="#youtube" className="hover:text-[#f3c623] transition-colors"><Youtube size={16} /></a>
-          </div>
-
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

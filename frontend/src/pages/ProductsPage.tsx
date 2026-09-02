@@ -518,16 +518,6 @@ export default function ProductsPage() {
                 <Eye size={14} />
               </button>
               <button
-                className="icon-btn icon-btn-sm text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border-none"
-                title="Compartir por WhatsApp"
-                onClick={() => {
-                  setWhatsappProduct(row);
-                  setIsWhatsAppModalOpen(true);
-                }}
-              >
-                <MessageCircle size={14} />
-              </button>
-              <button
                 className="icon-btn icon-btn-sm btn-action-secondary border-none"
                 title="Traspasar entre Sedes"
                 onClick={() => {
@@ -815,6 +805,19 @@ export default function ProductsPage() {
                   </select>
                 </div>
 
+                {/* COSTO COMPRA (PRECIO DE COMPRA) */}
+                <div className="form-group">
+                  <label className="form-label font-bold">Costo Compra (S/)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="form-control"
+                    placeholder="0.00"
+                    value={selectedProduct?.cost ?? ''}
+                    onChange={(e) => setSelectedProduct({ ...selectedProduct, cost: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+
                 {/* PRECIO VENTA */}
                 <div className="form-group">
                   <label className="form-label font-bold">Precio Venta (S/)</label>
@@ -827,19 +830,37 @@ export default function ProductsPage() {
                     onChange={(e) => setSelectedProduct({ ...selectedProduct, price: parseFloat(e.target.value) || 0 })}
                     required
                   />
-                </div>
-
-                {/* COSTO COMPRA */}
-                <div className="form-group">
-                  <label className="form-label font-bold">Costo Compra (S/)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="form-control"
-                    placeholder="0.00"
-                    value={selectedProduct?.cost ?? ''}
-                    onChange={(e) => setSelectedProduct({ ...selectedProduct, cost: parseFloat(e.target.value) || 0 })}
-                  />
+                  {/* GANANCIA RESALTADA SEGÚN COLOR PRIMARIO DE CONFIGURACIÓN */}
+                  {(() => {
+                    const costVal = Number(selectedProduct?.cost) || 0;
+                    const priceVal = Number(selectedProduct?.price) || 0;
+                    const profitVal = priceVal - costVal;
+                    const profitPct = costVal > 0 
+                      ? (Math.round(((profitVal / costVal) * 100) * 10) / 10) 
+                      : (priceVal > 0 ? 100 : 0);
+                    return (
+                      <div 
+                        className="mt-1.5 px-3 py-1.5 rounded-lg flex items-center justify-between text-xs font-semibold"
+                        style={{
+                          backgroundColor: 'var(--primary-50, rgba(37, 99, 235, 0.08))',
+                          border: '1px solid var(--primary-200, rgba(37, 99, 235, 0.25))',
+                        }}
+                      >
+                        <span className="flex items-center gap-1.5 text-xs font-bold" style={{ color: 'var(--primary-700, #1d4ed8)' }}>
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: 'var(--primary-500, #3b82f6)' }} />
+                          Ganancia:
+                        </span>
+                        <span className="font-extrabold font-mono text-xs sm:text-sm" style={{ color: 'var(--primary-600, #2563eb)' }}>
+                          S/ {profitVal.toFixed(2)}
+                          {(costVal > 0 || priceVal > 0) && (
+                            <span className="text-[10.5px] ml-1.5 font-bold opacity-80">
+                              ({profitPct > 0 ? `+${profitPct}%` : `${profitPct}%`})
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* STOCK ACTUAL */}
