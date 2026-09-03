@@ -143,8 +143,8 @@ export interface UserMember {
 
 // ---------------- PRODUCTS ----------------
 export const productsService = {
-  async getProducts(branchId?: string): Promise<Product[]> {
-    let tenantId = getActiveTenantId();
+  async getProducts(branchId?: string, explicitTenantId?: string): Promise<Product[]> {
+    let tenantId = explicitTenantId || getActiveTenantId();
     if (!tenantId) {
       tenantId = await resolveTenantId();
     }
@@ -1047,8 +1047,8 @@ export const branchesService = {
 
 // ---------------- CATEGORIES & BRANDS ----------------
 export const catalogService = {
-  async getCategories(): Promise<Category[]> {
-    let tenantId = getActiveTenantId();
+  async getCategories(explicitTenantId?: string): Promise<Category[]> {
+    let tenantId = explicitTenantId || getActiveTenantId();
     if (!tenantId) {
       tenantId = await resolveTenantId();
     }
@@ -4586,9 +4586,12 @@ export const reportsService = {
   }
 };
 
+export type ExpenseCategory = 'PRODUCTO' | 'COMERCIAL' | 'PERSONAL' | 'TRABAJADOR' | 'DEUDA' | 'OTROS';
+
 export interface Expense {
   id: string;
   description: string;
+  category?: ExpenseCategory | string;
   expenseType: 'FIXED' | 'VARIABLE';
   frequency?: string;
   amount: number;
@@ -4635,6 +4638,7 @@ export const expensesService = {
       const result = (data || []).map((e: any) => ({
         id: e.id,
         description: e.description,
+        category: e.category || 'OTROS',
         expenseType: e.expense_type,
         frequency: e.frequency,
         amount: Number(e.amount) || 0,
@@ -4656,6 +4660,8 @@ export const expensesService = {
       const tenantId = getActiveTenantId();
       if (!tenantId) return null;
 
+      const category = expense.category || 'OTROS';
+
       if (isNetworkOnline()) {
         try {
           const { data, error } = await supabase
@@ -4663,6 +4669,7 @@ export const expensesService = {
             .insert({
               tenant_id: tenantId,
               description: expense.description,
+              category: category,
               expense_type: expense.expenseType,
               frequency: expense.frequency || 'ONCE',
               amount: expense.amount,
@@ -4677,6 +4684,7 @@ export const expensesService = {
             const created: Expense = {
               id: data.id,
               description: data.description,
+              category: data.category || category,
               expenseType: data.expense_type,
               frequency: data.frequency,
               amount: Number(data.amount) || 0,
@@ -4691,9 +4699,10 @@ export const expensesService = {
               action: 'GASTO OPERATIVO',
               entityType: 'expenses',
               entityId: data.id,
-              description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" (${expense.expenseType === 'FIXED' ? 'Fijo' : 'Variable'})`,
+              description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" [${category}] (${expense.expenseType === 'FIXED' ? 'Fijo' : 'Variable'})`,
               details: {
                 description: expense.description,
+                category: category,
                 amount: expense.amount,
                 expense_type: expense.expenseType,
               },
@@ -4711,6 +4720,7 @@ export const expensesService = {
       const localExpense: Expense = {
         id: localId,
         description: expense.description,
+        category: category,
         expenseType: expense.expenseType,
         frequency: expense.frequency || 'ONCE',
         amount: Number(expense.amount) || 0,
@@ -4730,6 +4740,7 @@ export const expensesService = {
           id: localId,
           tenant_id: tenantId,
           description: expense.description,
+          category: category,
           expense_type: expense.expenseType,
           frequency: expense.frequency || 'ONCE',
           amount: expense.amount,
@@ -4746,9 +4757,10 @@ export const expensesService = {
         action: 'GASTO OPERATIVO',
         entityType: 'expenses',
         entityId: localId,
-        description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" (Modo Offline)`,
+        description: `Registro de gasto operativo por S/ ${Number(expense.amount).toFixed(2)} - "${expense.description}" [${category}] (Modo Offline)`,
         details: {
           description: expense.description,
+          category: category,
           amount: expense.amount,
           expense_type: expense.expenseType,
         },
@@ -4758,6 +4770,77 @@ export const expensesService = {
     } catch (err) {
       console.error(err);
       return null;
+    }
+  },
+
+  async createManyExpenses(expensesList: Omit<Expense, 'id'>[]): Promise<{ success: boolean; count: number; items: Expense[] }> {
+    try {
+      const tenantId = getActiveTenantId();
+      if (!tenantId || expensesList.length === 0) return { success: false, count: 0, items: [] };
+
+      const rowsToInsert = expensesList.map(expense => ({
+        tenant_id: tenantId,
+        description: expense.description,
+        category: expense.category || 'OTROS',
+        expense_type: expense.expenseType,
+        frequency: expense.expenseType === 'FIXED' ? (expense.frequency || 'MONTHLY') : 'ONCE',
+        amount: Number(expense.amount),
+        expense_date: expense.expenseDate || new Date().toISOString().split('T')[0],
+        voucher_url: expense.voucherUrl,
+        voucher_name: expense.voucherName,
+      }));
+
+      if (isNetworkOnline()) {
+        try {
+          const { data, error } = await supabase
+            .from('expenses')
+            .insert(rowsToInsert)
+            .select();
+
+          if (!error && data) {
+            const createdItems: Expense[] = data.map((d: any) => ({
+              id: d.id,
+              description: d.description,
+              category: d.category || 'OTROS',
+              expenseType: d.expense_type,
+              frequency: d.frequency,
+              amount: Number(d.amount) || 0,
+              expenseDate: d.expense_date,
+              voucherUrl: d.voucher_url || undefined,
+              voucherName: d.voucher_name || undefined,
+            }));
+
+            try { await putManyRecords(STORES.EXPENSES, createdItems); } catch { /* non-critical */ }
+
+            auditService.logAction({
+              action: 'IMPORTAR GASTOS',
+              entityType: 'expenses',
+              description: `Importación masiva de ${createdItems.length} gastos operativos vía Excel`,
+              details: { count: createdItems.length },
+            });
+
+            return { success: true, count: createdItems.length, items: createdItems };
+          }
+        } catch (netErr) {
+          console.warn('[expensesService] Online batch insert failed, falling back to one-by-one / offline:', netErr);
+        }
+      }
+
+      // Fallback: create sequentially
+      const createdItems: Expense[] = [];
+      for (const item of expensesList) {
+        const res = await this.createExpense(item);
+        if (res) createdItems.push(res);
+      }
+
+      return {
+        success: createdItems.length > 0,
+        count: createdItems.length,
+        items: createdItems,
+      };
+    } catch (err) {
+      console.error('Error importing bulk expenses:', err);
+      return { success: false, count: 0, items: [] };
     }
   },
 
@@ -4779,6 +4862,7 @@ export const expensesService = {
 
       const updateData: any = {};
       if (expense.description !== undefined) updateData.description = expense.description;
+      if (expense.category !== undefined) updateData.category = expense.category;
       if (expense.expenseType !== undefined) updateData.expense_type = expense.expenseType;
       if (expense.frequency !== undefined) updateData.frequency = expense.frequency;
       if (expense.amount !== undefined) updateData.amount = expense.amount;
@@ -4896,9 +4980,9 @@ export const expensesService = {
 };
 
 export const settingsService = {
-  async getTenantInfo(): Promise<Record<string, any>> {
+  async getTenantInfo(explicitTenantId?: string): Promise<Record<string, any>> {
     try {
-      let tenantId = getActiveTenantId();
+      let tenantId = explicitTenantId || getActiveTenantId();
       if (!tenantId) {
         tenantId = await resolveTenantId();
       }
@@ -5233,6 +5317,59 @@ export const tenantsService = {
         }
       }
       return [];
+    }
+  },
+
+  async getTenantBySlugOrIdentifier(identifier: string): Promise<TenantCompany | null> {
+    if (!identifier) return null;
+    const clean = identifier.trim().toLowerCase();
+
+    try {
+      const allTenants = await this.getTenants();
+      if (!allTenants || allTenants.length === 0) return null;
+
+      // 1. Match by exact ID (UUID)
+      const byId = allTenants.find(t => t.id.toLowerCase() === clean);
+      if (byId) return byId;
+
+      // 2. Match by RUC
+      const byRuc = allTenants.find(t => t.ruc && t.ruc.toLowerCase() === clean);
+      if (byRuc) return byRuc;
+
+      // Helper function to normalize text into a slug
+      const slugify = (str: string) =>
+        str
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/(^-|-$)/g, '');
+
+      // 3. Match by Slugified Name or Trade Name
+      const bySlug = allTenants.find(t => {
+        const slugName = slugify(t.name);
+        const slugLegal = slugify(t.legalName || '');
+        return slugName === clean || slugLegal === clean;
+      });
+      if (bySlug) return bySlug;
+
+      // 4. Match by includes / partial slug
+      const byPartialSlug = allTenants.find(t => {
+        const slugName = slugify(t.name);
+        const slugLegal = slugify(t.legalName || '');
+        return (slugName && clean.includes(slugName)) || (slugLegal && clean.includes(slugLegal));
+      });
+      if (byPartialSlug) return byPartialSlug;
+
+      // 5. Match by case-insensitive name match
+      const byName = allTenants.find(t =>
+        t.name.toLowerCase().includes(clean) ||
+        (t.legalName && t.legalName.toLowerCase().includes(clean))
+      );
+      return byName || null;
+    } catch (err) {
+      console.error('Error in getTenantBySlugOrIdentifier:', err);
+      return null;
     }
   },
 

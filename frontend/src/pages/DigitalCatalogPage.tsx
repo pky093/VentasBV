@@ -3,7 +3,8 @@ import {
   Sparkles, Save, ExternalLink, RefreshCw, Layers, Palette, 
   Image as ImageIcon, Plus, Trash2, Check, Upload, Sliders, 
   Zap, Shield, Award, Flame, Sun, Grid, Eye, RotateCw, Gauge, 
-  Disc, ArrowRight, Search, ChevronDown, CheckCircle2, Fuel, Pencil, X
+  Disc, ArrowRight, Search, ChevronDown, CheckCircle2, Fuel, Pencil, X,
+  Copy, Globe, Share2
 } from 'lucide-react';
 import { PageHeader, Button, Badge, Card, CardHeader, CardBody, Tabs, Modal, SearchInput } from '../components/ui';
 import { productsService, catalogService, settingsService, Product, Category, ColorVariant } from '../lib/db-services';
@@ -430,6 +431,43 @@ export default function DigitalCatalogPage() {
     };
   }, [selectedProduct, colors, editorialDescription]);
 
+  // Generate Clean Tenant Slug & Public URL
+  const tenantSlug = useMemo(() => {
+    const raw = tenantInfo?.trade_name || tenantInfo?.name || localStorage.getItem('tenant_name') || 'catalogo';
+    return raw
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '') || 'catalogo';
+  }, [tenantInfo]);
+
+  const publicCatalogUrl = useMemo(() => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ventas-bv.vercel.app';
+    return `${origin}/#/${tenantSlug}/catalogo`;
+  }, [tenantSlug]);
+
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const handleCopyPublicLink = async () => {
+    try {
+      await navigator.clipboard.writeText(publicCatalogUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+      Swal.fire({
+        icon: 'success',
+        title: '¡Enlace Copiado al Portapapeles!',
+        text: publicCatalogUrl,
+        timer: 2500,
+        showConfirmButton: false,
+        toast: true,
+        position: 'top-end',
+      });
+    } catch (err) {
+      console.error('Error copying link:', err);
+    }
+  };
+
   const tabsConfig = [
     { id: 'COLORS_ANGLES', label: `Fotos por Color & Vistas (${colors.length})`, icon: <Palette size={15} /> },
     { id: 'FEATURES', label: 'Texto & Características', icon: <Zap size={15} /> },
@@ -447,8 +485,18 @@ export default function DigitalCatalogPage() {
         description="Personaliza fotografías por variante de color, vistas 360°, características destacadas y especificaciones técnicas para la vista pública de clientes."
         actions={
           <div className="flex flex-wrap items-center gap-2.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyPublicLink}
+              icon={copiedLink ? <Check size={14} className="text-success-600" /> : <Copy size={14} />}
+              title="Copiar URL para compartir con tus clientes"
+            >
+              {copiedLink ? '¡Enlace Copiado!' : 'Copiar Enlace'}
+            </Button>
+
             <a
-              href={`#/catalog/showcase?p=${selectedProductId}`}
+              href={`#/${tenantSlug}/catalogo${selectedProductId ? `?p=${selectedProductId}` : ''}`}
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -473,6 +521,51 @@ export default function DigitalCatalogPage() {
           </div>
         }
       />
+
+      {/* Public URL & Multi-Tenant Sharing Banner */}
+      <div className="bg-primary-50/60 dark:bg-primary-950/30 border border-primary-200 dark:border-primary-800/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/60 text-primary-600 flex items-center justify-center shrink-0">
+            <Globe size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-primary uppercase">Enlace Público de tu Empresa / Tienda</span>
+              <Badge variant="success" className="text-[10px] px-1.5 py-0.5 font-bold">Activo 24/7</Badge>
+            </div>
+            <p className="text-xs font-mono text-secondary truncate mt-0.5" title={publicCatalogUrl}>
+              {publicCatalogUrl}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyPublicLink}
+            icon={copiedLink ? <Check size={14} className="text-success-600" /> : <Copy size={14} />}
+            className="flex-1 sm:flex-none font-bold text-xs"
+          >
+            {copiedLink ? '¡Copiado!' : 'Copiar Enlace'}
+          </Button>
+          <a
+            href={`#/${tenantSlug}/catalogo`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 sm:flex-none"
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<ExternalLink size={14} style={{ color: primaryColor }} />}
+              className="w-full font-bold text-xs"
+            >
+              Abrir Catálogo
+            </Button>
+          </a>
+        </div>
+      </div>
 
       {/* Main Maintainer Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

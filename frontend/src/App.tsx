@@ -61,6 +61,12 @@ export default function App() {
             <Route path="/product/:id" element={<ProductDetailPage />} />
             <Route path="/motos/:id" element={<ProductDetailPage />} />
 
+            {/* Multi-Tenant Public Routes for Clients: /:tenantSlug/catalogo, /:tenantSlug/catalog, /:tenantSlug */}
+            <Route path="/:tenantSlug/catalogo" element={<PublicCatalogPage />} />
+            <Route path="/:tenantSlug/catalog" element={<PublicCatalogPage />} />
+            <Route path="/:tenantSlug/showcase" element={<PublicCatalogPage />} />
+            <Route path="/:tenantSlug/motos" element={<PublicCatalogPage />} />
+
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/set-password" element={<SetPasswordPage />} />

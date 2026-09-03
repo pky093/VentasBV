@@ -892,7 +892,7 @@ export default function POSPage() {
             ) : (
               filteredProducts.map((prod) => (
                 <div key={prod.id} className="pos-card flex flex-col justify-between cursor-pointer hover:shadow-md transition-all" onClick={() => handleProductClick(prod)}>
-                  <div className="pos-card-img overflow-hidden w-full flex items-center justify-center border-b border-color mb-3 rounded-lg shrink-0" style={{ height: '115px', backgroundColor: 'var(--bg-app)' }}>
+                  <div className="pos-card-img overflow-hidden w-full flex items-center justify-center border-b border-color mb-1.5 rounded-lg shrink-0" style={{ height: '78px', backgroundColor: 'var(--bg-app)' }}>
                     {prod.imagePath ? (
                       <img
                         src={prod.imagePath}
@@ -900,20 +900,20 @@ export default function POSPage() {
                         style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center' }}
                       />
                     ) : (
-                      <Package size={28} className="text-secondary opacity-60" />
+                      <Package size={24} className="text-secondary opacity-60" />
                     )}
                   </div>
                   <div className="flex-grow flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between gap-1 mb-0.5">
-                        <span className="text-[10px] font-mono text-secondary tracking-wider font-semibold">{prod.sku}</span>
+                        <span className="text-[9.5px] font-mono text-secondary tracking-wider font-semibold">{prod.sku}</span>
                         {(prod.brand || prod.model) && (
-                          <span className="text-[10px] text-secondary font-medium truncate max-w-[120px]" title={`${prod.brand || ''} ${prod.model || ''}`}>
+                          <span className="text-[9.5px] text-secondary font-medium truncate max-w-[100px]" title={`${prod.brand || ''} ${prod.model || ''}`}>
                             {prod.brand}{prod.model && ` • ${prod.model}`}
                           </span>
                         )}
                       </div>
-                      <div className="pos-card-title text-sm font-bold text-primary line-clamp-2 leading-tight mb-1 h-9 overflow-hidden" title={prod.name}>
+                      <div className="pos-card-title text-xs font-bold text-primary line-clamp-2 leading-tight mb-1 h-7 overflow-hidden" title={prod.name}>
                         {prod.name}
                       </div>
 
@@ -922,11 +922,11 @@ export default function POSPage() {
                           {prod.dbProduct.colors.map((c, i) => (
                             <span
                               key={i}
-                              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold rounded-md bg-app border border-color text-primary"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8.5px] font-bold rounded-md bg-app border border-color text-primary"
                               title={`${c.color} (${c.stock} dispon.)`}
                             >
                               <span
-                                className="w-2 h-2 rounded-full border border-black/20 shrink-0"
+                                className="w-1.5 h-1.5 rounded-full border border-black/20 shrink-0"
                                 style={{ backgroundColor: c.hex || '#94a3b8' }}
                               />
                               <span>{c.color}</span>
@@ -936,9 +936,9 @@ export default function POSPage() {
                         </div>
                       )}
                     </div>
-                    <div className="pos-card-footer flex items-center justify-between border-t border-color pt-2 mt-1">
-                      <div className="pos-card-price text-base font-extrabold text-primary-600">S/ {prod.price.toFixed(2)}</div>
-                      <Badge variant={prod.stock > 5 ? 'success' : prod.stock > 0 ? 'warning' : 'danger'}>
+                    <div className="pos-card-footer flex items-center justify-between border-t border-color pt-1.5 mt-0.5">
+                      <div className="pos-card-price text-sm font-extrabold text-primary-600">S/ {prod.price.toFixed(2)}</div>
+                      <Badge variant={prod.stock > 5 ? 'success' : prod.stock > 0 ? 'warning' : 'danger'} className="text-[10px] px-1.5 py-0.5 font-bold">
                         Stock: {prod.stock}
                       </Badge>
                     </div>
@@ -954,20 +954,20 @@ export default function POSPage() {
       <div className="pos-cart-panel">
         <div className="pos-cart-header">
           <div className="flex items-center gap-2">
-            <ShoppingCart size={18} className="text-primary-600" />
-            <span className="font-bold text-base text-primary">Orden de Venta</span>
+            <ShoppingCart size={16} className="text-primary-600" />
+            <span className="font-bold text-sm text-primary">Orden de Venta</span>
           </div>
           {cart.length > 0 && (
-            <button className="btn btn-ghost btn-sm text-danger-500 hover:bg-danger-50" onClick={clearCart}>
+            <button className="btn btn-ghost btn-xs text-danger-500 hover:bg-danger-50 text-[11px]" onClick={clearCart}>
               Vaciar
             </button>
           )}
         </div>
 
         {/* Customer Selector */}
-        <div className="px-4 py-3 border-b border-color bg-app">
+        <div className="px-3 py-2.5 border-b border-color bg-app shrink-0">
           <div className="flex items-center justify-between mb-1.5">
-            <label className="text-xs font-bold text-secondary uppercase flex items-center gap-1.5">
+            <label className="text-[11px] font-bold text-secondary uppercase flex items-center gap-1.5">
               <User size={13} className="text-primary-600" />
               Cliente Receptor
             </label>
@@ -981,15 +981,15 @@ export default function POSPage() {
                   setManualCustomerDoc(selectedCustomer?.doc === '00000000' ? '' : (selectedCustomer?.doc || ''));
                 }
               }}
-              className="text-[11px] font-bold text-primary-600 hover:text-primary-700 bg-primary-50 dark:bg-primary-950/40 px-2 py-0.5 rounded-full border border-primary-200 dark:border-primary-800 transition-colors flex items-center gap-1"
+              className="text-[10.5px] font-bold text-primary-600 hover:text-primary-700 bg-primary-50 dark:bg-primary-950/40 px-2 py-0.5 rounded-full border border-primary-200 dark:border-primary-800 transition-colors flex items-center gap-1"
             >
               {isManualCustomer ? (
                 <>
-                  <Users size={11} /> Seleccionar Registrado
+                  <Users size={11} /> Seleccionar
                 </>
               ) : (
                 <>
-                  <UserPlus size={11} /> + No Registrado / Manual
+                  <UserPlus size={11} /> + Manual
                 </>
               )}
             </button>
@@ -998,7 +998,7 @@ export default function POSPage() {
           {!isManualCustomer ? (
             <div>
               <select
-                className="form-control text-xs font-semibold w-full"
+                className="form-control text-xs font-semibold w-full py-1.5 px-3 h-9 leading-normal cursor-pointer"
                 value={selectedCustomer?.id || 'default'}
                 onChange={(e) => {
                   if (e.target.value === '__manual__') {
@@ -1027,26 +1027,20 @@ export default function POSPage() {
           ) : (
             <div className="space-y-2 p-2.5 rounded-lg border border-primary-200 dark:border-primary-800/60 bg-surface">
               <div>
-                <label className="text-[10.5px] font-semibold text-secondary block mb-1">
-                  Nombre Completo / Razón Social:
-                </label>
                 <input
                   type="text"
-                  className="form-control text-xs py-1 px-2 font-medium"
-                  placeholder="Ej. Carlos Mendoza o Público General"
+                  className="form-control text-xs py-1.5 px-2.5 font-medium h-9"
+                  placeholder="Nombre Completo / Razón Social"
                   value={manualCustomerName}
                   onChange={(e) => setManualCustomerName(e.target.value)}
                   autoFocus
                 />
               </div>
 
-              <div className="grid grid-cols-12 gap-1.5 items-end">
+              <div className="grid grid-cols-12 gap-1.5 items-center">
                 <div className="col-span-4">
-                  <label className="text-[10.5px] font-medium text-secondary block mb-1">
-                    Tipo Doc:
-                  </label>
                   <select
-                    className="form-control text-xs py-1 px-1 font-medium"
+                    className="form-control text-xs py-1.5 px-2 font-semibold h-9 leading-normal cursor-pointer bg-surface"
                     value={manualCustomerDocType}
                     onChange={(e: any) => {
                       setManualCustomerDocType(e.target.value);
@@ -1063,13 +1057,10 @@ export default function POSPage() {
                 </div>
 
                 <div className="col-span-5">
-                  <label className="text-[10.5px] font-semibold text-secondary block mb-1">
-                    N° Doc.:
-                  </label>
                   <input
                     type="text"
-                    className="form-control text-xs py-1 px-2 font-mono"
-                    placeholder={manualCustomerDocType === 'SIN_DOC' ? 'No requerido' : manualCustomerDocType === 'RUC' ? '11 dígitos' : '8 dígitos'}
+                    className="form-control text-xs py-1.5 px-2.5 font-mono h-9 font-medium"
+                    placeholder={manualCustomerDocType === 'SIN_DOC' ? 'No req.' : manualCustomerDocType === 'RUC' ? '11 dígitos' : '8 dígitos'}
                     disabled={manualCustomerDocType === 'SIN_DOC'}
                     value={manualCustomerDoc}
                     onChange={(e) => setManualCustomerDoc(e.target.value.replace(/\D/g, ''))}
@@ -1088,7 +1079,7 @@ export default function POSPage() {
                     type="button"
                     disabled={isLookingUpDoc || !manualCustomerDoc || manualCustomerDocType === 'SIN_DOC'}
                     onClick={handleLookupDoc}
-                    className="btn btn-outline btn-sm w-full h-[30px] flex items-center justify-center p-0 text-[10.5px] font-bold text-primary-600 border-primary-300 hover:bg-primary-50 dark:hover:bg-primary-950 disabled:opacity-40"
+                    className="btn btn-outline btn-sm w-full h-9 flex items-center justify-center p-0 text-[11px] font-bold text-primary-600 border-primary-300 hover:bg-primary-50 dark:hover:bg-primary-950 disabled:opacity-40"
                     title="Consultar en tiempo real con SUNAT / RENIEC"
                   >
                     {isLookingUpDoc ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
@@ -1097,8 +1088,8 @@ export default function POSPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-1 border-t border-color text-[10.5px] text-muted">
-                <span>{manualCustomerDocType === 'SIN_DOC' || !manualCustomerDoc ? 'Emitir sin documento' : `Doc: ${manualCustomerDoc}`}</span>
+              <div className="flex items-center justify-between pt-1 border-t border-color text-[10px] text-muted">
+                <span>{manualCustomerDocType === 'SIN_DOC' || !manualCustomerDoc ? 'Sin documento' : `Doc: ${manualCustomerDoc}`}</span>
                 <button
                   type="button"
                   className="text-primary-600 hover:underline font-bold"
@@ -1114,34 +1105,34 @@ export default function POSPage() {
         {/* Cart Item List */}
         <div className="pos-cart-list">
           {cart.length === 0 ? (
-            <div className="flex flex-col items-center justify-center flex-1 text-center py-12">
-              <ShoppingCart size={40} className="text-muted mb-2 opacity-50" />
-              <div className="text-sm font-semibold text-secondary">El carrito está vacío</div>
-              <div className="text-xs text-muted mt-1">Haz clic en un producto para agregarlo</div>
+            <div className="flex flex-col items-center justify-center flex-1 text-center py-4">
+              <ShoppingCart size={28} className="text-muted mb-1 opacity-50" />
+              <div className="text-xs font-semibold text-secondary">El carrito está vacío</div>
+              <div className="text-[10.5px] text-muted mt-0.5">Haz clic en un producto para agregarlo</div>
             </div>
           ) : (
             cart.map((item) => (
               <div key={item.id} className="pos-cart-item">
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-xs text-primary truncate">{item.name}</div>
-                  <div className="text-xs text-secondary font-medium">S/ {item.price.toFixed(2)}</div>
+                  <div className="text-[11px] text-secondary font-medium">S/ {item.price.toFixed(2)}</div>
                 </div>
 
                 <div className="pos-qty-control">
                   <button className="pos-qty-btn" onClick={() => updateQty(item.id, -1)}>
-                    <Minus size={12} />
+                    <Minus size={11} />
                   </button>
-                  <span className="pos-qty-num">{item.qty}</span>
+                  <span className="pos-qty-num text-xs px-1.5">{item.qty}</span>
                   <button className="pos-qty-btn" onClick={() => updateQty(item.id, 1)}>
-                    <Plus size={12} />
+                    <Plus size={11} />
                   </button>
                 </div>
 
                 <button
-                  className="icon-btn btn-ghost text-secondary hover:text-danger-500"
+                  className="icon-btn btn-ghost text-secondary hover:text-danger-500 p-1"
                   onClick={() => removeFromCart(item.id)}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={13} />
                 </button>
               </div>
             ))
@@ -1150,18 +1141,18 @@ export default function POSPage() {
 
         {/* Checkout Footer */}
         <div className="pos-cart-footer">
-          <div className="space-y-1.5 mb-3 text-xs">
-            <div className="flex justify-between text-secondary">
+          <div className="space-y-1 mb-2 text-xs">
+            <div className="flex justify-between text-secondary text-[11px]">
               <span>Subtotal</span>
               <span>S/ {subtotal.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-secondary">
+            <div className="flex justify-between text-secondary text-[11px]">
               <span>IGV (18%)</span>
               <span>S/ {igv.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-base font-extrabold text-primary border-t border-color pt-2 mt-2">
+            <div className="flex justify-between text-sm font-extrabold text-primary border-t border-color pt-1 mt-1">
               <span>TOTAL A PAGAR</span>
-              <span className="text-primary-600">S/ {total.toFixed(2)}</span>
+              <span className="text-primary-600 font-mono text-base">S/ {total.toFixed(2)}</span>
             </div>
           </div>
 
@@ -1171,29 +1162,29 @@ export default function POSPage() {
               className={`pos-pay-btn ${paymentMethod === 'EFECTIVO' ? 'active' : ''}`}
               onClick={() => setPaymentMethod('EFECTIVO')}
             >
-              <Banknote size={18} />
+              <Banknote size={15} />
               <span>Efectivo</span>
             </button>
             <button
               className={`pos-pay-btn ${paymentMethod === 'TARJETA' ? 'active' : ''}`}
               onClick={() => setPaymentMethod('TARJETA')}
             >
-              <CreditCard size={18} />
+              <CreditCard size={15} />
               <span>Tarjeta</span>
             </button>
             <button
               className={`pos-pay-btn ${paymentMethod === 'YAPE' ? 'active' : ''}`}
               onClick={() => setPaymentMethod('YAPE')}
             >
-              <QrCode size={18} />
+              <QrCode size={15} />
               <span>Yape / QR</span>
             </button>
           </div>
 
           <Button
             variant="primary"
-            size="lg"
-            className="w-full font-bold text-base shadow-glow"
+            size="md"
+            className="w-full font-bold text-sm shadow-glow py-2 h-9"
             disabled={cart.length === 0}
             onClick={() => setIsCheckoutOpen(true)}
           >

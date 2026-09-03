@@ -485,7 +485,7 @@ export default function AppLayout() {
           </div>
         </header>
 
-        <main className="app-content">
+        <main className={`app-content ${location.pathname === '/app/pos' ? 'pos-page-content' : ''}`}>
           <Outlet />
         </main>
       </div>

@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useParams } from 'react-router-dom';
 import { 
   Sparkles, MessageCircle, Phone, MapPin, Grid, 
   MonitorPlay, Search, ChevronRight, RefreshCw, X,
   ShieldCheck, Award, Zap, Fuel, Disc, Gauge, ExternalLink,
   Instagram, Facebook, Youtube, Video
 } from 'lucide-react';
-import { productsService, catalogService, settingsService, Product, Category } from '../lib/db-services';
+import { productsService, catalogService, settingsService, tenantsService, Product, Category } from '../lib/db-services';
 import { SomomotoHeroShowcase } from '../components/catalog/SomomotoHeroShowcase';
 import { exportProductFlyerPdf } from '../lib/catalog-flyer';
 
 export default function PublicCatalogPage() {
+  const { tenantSlug } = useParams<{ tenantSlug?: string }>();
   const [searchParams] = useSearchParams();
   const targetProductId = searchParams.get('p');
+  const tenantQueryParam = searchParams.get('tenant') || searchParams.get('t') || searchParams.get('ruc') || searchParams.get('empresa');
 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -30,21 +32,43 @@ export default function PublicCatalogPage() {
 
   useEffect(() => {
     loadPublicData();
-  }, []);
+  }, [tenantSlug, tenantQueryParam, targetProductId]);
 
   const loadPublicData = async () => {
     setIsLoading(true);
     try {
+      const activeIdentifier = tenantSlug || tenantQueryParam;
+      let targetTenantId: string | undefined = undefined;
+      let resolvedTenantInfo: any = null;
+
+      if (activeIdentifier) {
+        const found = await tenantsService.getTenantBySlugOrIdentifier(activeIdentifier);
+        if (found) {
+          targetTenantId = found.id;
+          resolvedTenantInfo = {
+            id: found.id,
+            name: found.name,
+            trade_name: found.legalName || found.name,
+            phone: found.phone,
+            address: found.address,
+            ruc: found.ruc,
+          };
+        }
+      }
+
       const [prods, cats, tInfo] = await Promise.all([
-        productsService.getProducts(),
-        catalogService.getCategories(),
-        settingsService.getTenantInfo(),
+        productsService.getProducts(undefined, targetTenantId),
+        catalogService.getCategories(targetTenantId),
+        settingsService.getTenantInfo(targetTenantId),
       ]);
 
       const activeList = (prods || []).filter(p => p.status !== 'INACTIVE');
       setProducts(activeList);
       setCategories(cats || []);
-      setTenantInfo(tInfo || {});
+      setTenantInfo({
+        ...(resolvedTenantInfo || {}),
+        ...(tInfo || {}),
+      });
 
       // If a specific product was requested via ?p=..., select it
       if (targetProductId) {
