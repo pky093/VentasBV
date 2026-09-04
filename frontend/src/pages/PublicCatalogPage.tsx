@@ -101,38 +101,36 @@ export default function PublicCatalogPage() {
         } catch (e) {}
       }
 
+      // 2. If activeIdentifier is provided but targetTenantId is not yet resolved, fetch tenant FIRST
+      if (!targetTenantId && activeIdentifier) {
+        const foundTenant = await tenantsService.getTenantBySlugOrIdentifier(activeIdentifier);
+        if (foundTenant) {
+          targetTenantId = foundTenant.id;
+          resolvedTenantInfo = {
+            id: foundTenant.id,
+            name: foundTenant.name,
+            trade_name: foundTenant.legalName || foundTenant.name,
+            phone: foundTenant.phone,
+            address: foundTenant.address,
+            ruc: foundTenant.ruc,
+          };
+          try {
+            localStorage.setItem(`tenant_cache_${activeIdentifier}`, JSON.stringify(resolvedTenantInfo));
+          } catch (e) {}
+        }
+      }
+
+      // 3. Fallback to active logged in tenant or default
       if (!targetTenantId) {
         targetTenantId = getActiveTenantId() || undefined;
       }
 
-      // Parallelize tenant lookup if needed alongside products, categories, and settings
-      const tenantPromise = (activeIdentifier && !resolvedTenantInfo)
-        ? tenantsService.getTenantBySlugOrIdentifier(activeIdentifier)
-        : Promise.resolve(null);
-
-      const [foundTenant, prods, cats, tInfo] = await Promise.all([
-        tenantPromise,
+      // 4. Fetch products, categories, and settings using the resolved targetTenantId
+      const [prods, cats, tInfo] = await Promise.all([
         productsService.getProducts(undefined, targetTenantId),
         catalogService.getCategories(targetTenantId),
         settingsService.getTenantInfo(targetTenantId),
       ]);
-
-      if (foundTenant) {
-        targetTenantId = foundTenant.id;
-        resolvedTenantInfo = {
-          id: foundTenant.id,
-          name: foundTenant.name,
-          trade_name: foundTenant.legalName || foundTenant.name,
-          phone: foundTenant.phone,
-          address: foundTenant.address,
-          ruc: foundTenant.ruc,
-        };
-        try {
-          if (activeIdentifier) {
-            localStorage.setItem(`tenant_cache_${activeIdentifier}`, JSON.stringify(resolvedTenantInfo));
-          }
-        } catch (e) {}
-      }
 
       const activeList = (prods || []).filter(p => p.status !== 'INACTIVE');
       setProducts(activeList);
