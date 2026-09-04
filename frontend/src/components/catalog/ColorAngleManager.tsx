@@ -103,7 +103,7 @@ export const ColorAngleManager: React.FC<ColorAngleManagerProps> = ({
         <Card>
           <CardHeader
             title={`Configuración de Variante: ${currentColor.color}`}
-            subtitle="Personaliza el nombre, stock y las 3 tomas de este color"
+            subtitle="Personaliza el nombre y las 3 tomas de este color"
             action={
               <Button
                 variant="danger"
@@ -119,49 +119,31 @@ export const ColorAngleManager: React.FC<ColorAngleManagerProps> = ({
             
             {/* Color Settings Header Bar */}
             <div 
-              className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-4 rounded-2xl border"
+              className="flex items-center gap-3.5 p-4 rounded-2xl border"
               style={{ backgroundColor: 'var(--bg-app)', borderColor: 'var(--border-color)' }}
             >
               
-              {/* Color Swatch & Name */}
-              <div className="flex items-center gap-3.5 flex-1 min-w-0">
+              {/* Color Swatch & Full-width Name */}
+              <input
+                type="color"
+                value={currentColor.hex || '#111827'}
+                onChange={(e) => onUpdateColor(selectedColorIndex, 'hex', e.target.value)}
+                className="w-10 h-10 rounded-xl border cursor-pointer shrink-0"
+                style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-surface)' }}
+                title="Clic para cambiar el tono de este color"
+              />
+
+              <div className="flex-1 min-w-0">
+                <label className="text-[11px] font-bold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  Nombre del Color:
+                </label>
                 <input
-                  type="color"
-                  value={currentColor.hex || '#111827'}
-                  onChange={(e) => onUpdateColor(selectedColorIndex, 'hex', e.target.value)}
-                  className="w-10 h-10 rounded-xl border cursor-pointer shrink-0"
-                  style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-surface)' }}
-                  title="Clic para cambiar el tono de este color"
+                  type="text"
+                  value={currentColor.color}
+                  onChange={(e) => onUpdateColor(selectedColorIndex, 'color', e.target.value)}
+                  placeholder="ej. Rojo Racing, Negro Ébano"
+                  className="platform-input w-full text-xs font-semibold rounded-xl"
                 />
-
-                <div className="flex-1 min-w-0">
-                  <label className="text-[11px] font-bold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-secondary)' }}>
-                    Nombre del Color:
-                  </label>
-                  <input
-                    type="text"
-                    value={currentColor.color}
-                    onChange={(e) => onUpdateColor(selectedColorIndex, 'color', e.target.value)}
-                    placeholder="ej. Rojo Racing, Negro Ébano"
-                    className="platform-input w-full sm:w-64 text-xs font-semibold rounded-xl"
-                  />
-                </div>
-              </div>
-
-              {/* Stock */}
-              <div className="flex items-center gap-3 shrink-0">
-                <div>
-                  <label className="text-[11px] font-bold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-secondary)' }}>
-                    Stock Disponible:
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={currentColor.stock ?? 0}
-                    onChange={(e) => onUpdateColor(selectedColorIndex, 'stock', Number(e.target.value))}
-                    className="platform-input w-24 text-xs font-bold text-center rounded-xl font-mono"
-                  />
-                </div>
               </div>
             </div>
 

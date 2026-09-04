@@ -147,11 +147,21 @@ export default function DigitalCatalogPage() {
     const sourceColors = (prod.colors && prod.colors.length > 0) ? prod.colors : (localBackup?.colors || []);
     if (sourceColors.length > 0) {
       setColors(sourceColors.map((c: any, idx: number) => {
-        const angles = c.galleryAngles && c.galleryAngles.length === 3 ? c.galleryAngles : [
-          { id: 0, label: 'Vista Principal', is360: true, img: c.imagePath || (idx === 0 ? prod.imagePath || '' : '') },
-          { id: 1, label: 'Detalle Lateral', is360: false, img: c.imagePath || (idx === 0 ? prod.imagePath || '' : '') },
-          { id: 2, label: 'Detalle Chasis', is360: false, img: c.imagePath || (idx === 0 ? prod.imagePath || '' : '') },
-        ];
+        const angles = (c.galleryAngles && Array.isArray(c.galleryAngles) && c.galleryAngles.length > 0)
+          ? [0, 1, 2].map(i => {
+              const item = c.galleryAngles[i];
+              return {
+                id: i,
+                label: item?.label || (i === 0 ? 'Vista Principal' : i === 1 ? 'Detalle Lateral' : 'Detalle Chasis'),
+                is360: item?.is360 ?? (i === 0),
+                img: item?.img || (i === 0 ? (c.imagePath || (idx === 0 ? prod.imagePath || '' : '')) : ''),
+              };
+            })
+          : [
+              { id: 0, label: 'Vista Principal', is360: true, img: c.imagePath || (idx === 0 ? prod.imagePath || '' : '') },
+              { id: 1, label: 'Detalle Lateral', is360: false, img: '' },
+              { id: 2, label: 'Detalle Chasis', is360: false, img: '' },
+            ];
         return {
           color: c.color,
           hex: c.hex,
@@ -169,8 +179,8 @@ export default function DigitalCatalogPage() {
           imagePath: prod.imagePath || '',
           galleryAngles: [
             { id: 0, label: 'Vista Principal', is360: true, img: prod.imagePath || '' },
-            { id: 1, label: 'Detalle Lateral', is360: false, img: prod.imagePath || '' },
-            { id: 2, label: 'Detalle Chasis', is360: false, img: prod.imagePath || '' },
+            { id: 1, label: 'Detalle Lateral', is360: false, img: '' },
+            { id: 2, label: 'Detalle Chasis', is360: false, img: '' },
           ]
         },
         { 
@@ -442,6 +452,16 @@ export default function DigitalCatalogPage() {
       .replace(/(^-|-$)/g, '') || 'catalogo';
   }, [tenantInfo]);
 
+  const businessLegalName = useMemo(() => {
+    return (
+      tenantInfo?.legal_name ||
+      tenantInfo?.name ||
+      tenantInfo?.trade_name ||
+      (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || '' : '') ||
+      'tu Empresa'
+    );
+  }, [tenantInfo]);
+
   const publicCatalogUrl = useMemo(() => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ventas-bv.vercel.app';
     return `${origin}/#/${tenantSlug}/catalogo`;
@@ -522,57 +542,67 @@ export default function DigitalCatalogPage() {
         }
       />
 
-      {/* Public URL & Multi-Tenant Sharing Banner */}
-      <div className="bg-primary-50/60 dark:bg-primary-950/30 border border-primary-200 dark:border-primary-800/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-900/60 text-primary-600 flex items-center justify-center shrink-0">
-            <Globe size={20} />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-primary uppercase">Enlace Público de tu Empresa / Tienda</span>
-              <Badge variant="success" className="text-[10px] px-1.5 py-0.5 font-bold">Activo 24/7</Badge>
-            </div>
-            <p className="text-xs font-mono text-secondary truncate mt-0.5" title={publicCatalogUrl}>
-              {publicCatalogUrl}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCopyPublicLink}
-            icon={copiedLink ? <Check size={14} className="text-success-600" /> : <Copy size={14} />}
-            className="flex-1 sm:flex-none font-bold text-xs"
-          >
-            {copiedLink ? '¡Copiado!' : 'Copiar Enlace'}
-          </Button>
-          <a
-            href={`#/${tenantSlug}/catalogo`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 sm:flex-none"
-          >
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<ExternalLink size={14} style={{ color: primaryColor }} />}
-              className="w-full font-bold text-xs"
-            >
-              Abrir Catálogo
-            </Button>
-          </a>
-        </div>
-      </div>
-
       {/* Main Maintainer Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* LEFT PANEL (4 Cols): Clickable Product Card & 3 Default Colors */}
+        {/* LEFT PANEL (4 Cols): Enlace Publico, Clickable Product Card & Colors */}
         <div className="lg:col-span-4 space-y-5">
           
+          {/* Card: Enlace Público de la Empresa */}
+          <Card>
+            <CardHeader
+              title={`Enlace Público • ${businessLegalName}`}
+              subtitle="Catálogo digital interactivo en vivo"
+              action={
+                <Badge variant="success" className="text-[10px] px-1.5 py-0.5 font-bold">
+                  Activo 24/7
+                </Badge>
+              }
+            />
+            <CardBody className="space-y-3">
+              <input
+                type="text"
+                readOnly
+                value={publicCatalogUrl}
+                className="platform-input text-xs font-mono select-all w-full cursor-default"
+                style={{
+                  backgroundColor: 'var(--bg-app)',
+                  borderColor: 'var(--border-color)',
+                  color: 'var(--text-primary)'
+                }}
+                title={publicCatalogUrl}
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyPublicLink}
+                  icon={copiedLink ? <Check size={14} className="text-success-600" /> : <Copy size={14} />}
+                  className="flex-1 font-semibold text-xs"
+                  title="Copiar enlace al portapapeles"
+                >
+                  {copiedLink ? '¡Copiado!' : 'Copiar'}
+                </Button>
+                <a
+                  href={`#/${tenantSlug}/catalogo`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1"
+                >
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<ExternalLink size={14} style={{ color: primaryColor }} />}
+                    className="w-full font-semibold text-xs"
+                    title="Abrir vista pública del catálogo"
+                  >
+                    Abrir
+                  </Button>
+                </a>
+              </div>
+            </CardBody>
+          </Card>
+
           {/* Clickable Product Card */}
           <Card>
             <CardHeader

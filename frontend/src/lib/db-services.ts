@@ -156,35 +156,40 @@ export const productsService = {
     }
 
     try {
-      const { data: prods, error: pError } = await supabase
-        .from('products')
-        .select(`
-          id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors, showcase_features, showcase_globes, primary_color, gallery_angles,
-          categories ( name ),
-          brands ( name ),
-          models ( name )
-        `)
-        .eq('tenant_id', tenantId)
-        .order('created_at', { ascending: false });
+      const [prodsRes, branchesRes, stocksRes] = await Promise.all([
+        supabase
+          .from('products')
+          .select(`
+            id, code, sku, name, price, cost, min_stock, status, category_id, brand_id, model_id, image_path, colors, showcase_features, showcase_globes, primary_color, gallery_angles, description, editorial_description,
+            categories ( name ),
+            brands ( name ),
+            models ( name )
+          `)
+          .eq('tenant_id', tenantId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('branches')
+          .select('id, name')
+          .eq('tenant_id', tenantId),
+        supabase
+          .from('branch_inventory')
+          .select('product_id, branch_id, quantity')
+          .eq('tenant_id', tenantId),
+      ]);
+
+      const prods = prodsRes.data;
+      const pError = prodsRes.error;
+      const branches = branchesRes.data;
+      const stocks = stocksRes.data;
 
       if (pError) {
         console.error('Error fetching products:', pError);
         return this._getProductsFromCache(branchId);
       }
 
-      const { data: branches } = await supabase
-        .from('branches')
-        .select('id, name')
-        .eq('tenant_id', tenantId);
-
       const branchList = branches || [];
       const branchNameMap = new Map<string, string>();
       branchList.forEach((b) => branchNameMap.set(b.id, b.name));
-
-      const { data: stocks } = await supabase
-        .from('branch_inventory')
-        .select('product_id, branch_id, quantity')
-        .eq('tenant_id', tenantId);
 
       const productStocksMap = new Map<string, Map<string, number>>();
       stocks?.forEach((s) => {
@@ -653,17 +658,26 @@ export const productsService = {
       if ((prod as any).showcaseGlobes !== undefined) updateData.showcase_globes = (prod as any).showcaseGlobes;
       if ((prod as any).primaryColor !== undefined) updateData.primary_color = (prod as any).primaryColor;
       if ((prod as any).galleryAngles !== undefined) updateData.gallery_angles = (prod as any).galleryAngles;
-      if (prod.description !== undefined) updateData.description = prod.description;
+      if (prod.description !== undefined) {
+        updateData.description = prod.description;
+        updateData.short_description = prod.description;
+      }
       if ((prod as any).editorialDescription !== undefined) {
         updateData.editorial_description = (prod as any).editorialDescription;
-        if (!updateData.description) updateData.description = (prod as any).editorialDescription;
+        if (!updateData.description) {
+          updateData.description = (prod as any).editorialDescription;
+          updateData.short_description = (prod as any).editorialDescription;
+        }
       }
 
       if (isNetworkOnline()) {
         try {
           const { error } = await supabase.from('products').update(updateData).eq('id', id);
-          if (!error) {
-            if (prod.stock !== undefined) {
+          if (error) {
+            console.error('[productsService.updateProduct] Supabase error:', error);
+            throw error;
+          }
+          if (prod.stock !== undefined) {
               const tenantId = getActiveTenantId();
               const targetBranch = branchId && branchId !== 'ALL' ? branchId : getActiveBranchId();
               const { data: inv } = await supabase
@@ -695,7 +709,6 @@ export const productsService = {
             });
 
             return true;
-          }
         } catch (networkErr) {
           console.warn('[productsService] Online update failed, queueing offline mutation:', networkErr);
         }
@@ -5324,53 +5337,142 @@ export const tenantsService = {
     if (!identifier) return null;
     const clean = identifier.trim().toLowerCase();
 
+    const slugify = (str: string) =>
+      (str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+
+    // 1. Instant check from localStorage/active session
     try {
-      const allTenants = await this.getTenants();
-      if (!allTenants || allTenants.length === 0) return null;
+      const activeId = getActiveTenantId();
+      const activeName = typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || '' : '';
+      const cachedInfoRaw = typeof window !== 'undefined' ? localStorage.getItem('tenant_info') : null;
+      const cachedInfo = cachedInfoRaw ? JSON.parse(cachedInfoRaw) : null;
 
-      // 1. Match by exact ID (UUID)
-      const byId = allTenants.find(t => t.id.toLowerCase() === clean);
-      if (byId) return byId;
+      if (activeId && (clean === activeId.toLowerCase() || (activeName && (slugify(activeName) === clean || clean.includes(slugify(activeName)))))) {
+        return {
+          id: activeId,
+          name: cachedInfo?.name || activeName || 'Organización',
+          legalName: cachedInfo?.trade_name || cachedInfo?.legal_name || cachedInfo?.name || activeName,
+          ruc: cachedInfo?.ruc || '',
+          address: cachedInfo?.address || '',
+          phone: cachedInfo?.phone || '',
+          adminEmail: '',
+          adminName: '',
+          plan: 'ENTERPRISE',
+          active: true,
+          createdAt: '',
+          sunatEnv: 'BETA',
+          solUser: '',
+          solPassword: '',
+          certPassword: '',
+          certFileName: '',
+          clientId: '',
+          clientSecret: '',
+          establishmentCode: '0000',
+          invoiceSeries: 'F001',
+          receiptSeries: 'B001',
+          creditNoteSeries: 'FC01',
+          debitNoteSeries: 'FD01',
+          guiaSeries: 'T001',
+          ubigeo: '',
+          urbanization: '',
+          department: '',
+          province: '',
+          district: '',
+        };
+      }
+    } catch {}
 
-      // 2. Match by RUC
-      const byRuc = allTenants.find(t => t.ruc && t.ruc.toLowerCase() === clean);
-      if (byRuc) return byRuc;
+    // 2. Direct lightweight query to Supabase (bypassing slow tenant_memberships and auth joins)
+    try {
+      const { data: tenantRows, error } = await supabase
+        .from('tenants')
+        .select('*');
 
-      // Helper function to normalize text into a slug
-      const slugify = (str: string) =>
-        str
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/(^-|-$)/g, '');
+      if (tenantRows && tenantRows.length > 0) {
+        // Match by exact ID
+        const byId = tenantRows.find((t: any) => t.id && t.id.toLowerCase() === clean);
+        if (byId) return this._mapSingleTenant(byId);
 
-      // 3. Match by Slugified Name or Trade Name
-      const bySlug = allTenants.find(t => {
-        const slugName = slugify(t.name);
-        const slugLegal = slugify(t.legalName || '');
-        return slugName === clean || slugLegal === clean;
-      });
-      if (bySlug) return bySlug;
+        // Match by RUC
+        const byRuc = tenantRows.find((t: any) => t.ruc && t.ruc.toLowerCase() === clean);
+        if (byRuc) return this._mapSingleTenant(byRuc);
 
-      // 4. Match by includes / partial slug
-      const byPartialSlug = allTenants.find(t => {
-        const slugName = slugify(t.name);
-        const slugLegal = slugify(t.legalName || '');
-        return (slugName && clean.includes(slugName)) || (slugLegal && clean.includes(slugLegal));
-      });
-      if (byPartialSlug) return byPartialSlug;
+        // Match by Slugified Name or Trade Name
+        const bySlug = tenantRows.find((t: any) => {
+          const slugName = slugify(t.name);
+          const slugLegal = slugify(t.trade_name || t.legal_name || '');
+          return slugName === clean || slugLegal === clean;
+        });
+        if (bySlug) return this._mapSingleTenant(bySlug);
 
-      // 5. Match by case-insensitive name match
-      const byName = allTenants.find(t =>
-        t.name.toLowerCase().includes(clean) ||
-        (t.legalName && t.legalName.toLowerCase().includes(clean))
-      );
-      return byName || null;
+        // Match by includes / partial slug
+        const byPartialSlug = tenantRows.find((t: any) => {
+          const slugName = slugify(t.name);
+          const slugLegal = slugify(t.trade_name || t.legal_name || '');
+          return (slugName && clean.includes(slugName)) || (slugLegal && clean.includes(slugLegal));
+        });
+        if (byPartialSlug) return this._mapSingleTenant(byPartialSlug);
+
+        // Match by case-insensitive name match
+        const byName = tenantRows.find((t: any) =>
+          (t.name && t.name.toLowerCase().includes(clean)) ||
+          (t.trade_name && t.trade_name.toLowerCase().includes(clean)) ||
+          (t.legal_name && t.legal_name.toLowerCase().includes(clean))
+        );
+        if (byName) return this._mapSingleTenant(byName);
+
+        // Fallback: If only 1 tenant exists or active tenant
+        const activeId = getActiveTenantId();
+        if (activeId) {
+          const activeMatch = tenantRows.find((t: any) => t.id === activeId);
+          if (activeMatch) return this._mapSingleTenant(activeMatch);
+        }
+        return this._mapSingleTenant(tenantRows[0]);
+      }
     } catch (err) {
       console.error('Error in getTenantBySlugOrIdentifier:', err);
-      return null;
     }
+    return null;
+  },
+
+  _mapSingleTenant(t: any): TenantCompany {
+    const fc = t.fiscal_config || {};
+    return {
+      id: t.id,
+      name: t.name || 'Organización',
+      legalName: t.trade_name || fc.legal_name || t.name || '',
+      ruc: t.ruc || '',
+      address: t.address || '',
+      phone: t.phone || '',
+      adminEmail: t.email || 'admin@ventasbv.pe',
+      adminName: fc.admin_name || 'Super Admin',
+      plan: fc.plan || 'ENTERPRISE',
+      active: t.active !== false,
+      createdAt: t.created_at ? t.created_at.split('T')[0] : '2026-08-01',
+      sunatEnv: fc.sunat_env || 'BETA',
+      solUser: fc.sol_user || '',
+      solPassword: fc.sol_password || '',
+      certPassword: fc.cert_password || '',
+      certFileName: fc.cert_file_name || '',
+      clientId: fc.client_id || '',
+      clientSecret: fc.client_secret || '',
+      establishmentCode: fc.establishment_code || '0000',
+      invoiceSeries: t.invoice_series || fc.invoice_series || 'F001',
+      receiptSeries: t.receipt_series || fc.receipt_series || 'B001',
+      creditNoteSeries: fc.credit_note_series || 'FC01',
+      debitNoteSeries: fc.debit_note_series || 'FD01',
+      guiaSeries: fc.guia_series || 'T001',
+      ubigeo: fc.ubigeo || '150101',
+      urbanization: fc.urbanization || '',
+      department: fc.department || 'Lima',
+      province: fc.province || 'Lima',
+      district: fc.district || 'Lima',
+    };
   },
 
   async createTenant(values: TenantFormValues): Promise<TenantCompany | null> {

@@ -1,3 +1,5 @@
+const cutoutCache = new Map<string, string>();
+
 /**
  * Helper to dynamically remove solid white / light backgrounds from motorcycle images
  * and return a clean transparent cutout Data URL.
@@ -6,6 +8,10 @@ export function removeWhiteBackground(
   imageSrc: string,
   tolerance: number = 30
 ): Promise<string> {
+  if (cutoutCache.has(imageSrc)) {
+    return Promise.resolve(cutoutCache.get(imageSrc)!);
+  }
+
   return new Promise((resolve) => {
     if (!imageSrc) {
       resolve('');
@@ -37,6 +43,7 @@ export function removeWhiteBackground(
 
         if (!isWhiteBg) {
           // Already transparent or dark, return original
+          cutoutCache.set(imageSrc, imageSrc);
           resolve(imageSrc);
           return;
         }
@@ -60,13 +67,17 @@ export function removeWhiteBackground(
         }
 
         ctx.putImageData(imageData, 0, 0);
-        resolve(canvas.toDataURL('image/png'));
+        const dataUrl = canvas.toDataURL('image/png');
+        cutoutCache.set(imageSrc, dataUrl);
+        resolve(dataUrl);
       } catch (err) {
         console.warn('Could not process canvas transparency, using original:', err);
+        cutoutCache.set(imageSrc, imageSrc);
         resolve(imageSrc);
       }
     };
     img.onerror = () => {
+      cutoutCache.set(imageSrc, imageSrc);
       resolve(imageSrc);
     };
     img.src = imageSrc;

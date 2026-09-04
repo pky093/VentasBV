@@ -7,6 +7,7 @@ import {
   Instagram, Facebook, Youtube, Video
 } from 'lucide-react';
 import { productsService, catalogService, settingsService, tenantsService, Product, Category } from '../lib/db-services';
+import { getActiveTenantId } from '../lib/supabase';
 import { SomomotoHeroShowcase } from '../components/catalog/SomomotoHeroShowcase';
 import { exportProductFlyerPdf } from '../lib/catalog-flyer';
 
@@ -16,10 +17,56 @@ export default function PublicCatalogPage() {
   const targetProductId = searchParams.get('p');
   const tenantQueryParam = searchParams.get('tenant') || searchParams.get('t') || searchParams.get('ruc') || searchParams.get('empresa');
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [tenantInfo, setTenantInfo] = useState<any>({});
-  const [isLoading, setIsLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('cached_public_products');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
+  const [categories, setCategories] = useState<Category[]>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('cached_public_categories');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
+  const [tenantInfo, setTenantInfo] = useState<any>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('tenant_info');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+        const name = localStorage.getItem('tenant_name');
+        if (name) return { name, trade_name: name, legal_name: name };
+      }
+    } catch (e) {}
+    return {};
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('cached_public_products');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return false;
+        }
+      }
+    } catch (e) {}
+    return true;
+  });
 
   // View Mode: 'SHOWCASE' or 'GRID'
   const [viewMode, setViewMode] = useState<'SHOWCASE' | 'GRID'>('SHOWCASE');
@@ -35,40 +82,79 @@ export default function PublicCatalogPage() {
   }, [tenantSlug, tenantQueryParam, targetProductId]);
 
   const loadPublicData = async () => {
-    setIsLoading(true);
     try {
       const activeIdentifier = tenantSlug || tenantQueryParam;
       let targetTenantId: string | undefined = undefined;
       let resolvedTenantInfo: any = null;
 
+      // 1. Fast check cached tenant mapping
       if (activeIdentifier) {
-        const found = await tenantsService.getTenantBySlugOrIdentifier(activeIdentifier);
-        if (found) {
-          targetTenantId = found.id;
-          resolvedTenantInfo = {
-            id: found.id,
-            name: found.name,
-            trade_name: found.legalName || found.name,
-            phone: found.phone,
-            address: found.address,
-            ruc: found.ruc,
-          };
-        }
+        try {
+          const cached = localStorage.getItem(`tenant_cache_${activeIdentifier}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.id) {
+              targetTenantId = parsed.id;
+              resolvedTenantInfo = parsed;
+            }
+          }
+        } catch (e) {}
       }
 
-      const [prods, cats, tInfo] = await Promise.all([
+      if (!targetTenantId) {
+        targetTenantId = getActiveTenantId() || undefined;
+      }
+
+      // Parallelize tenant lookup if needed alongside products, categories, and settings
+      const tenantPromise = (activeIdentifier && !resolvedTenantInfo)
+        ? tenantsService.getTenantBySlugOrIdentifier(activeIdentifier)
+        : Promise.resolve(null);
+
+      const [foundTenant, prods, cats, tInfo] = await Promise.all([
+        tenantPromise,
         productsService.getProducts(undefined, targetTenantId),
         catalogService.getCategories(targetTenantId),
         settingsService.getTenantInfo(targetTenantId),
       ]);
 
+      if (foundTenant) {
+        targetTenantId = foundTenant.id;
+        resolvedTenantInfo = {
+          id: foundTenant.id,
+          name: foundTenant.name,
+          trade_name: foundTenant.legalName || foundTenant.name,
+          phone: foundTenant.phone,
+          address: foundTenant.address,
+          ruc: foundTenant.ruc,
+        };
+        try {
+          if (activeIdentifier) {
+            localStorage.setItem(`tenant_cache_${activeIdentifier}`, JSON.stringify(resolvedTenantInfo));
+          }
+        } catch (e) {}
+      }
+
       const activeList = (prods || []).filter(p => p.status !== 'INACTIVE');
       setProducts(activeList);
       setCategories(cats || []);
-      setTenantInfo({
+      setTenantInfo((prev: any) => ({
+        ...prev,
         ...(resolvedTenantInfo || {}),
         ...(tInfo || {}),
-      });
+      }));
+
+      // Cache for instant next load
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('cached_public_products', JSON.stringify(activeList));
+          if (cats && cats.length > 0) {
+            localStorage.setItem('cached_public_categories', JSON.stringify(cats));
+          }
+          if (tInfo || resolvedTenantInfo) {
+            localStorage.setItem('tenant_info', JSON.stringify({ ...(resolvedTenantInfo || {}), ...(tInfo || {}) }));
+          }
+        }
+      } catch (e) {}
 
       // If a specific product was requested via ?p=..., select it
       if (targetProductId) {
@@ -106,9 +192,17 @@ export default function PublicCatalogPage() {
     });
   }, [products, searchQuery, selectedCategory]);
 
-  const dealerName = tenantInfo.trade_name || tenantInfo.name || 'CHINOS MOTORPARTS';
+  const dealerName = useMemo(() => {
+    return (
+      tenantInfo.trade_name ||
+      tenantInfo.legal_name ||
+      tenantInfo.name ||
+      (typeof window !== 'undefined' ? localStorage.getItem('tenant_name') || '' : '') ||
+      'Catálogo Digital'
+    );
+  }, [tenantInfo]);
   const dealerPhone = tenantInfo.phone || '999888777';
-  const dealerAddress = tenantInfo.address || 'Felix Aldão, La Esperanza, Perú';
+  const dealerAddress = tenantInfo.address || 'Av. Principal - Tienda Autorizada';
 
   // Trigger WhatsApp from Customer directly to Dealer
   const handleClientQuotationWhatsApp = (product: Product, selectedColor?: string) => {
@@ -138,10 +232,10 @@ export default function PublicCatalogPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#07090e] text-slate-100 flex flex-col font-sans selection:bg-[#f3c623] selection:text-black">
+    <div className="min-h-screen bg-[#07090e] text-slate-100 flex flex-col font-sans selection:bg-[#f3c623] selection:text-black w-full max-w-full overflow-x-hidden">
       
       {/* Top Navbar matching exact reference design header */}
-      <header className="sticky top-0 z-50 bg-[#0c0f17]/95 backdrop-blur-md border-b border-white/10 px-4 md:px-10 py-3">
+      <header className="sticky top-0 z-50 bg-[#0c0f17]/95 backdrop-blur-md border-b border-white/10 px-3 sm:px-4 md:px-10 py-2.5 sm:py-3 w-full max-w-full overflow-x-hidden">
         <div className="w-full max-w-[1650px] mx-auto flex items-center justify-between gap-4 sm:gap-6">
           
           {/* Left: Company / Dealer Logo Badge */}
@@ -168,7 +262,7 @@ export default function PublicCatalogPage() {
                   : ''
               }`}
             >
-              Catálogo de Motos
+              Catálogo de Productos
             </button>
 
             {categories.slice(0, 4).map((c) => {
@@ -265,21 +359,150 @@ export default function PublicCatalogPage() {
             });
 
             return (
-              <SomomotoHeroShowcase
-                products={mergedProducts}
-                currentIndex={currentShowcaseIndex < filteredProducts.length ? currentShowcaseIndex : 0}
-                onSelectIndex={setCurrentShowcaseIndex}
-                onOpenWhatsApp={handleClientQuotationWhatsApp}
-                onExportPdf={handleExportPdf}
-                exchangeRate={exchangeRate}
-                isPublicView={true}
-                companyName={dealerName}
-                primaryColor={activeConfig.primaryColor || (activePublicProduct as any)?.primaryColor || '#f3c623'}
-                customFeatures={activeConfig.features || (activePublicProduct as any)?.showcaseFeatures}
-                customGlobes={activeConfig.globes || (activePublicProduct as any)?.showcaseGlobes}
-                customEditorialDescription={activeConfig.editorialDescription || (activePublicProduct as any)?.editorialDescription || (activePublicProduct as any)?.description}
-                galleryAngles={activeConfig.galleryAngles || (activePublicProduct as any)?.galleryAngles}
-              />
+              <div className="flex flex-col">
+                <SomomotoHeroShowcase
+                  products={mergedProducts}
+                  currentIndex={currentShowcaseIndex < filteredProducts.length ? currentShowcaseIndex : 0}
+                  onSelectIndex={setCurrentShowcaseIndex}
+                  onOpenWhatsApp={handleClientQuotationWhatsApp}
+                  onExportPdf={handleExportPdf}
+                  exchangeRate={exchangeRate}
+                  isPublicView={true}
+                  companyName={dealerName}
+                  primaryColor={activeConfig.primaryColor || (activePublicProduct as any)?.primaryColor || '#f3c623'}
+                  customFeatures={activeConfig.features || (activePublicProduct as any)?.showcaseFeatures}
+                  customGlobes={activeConfig.globes || (activePublicProduct as any)?.showcaseGlobes}
+                  customEditorialDescription={activeConfig.editorialDescription || (activePublicProduct as any)?.editorialDescription || (activePublicProduct as any)?.description}
+                  galleryAngles={activeConfig.galleryAngles || (activePublicProduct as any)?.galleryAngles}
+                />
+
+                {/* Below Showcase: Category Product Cards Grid (Recuadros matching Image 2) */}
+                <div className="p-6 sm:p-10 max-w-[1650px] mx-auto w-full space-y-6 border-t border-white/10 bg-[#07090e]">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#f3c623]">
+                        Catálogo de Modelos
+                      </span>
+                      <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-tight">
+                        {selectedCategory === 'ALL' 
+                          ? (activePublicProduct?.category ? `Modelos en ${activePublicProduct.category}` : 'Todos los Modelos')
+                          : `Modelos en ${selectedCategory}`}
+                      </h2>
+                    </div>
+
+                    {/* Category filter pills */}
+                    <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
+                      <button
+                        onClick={() => setSelectedCategory('ALL')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                          selectedCategory === 'ALL' ? 'bg-[#f3c623] text-black font-black' : 'bg-white/5 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        Todos ({products.length})
+                      </button>
+                      {categories.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => setSelectedCategory(c.name)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                            selectedCategory === c.name ? 'bg-[#f3c623] text-black font-black' : 'bg-white/5 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          {c.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Grid of cards matching Image 2 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    {filteredProducts.map((p) => {
+                      const isCurrent = p.id === activePublicProduct?.id;
+                      const usdPrice = p.price > 0 && exchangeRate > 0 ? (p.price / exchangeRate).toFixed(2) : '0.00';
+                      return (
+                        <div
+                          key={p.id}
+                          style={isCurrent ? { borderColor: '#f3c623' } : undefined}
+                          className={`group bg-[#0d1117] border rounded-2xl overflow-hidden flex flex-col transition-all duration-300 shadow-xl ${
+                            isCurrent ? 'border-[#f3c623] ring-1 ring-[#f3c623]/40' : 'border-white/10 hover:border-[#f3c623]'
+                          }`}
+                        >
+                          <div className="relative h-64 bg-radial from-slate-800/40 via-[#0d1117] to-black p-6 flex items-center justify-center overflow-hidden">
+                            <div className="absolute top-4 left-4 z-10">
+                              <span className="px-2.5 py-0.5 bg-[#f3c623] text-black font-black text-[10px] uppercase tracking-wider rounded">
+                                {p.category || 'MOTO'}
+                              </span>
+                            </div>
+
+                            {p.imagePath ? (
+                              <img
+                                src={p.imagePath}
+                                alt={p.name}
+                                className="max-h-52 w-auto object-contain drop-shadow-[0_15px_25px_rgba(0,0,0,0.85)] group-hover:scale-105 transition-transform duration-500"
+                              />
+                            ) : (
+                              <div className="text-slate-600 text-xs font-semibold">
+                                Sin imagen
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="p-6 flex-1 flex flex-col justify-between space-y-4 bg-[#090c12]">
+                            <div>
+                              <div className="text-[11px] font-bold uppercase tracking-widest text-[#f3c623]">
+                                {p.brand}
+                              </div>
+                              <h3 className="text-xl font-black text-white uppercase tracking-tight">
+                                {p.name}
+                              </h3>
+                            </div>
+
+                            <div className="pt-3 border-t border-white/10 flex items-baseline justify-between">
+                              <div>
+                                <div className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Precio Oficial</div>
+                                <div className="text-2xl font-black text-white font-sans">
+                                  S/ {p.price.toLocaleString('es-PE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                </div>
+                              </div>
+                              {Number(usdPrice) > 0 && (
+                                <div className="text-right">
+                                  <div className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Ref. USD</div>
+                                  <div className="text-xs font-bold text-slate-300 font-mono">
+                                    $ {usdPrice}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const fIdx = filteredProducts.findIndex(item => item.id === p.id);
+                                  if (fIdx !== -1) setCurrentShowcaseIndex(fIdx);
+                                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                                }}
+                                className="py-2.5 px-3 bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold rounded-xl transition-colors text-center cursor-pointer border border-white/10"
+                              >
+                                Ver Showcase
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleClientQuotationWhatsApp(p)}
+                                className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-[#f3c623] hover:bg-yellow-400 text-black text-xs font-black rounded-xl transition-all cursor-pointer shadow-md"
+                              >
+                                <MessageCircle size={14} />
+                                Cotizar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             );
           })()
         ) : (
@@ -412,29 +635,25 @@ export default function PublicCatalogPage() {
 
       </main>
 
-      {/* Footer matching reference design (shown in Grid mode) */}
-      {viewMode === 'GRID' && (
-        <footer className="border-t border-white/10 bg-[#07090e] py-4 px-4 text-xs text-slate-400">
-          <div className="max-w-[1650px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-            
-            <div className="flex items-center gap-2 text-slate-400">
-              <MapPin size={14} className="text-[#f3c623] shrink-0" />
-              <span><strong className="text-white">{dealerName}</strong> &bull; {dealerAddress}</span>
-            </div>
-
-            <div>
-              <p>&copy; {new Date().getFullYear()} Catálogo Oficial. Precios sujetos a disponibilidad.</p>
-            </div>
-
-            <div className="flex items-center gap-3 text-slate-400">
-              <a href="#facebook" className="hover:text-[#f3c623] transition-colors"><Facebook size={16} /></a>
-              <a href="#instagram" className="hover:text-[#f3c623] transition-colors"><Instagram size={16} /></a>
-              <a href="#youtube" className="hover:text-[#f3c623] transition-colors"><Youtube size={16} /></a>
-            </div>
-
+      {/* Footer matching reference design */}
+      <footer className="border-t border-white/10 bg-[#07090e] py-6 px-4 text-xs text-slate-400">
+        <div className="max-w-[1650px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2 text-slate-400">
+            <MapPin size={14} className="text-[#f3c623] shrink-0" />
+            <span><strong className="text-white">{dealerName}</strong> &bull; {dealerAddress}</span>
           </div>
-        </footer>
-      )}
+
+          <div>
+            <p>&copy; {new Date().getFullYear()} Catálogo Oficial. Precios sujetos a disponibilidad.</p>
+          </div>
+
+          <div className="flex items-center gap-3 text-slate-400">
+            <a href="#facebook" className="hover:text-[#f3c623] transition-colors"><Facebook size={16} /></a>
+            <a href="#instagram" className="hover:text-[#f3c623] transition-colors"><Instagram size={16} /></a>
+            <a href="#youtube" className="hover:text-[#f3c623] transition-colors"><Youtube size={16} /></a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

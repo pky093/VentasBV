@@ -143,7 +143,7 @@ export const Modal: React.FC<{
       <div className={`modal-content w-full ${sizeClass} max-h-[90vh] flex flex-col`}>
         <div className="modal-header shrink-0">
           <h3 className="modal-title text-base sm:text-lg">{title}</h3>
-          <button onClick={onClose} className="icon-btn btn-ghost" title="Cerrar">
+          <button type="button" onClick={onClose} className="icon-btn btn-ghost" title="Cerrar">
             <X size={18} />
           </button>
         </div>
@@ -452,6 +452,7 @@ export function DataTable<T extends Record<string, any>>({
           </span>
           <div className="flex gap-2 w-full sm:w-auto justify-between sm:justify-end">
             <button
+              type="button"
               className="btn btn-sm btn-secondary flex-1 sm:flex-initial"
               disabled={page === 1}
               onClick={() => setPage((p) => p - 1)}
@@ -459,6 +460,7 @@ export function DataTable<T extends Record<string, any>>({
               <ChevronLeft size={16} /> Anterior
             </button>
             <button
+              type="button"
               className="btn btn-sm btn-secondary flex-1 sm:flex-initial"
               disabled={page === totalPages}
               onClick={() => setPage((p) => p + 1)}
@@ -496,7 +498,12 @@ export const Tabs: React.FC<TabsProps> = ({
         return (
           <button
             key={tab.id}
-            onClick={() => onChange(tab.id)}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onChange(tab.id);
+            }}
             className={
               isPills
                 ? `tab-btn-pill ${isActive ? 'active' : ''}`

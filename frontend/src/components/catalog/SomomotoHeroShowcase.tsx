@@ -162,7 +162,7 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
     };
   }, [activeImagePath]);
 
-  // Keyboard navigation
+  // Keyboard navigation for photos/angles
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft') handlePrev();
@@ -170,18 +170,18 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, products.length]);
+  }, [angleThumbnails.length]);
 
   const handlePrev = () => {
-    setSelectedColorIndex(0);
-    setSelectedAngleIndex(0);
-    onSelectIndex(currentIndex === 0 ? products.length - 1 : currentIndex - 1);
+    if (angleThumbnails.length > 0) {
+      setSelectedAngleIndex((prev) => (prev === 0 ? angleThumbnails.length - 1 : prev - 1));
+    }
   };
 
   const handleNext = () => {
-    setSelectedColorIndex(0);
-    setSelectedAngleIndex(0);
-    onSelectIndex(currentIndex === products.length - 1 ? 0 : currentIndex + 1);
+    if (angleThumbnails.length > 0) {
+      setSelectedAngleIndex((prev) => (prev === angleThumbnails.length - 1 ? 0 : prev + 1));
+    }
   };
 
   const usdPrice = currentProduct.price > 0 && exchangeRate > 0
@@ -308,11 +308,11 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
   };
 
   return (
-    <div className="relative w-full min-h-[calc(100vh-60px)] bg-[#07090e] text-white flex flex-col justify-between select-none font-sans py-3 sm:py-5">
+    <div className="relative w-full max-w-full min-h-[calc(100vh-60px)] bg-[#07090e] text-white flex flex-col justify-between select-none font-sans py-3 sm:py-5 overflow-x-hidden">
       
       {/* Background Ambience with Dynamic Primary Color Glow */}
       <div 
-        className="absolute inset-0 pointer-events-none z-0"
+        className="absolute inset-0 pointer-events-none z-0 overflow-hidden"
         style={{
           backgroundImage: `
             radial-gradient(circle at 60% 40%, ${primaryColor}1a 0%, rgba(12, 16, 24, 0.7) 45%, rgba(7, 9, 14, 0.98) 80%),
@@ -325,104 +325,13 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
       />
 
       {/* Main Hero Container */}
-      <div className="relative z-10 w-full max-w-[1650px] mx-auto px-4 sm:px-8 lg:px-12 flex-1 flex flex-col justify-between space-y-4">
+      <div className="relative z-10 w-full max-w-[1650px] mx-auto px-3 sm:px-8 lg:px-12 flex-1 flex flex-col justify-between space-y-4 min-w-0 overflow-x-hidden">
         
-        {/* Top Utility Bar: Breadcrumb (Left) | Horizontal 3-Thumbnails & Utilities (Right) */}
-        <div className="flex items-center justify-between gap-4 pb-2 border-b border-white/10 shrink-0">
-          
-          <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-            <span className="hover:text-white cursor-pointer transition-colors">Catálogo Oficial</span>
-            <span className="text-slate-600">/</span>
-            <span className="font-bold" style={{ color: primaryColor }}>{categoryBadge}</span>
-            <span className="text-slate-600">/</span>
-            <span className="text-white font-semibold">{currentProduct.brand}</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* 3 Horizontal Angle Thumbnails */}
-            <div className="flex items-center gap-2 bg-black/60 p-1.5 rounded-xl border border-white/10 backdrop-blur-md">
-              {angleThumbnails.map((thumb, idx) => {
-                const isSelected = selectedAngleIndex === idx;
-                return (
-                  <button
-                    key={thumb.id}
-                    type="button"
-                    onClick={() => setSelectedAngleIndex(idx)}
-                    style={{
-                      borderColor: isSelected ? primaryColor : undefined,
-                      boxShadow: isSelected ? `0 0 15px ${primaryColor}66` : undefined,
-                    }}
-                    className={`relative w-16 sm:w-20 h-11 sm:h-13 rounded-lg bg-black/90 border p-1 flex items-center justify-center overflow-hidden transition-all duration-200 cursor-pointer ${
-                      isSelected
-                        ? 'ring-2 scale-105'
-                        : 'border-white/15 opacity-60 hover:opacity-100 hover:border-white/30'
-                    }`}
-                    title={thumb.label}
-                  >
-                    {thumb.is360 && (
-                      <span 
-                        style={{ backgroundColor: primaryColor }}
-                        className="absolute top-0.5 right-0.5 px-1 py-0.2 text-black font-black text-[7.5px] rounded uppercase tracking-wider flex items-center gap-0.5 shadow z-10"
-                      >
-                        <RotateCw size={7.5} /> 360°
-                      </span>
-                    )}
-                    {thumb.img ? (
-                      <img 
-                        src={thumb.img} 
-                        alt={thumb.label} 
-                        className="max-h-full w-auto object-contain drop-shadow" 
-                      />
-                    ) : (
-                      <span className="text-[9px] text-slate-500">Vista {idx + 1}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onOpenWhatsApp(currentProduct, activeColor?.color)}
-                title="Cotizar por WhatsApp con un Asesor"
-                className="flex items-center gap-2 px-3.5 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-[#25d366] to-[#1eb854] hover:from-[#20bd5a] hover:to-[#189b45] text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-[0_0_20px_rgba(37,211,102,0.45)] border border-emerald-300 hover:scale-105 active:scale-95 cursor-pointer"
-              >
-                <MessageCircle size={15} className="fill-black" />
-                <span className="hidden sm:inline">Cotizar WhatsApp</span>
-              </button>
-
-              {onExportPdf && (
-                <button
-                  type="button"
-                  onClick={() => onExportPdf(currentProduct)}
-                  title="Descargar Ficha Técnica PDF"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition-all cursor-pointer"
-                >
-                  <FileDown size={14} />
-                  <span className="hidden sm:inline">Ficha PDF</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handleShare}
-                title="Compartir enlace"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition-all cursor-pointer"
-              >
-                {copiedLink ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />}
-                <span className="hidden sm:inline">{copiedLink ? 'Copiado' : 'Compartir'}</span>
-              </button>
-            </div>
-          </div>
-
-        </div>
-
         {/* ── TOP HERO BANNER: Brand/Title/Price (Left) + Description/4 Features/Colors (Right) ── */}
-        <div className="flex flex-col md:flex-row items-stretch justify-between gap-4 lg:gap-8 bg-black/50 border border-white/10 rounded-2xl p-4 sm:p-5 backdrop-blur-md shadow-xl shrink-0">
+        <div className="flex flex-col md:flex-row items-stretch justify-between gap-4 lg:gap-8 bg-black/50 border border-white/10 rounded-2xl p-3.5 sm:p-5 backdrop-blur-md shadow-xl shrink-0 min-w-0">
           
           {/* LEFT SIDE (32-35%): Category Badge, Brand, Huge Model Title, Price Badge */}
-          <div className="w-full md:w-[35%] lg:w-[32%] shrink-0 flex flex-col justify-center space-y-2">
+          <div className="w-full md:w-[35%] lg:w-[32%] shrink-0 flex flex-col justify-center space-y-2 min-w-0">
             <div>
               <span 
                 style={{ backgroundColor: primaryColor }}
@@ -432,23 +341,25 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
               </span>
             </div>
 
-            <div className="space-y-0 select-none">
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase text-white tracking-tight leading-none drop-shadow-md">
-                {brandDisplay}
+            <div className="space-y-0 select-none min-w-0">
+              <h1 className="flex flex-wrap items-baseline gap-2.5 drop-shadow-md min-w-0">
+                <span className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase text-white tracking-tight leading-none">
+                  {brandDisplay}
+                </span>
+                <span 
+                  style={{ 
+                    color: primaryColor,
+                    textShadow: `0 4px 20px ${primaryColor}66`
+                  }}
+                  className="text-2xl sm:text-3xl lg:text-4xl font-black uppercase tracking-tight leading-none"
+                >
+                  {shortModelSlug}
+                </span>
               </h1>
-              <div 
-                style={{ 
-                  color: primaryColor,
-                  textShadow: `0 4px 20px ${primaryColor}66`
-                }}
-                className="text-3xl sm:text-4xl lg:text-5xl font-black uppercase tracking-tight leading-none"
-              >
-                {shortModelSlug}
-              </div>
             </div>
 
             {/* Price Badge */}
-            <div className="flex flex-wrap items-baseline gap-2 pt-1">
+            <div className="flex flex-wrap items-baseline gap-2 pt-1 min-w-0">
               <div className="text-2xl sm:text-3xl font-black text-white tracking-tight font-sans">
                 S/ {currentProduct.price.toLocaleString('es-PE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
               </div>
@@ -469,10 +380,10 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
           </div>
 
           {/* RIGHT SIDE (65-68%): Editorial Description, 4 Capsule Features (Horizontal Row), Colors Picker */}
-          <div className="w-full md:w-[65%] lg:w-[68%] flex flex-col justify-center space-y-3 md:border-l md:border-white/10 md:pl-6">
+          <div className="w-full md:w-[65%] lg:w-[68%] flex flex-col justify-center space-y-3 md:border-l md:border-white/10 md:pl-6 min-w-0">
             
             {/* Editorial Description */}
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-light">
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-light break-words">
               {customEditorialDescription || (currentProduct as any)?.editorialDescription || currentProduct?.description || (
                 currentProduct.model ? (
                   <>
@@ -486,25 +397,25 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
               )}
             </p>
 
-            {/* 4 Key Feature Stadium Capsule Cards in 1 horizontal row */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {/* 4 Key Feature Stadium Capsule Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full min-w-0">
               {features.map((f) => (
                 <div 
                   key={f.id}
                   style={{
                     borderColor: `${primaryColor}66`,
                   }}
-                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-black/80 hover:bg-black/95 border transition-all duration-300 group cursor-default shadow-md backdrop-blur-sm"
+                  className="flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-full bg-black/80 hover:bg-black/95 border transition-all duration-300 group cursor-default shadow-md backdrop-blur-sm min-w-0 overflow-hidden"
                 >
                   <div 
                     style={{
                       borderColor: `${primaryColor}80`,
                     }}
-                    className="w-6 h-6 rounded-full border bg-black flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform"
+                    className="w-5 h-5 sm:w-6 sm:h-6 rounded-full border bg-black flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform"
                   >
                     {renderIcon(f.icon)}
                   </div>
-                  <span className="text-[9px] sm:text-[9.5px] font-black text-white uppercase tracking-tight leading-tight truncate">
+                  <span className="text-[8.5px] sm:text-[9.5px] font-black text-white uppercase tracking-tight leading-tight truncate min-w-0">
                     {f.title}
                   </span>
                 </div>
@@ -549,24 +460,24 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
         </div>
 
         {/* ── CENTER STAGE: Centered Product Image Stage + 4 Stadium Capsule Telemetry Globes Orbiting the Product ── */}
-        <div className="relative flex items-center justify-center flex-1 my-auto min-h-[340px] sm:min-h-[420px] lg:min-h-[460px] py-4">
+        <div className="relative flex items-center justify-center flex-1 my-auto min-h-[300px] sm:min-h-[420px] lg:min-h-[460px] py-2 sm:py-4 w-full max-w-full overflow-hidden min-w-0">
           
           {/* Tech HUD Concentric Circular Rings with Dynamic Primary Color */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
             <div 
               style={{ borderColor: `${primaryColor}33` }}
-              className="w-[320px] sm:w-[440px] lg:w-[500px] h-[320px] sm:h-[440px] lg:h-[500px] rounded-full border border-dashed animate-[spin_60s_linear_infinite]" 
+              className="w-[280px] sm:w-[440px] lg:w-[500px] h-[280px] sm:h-[440px] lg:h-[500px] rounded-full border border-dashed animate-[spin_60s_linear_infinite] shrink-0" 
             />
             <div 
               style={{ 
                 borderColor: `${primaryColor}4d`,
                 boxShadow: `0 0 45px ${primaryColor}26`
               }}
-              className="absolute w-[250px] sm:w-[360px] lg:w-[420px] h-[250px] sm:h-[360px] lg:h-[420px] rounded-full border-2" 
+              className="absolute w-[220px] sm:w-[360px] lg:w-[420px] h-[220px] sm:h-[360px] lg:h-[420px] rounded-full border-2 shrink-0" 
             />
             <div 
               style={{ borderColor: `${primaryColor}40` }}
-              className="absolute w-[180px] sm:w-[260px] lg:w-[310px] h-[180px] sm:h-[260px] lg:h-[310px] rounded-full border" 
+              className="absolute w-[160px] sm:w-[260px] lg:w-[310px] h-[160px] sm:h-[260px] lg:h-[310px] rounded-full border shrink-0" 
             />
           </div>
 
@@ -651,59 +562,56 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
           </div>
 
           {/* Main Center Product Image */}
-          <div className="relative z-10 flex flex-col items-center justify-center w-full px-4 group">
+          <div className="relative z-10 flex flex-col items-center justify-center w-full px-2 sm:px-4 group min-w-0">
             {processedImage || activeImagePath ? (
-              <div className="relative flex flex-col items-center">
+              <div className="relative flex flex-col items-center max-w-full">
                 <img
                   src={processedImage || activeImagePath}
                   alt={currentProduct.name}
-                  className="max-h-[280px] sm:max-h-[360px] md:max-h-[420px] lg:max-h-[480px] w-auto max-w-full object-contain drop-shadow-[0_25px_45px_rgba(0,0,0,0.95)] transition-all duration-300 group-hover:scale-105"
+                  className="max-h-[260px] sm:max-h-[360px] md:max-h-[420px] lg:max-h-[480px] w-auto max-w-full object-contain drop-shadow-[0_25px_45px_rgba(0,0,0,0.95)] transition-all duration-300 group-hover:scale-105"
                 />
                 <div className="w-[80%] h-6 bg-black/90 blur-xl rounded-full mt-[-10px] pointer-events-none" />
               </div>
             ) : (
-              <div className="w-72 h-48 flex items-center justify-center text-slate-500 text-xs border border-white/10 rounded-2xl bg-black/40">
+              <div className="w-64 sm:w-72 h-44 sm:h-48 flex items-center justify-center text-slate-500 text-xs border border-white/10 rounded-2xl bg-black/40">
                 (Imagen no disponible)
               </div>
             )}
           </div>
 
-          {/* Carousel Navigation Arrows */}
-          <div className="absolute inset-y-0 left-0 right-0 flex items-center justify-between pointer-events-none px-1 sm:px-2 z-20">
+          {/* Photo Navigation Arrows */}
+          <div className="absolute inset-y-0 left-0 right-0 flex items-center justify-between pointer-events-none px-1 sm:px-4 md:px-6 z-20">
             <button
               type="button"
               onClick={handlePrev}
-              style={{
-                backgroundColor: 'rgba(0,0,0,0.7)',
-              }}
-              className="pointer-events-auto p-3 rounded-full hover:bg-white/20 text-slate-300 hover:text-white border border-white/20 transition-all shadow-xl hover:scale-110 active:scale-95 cursor-pointer"
-              title="Modelo Anterior"
+              className="pointer-events-auto w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 flex items-center justify-center rounded-full bg-black/80 hover:bg-black/95 text-white border-2 border-white/25 hover:border-white/60 transition-all shadow-[0_8px_30px_rgba(0,0,0,0.85)] backdrop-blur-md hover:scale-110 active:scale-90 cursor-pointer group"
+              title="Foto Anterior"
             >
-              <ChevronLeft size={20} />
+              <ChevronLeft className="w-5 h-5 sm:w-8 sm:h-8 transition-transform group-hover:-translate-x-0.5" strokeWidth={2.5} />
             </button>
 
             <button
               type="button"
               onClick={handleNext}
-              style={{
-                backgroundColor: 'rgba(0,0,0,0.7)',
-              }}
-              className="pointer-events-auto p-3 rounded-full hover:bg-white/20 text-slate-300 hover:text-white border border-white/20 transition-all shadow-xl hover:scale-110 active:scale-95 cursor-pointer"
-              title="Siguiente Modelo"
+              className="pointer-events-auto w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 flex items-center justify-center rounded-full bg-black/80 hover:bg-black/95 text-white border-2 border-white/25 hover:border-white/60 transition-all shadow-[0_8px_30px_rgba(0,0,0,0.85)] backdrop-blur-md hover:scale-110 active:scale-90 cursor-pointer group"
+              title="Siguiente Foto"
             >
-              <ChevronRight size={20} />
+              <ChevronRight className="w-5 h-5 sm:w-8 sm:h-8 transition-transform group-hover:translate-x-0.5" strokeWidth={2.5} />
             </button>
           </div>
 
         </div>
 
-        {/* Mobile View 4 Spec Cards (visible only on small mobile screens where absolute globes are hidden) */}
-        <div className="grid grid-cols-2 gap-2 sm:hidden pt-2 z-20">
+        {/* ── 4 SPEC CAPSULES BAR (Visible on mobile where floating orbital globes are hidden) ── */}
+        <div className="grid grid-cols-2 gap-2 sm:hidden pt-2 z-20 w-full min-w-0">
           {globes.map((g, idx) => (
             <div 
               key={g.id || idx} 
-              style={{ borderColor: primaryColor }}
-              className="flex items-center gap-2.5 p-2.5 rounded-full bg-black/90 border"
+              style={{ 
+                borderColor: primaryColor,
+                boxShadow: `0 0 15px ${primaryColor}26`
+              }}
+              className="flex items-center gap-2 p-2 rounded-full bg-black/90 hover:bg-black border transition-all duration-200 min-w-0 overflow-hidden"
             >
               <div 
                 style={{ borderColor: primaryColor }}
@@ -711,12 +619,104 @@ export const SomomotoHeroShowcase: React.FC<SomomotoHeroShowcaseProps> = ({
               >
                 {renderGlobeIcon(g.icon)}
               </div>
-              <div className="flex flex-col text-left truncate">
-                <span className="block text-[7.5px] text-slate-400 font-bold uppercase leading-none mb-0.5">{g.label}</span>
-                <span className="text-xs font-black text-white leading-none truncate">{g.value}</span>
+              <div className="flex flex-col text-left truncate min-w-0 flex-1 overflow-hidden">
+                <span className="block text-[7.5px] text-slate-400 font-bold uppercase leading-none mb-0.5 truncate">{g.label}</span>
+                <span className="text-xs font-black text-white uppercase tracking-tight leading-none truncate">{g.value}</span>
               </div>
             </div>
           ))}
+        </div>
+
+        {/* ── BOTTOM UTILITY BAR: Breadcrumb (Left) | Horizontal 3-Thumbnails & Action Buttons (Right) ── */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4 pt-3 pb-1 border-t border-white/10 shrink-0 z-20 w-full min-w-0">
+          
+          <div className="flex items-center gap-2 text-xs text-slate-400 font-medium truncate max-w-full">
+            <span className="hover:text-white cursor-pointer transition-colors shrink-0">Catálogo Oficial</span>
+            <span className="text-slate-600 shrink-0">/</span>
+            <span className="font-bold shrink-0" style={{ color: primaryColor }}>{categoryBadge}</span>
+            <span className="text-slate-600 shrink-0">/</span>
+            <span className="text-white font-semibold truncate">{currentProduct.brand}</span>
+          </div>
+
+          <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap justify-center sm:justify-end w-full sm:w-auto min-w-0">
+            {/* 3 Horizontal Angle Thumbnails */}
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-black/60 p-1 sm:p-1.5 rounded-xl border border-white/10 backdrop-blur-md shrink-0">
+              {angleThumbnails.map((thumb, idx) => {
+                const isSelected = selectedAngleIndex === idx;
+                return (
+                  <button
+                    key={thumb.id}
+                    type="button"
+                    onClick={() => setSelectedAngleIndex(idx)}
+                    style={{
+                      borderColor: isSelected ? primaryColor : undefined,
+                      boxShadow: isSelected ? `0 0 15px ${primaryColor}66` : undefined,
+                    }}
+                    className={`relative w-14 sm:w-20 h-10 sm:h-13 rounded-lg bg-black/90 border p-1 flex items-center justify-center overflow-hidden transition-all duration-200 cursor-pointer ${
+                      isSelected
+                        ? 'ring-2 scale-105'
+                        : 'border-white/15 opacity-60 hover:opacity-100 hover:border-white/30'
+                    }`}
+                    title={thumb.label}
+                  >
+                    {thumb.is360 && (
+                      <span 
+                        style={{ backgroundColor: primaryColor }}
+                        className="absolute top-0.5 right-0.5 px-1 py-0.2 text-black font-black text-[7px] sm:text-[7.5px] rounded uppercase tracking-wider flex items-center gap-0.5 shadow z-10"
+                      >
+                        <RotateCw size={7} /> 360°
+                      </span>
+                    )}
+                    {thumb.img ? (
+                      <img 
+                        src={thumb.img} 
+                        alt={thumb.label} 
+                        className="max-h-full w-auto object-contain drop-shadow" 
+                      />
+                    ) : (
+                      <span className="text-[9px] text-slate-500">Vista {idx + 1}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => onOpenWhatsApp(currentProduct, activeColor?.color)}
+                title="Cotizar por WhatsApp con un Asesor"
+                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-[#25d366] to-[#1eb854] hover:from-[#20bd5a] hover:to-[#189b45] text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-[0_0_20px_rgba(37,211,102,0.45)] border border-emerald-300 hover:scale-105 active:scale-95 cursor-pointer"
+              >
+                <MessageCircle size={15} className="fill-black" />
+                <span className="hidden sm:inline">Cotizar WhatsApp</span>
+                <span className="sm:hidden text-[11px]">Cotizar</span>
+              </button>
+
+              {onExportPdf && (
+                <button
+                  type="button"
+                  onClick={() => onExportPdf(currentProduct)}
+                  title="Descargar Ficha Técnica PDF"
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition-all cursor-pointer"
+                >
+                  <FileDown size={14} />
+                  <span className="hidden sm:inline">Ficha PDF</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleShare}
+                title="Compartir enlace"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition-all cursor-pointer"
+              >
+                {copiedLink ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />}
+                <span className="hidden sm:inline">{copiedLink ? 'Copiado' : 'Compartir'}</span>
+              </button>
+            </div>
+          </div>
+
         </div>
 
       </div>

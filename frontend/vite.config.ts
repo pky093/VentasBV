@@ -12,6 +12,19 @@ export default defineConfig({
       '@ventasbv/ui': path.resolve(__dirname, './src/components/ui/index.tsx')
     }
   },
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-icons': ['lucide-react'],
+          'vendor-query': ['@tanstack/react-query'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: {
